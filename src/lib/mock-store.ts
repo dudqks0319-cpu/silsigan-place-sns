@@ -420,12 +420,6 @@ function verifiedRadiusForInput(place: Place, clientLocation: CreateReportInput[
   });
   const verifiedRadiusM = verifiedRadiusFromDistance(distanceM);
 
-  if (!verifiedRadiusM) {
-    throw new ApiError(403, "LOCATION_NOT_VERIFIED", "장소 300m 이내에서만 위치 인증 제보를 등록할 수 있습니다.", {
-      maxRadiusM: 300,
-    });
-  }
-
   return verifiedRadiusM;
 }
 

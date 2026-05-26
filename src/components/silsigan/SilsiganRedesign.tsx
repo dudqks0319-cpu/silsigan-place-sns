@@ -188,6 +188,13 @@ type PublicPost = {
   createdAt: string;
 };
 
+type LocationVerificationStatus = "idle" | "requesting" | "verified" | "denied" | "unsupported";
+
+type ClientLocation = {
+  latitude: number;
+  longitude: number;
+};
+
 const presentationByPlaceId: Record<string, Pick<Place, "distance" | "x" | "y">> = {
   "ulsan-taehwagang": { distance: "1.2km", x: 31, y: 47 },
   "busan-gwangalli": { distance: "38km", x: 65, y: 39 },
@@ -231,6 +238,8 @@ export default function SilsiganRedesign() {
   const [pickedLine, setPickedLine] = useState("있음");
   const [pickedWeather, setPickedWeather] = useState("맑음");
   const [photoAttached, setPhotoAttached] = useState(true);
+  const [locationVerificationStatus, setLocationVerificationStatus] = useState<LocationVerificationStatus>("idle");
+  const [verifiedLocation, setVerifiedLocation] = useState<ClientLocation | null>(null);
 
   const selectedPlace = useMemo(
     () => places.find((place) => place.id === selectedPlaceId) ?? places[0] ?? null,
@@ -305,8 +314,41 @@ export default function SilsiganRedesign() {
   }, []);
 
   const openPlace = (place: Place) => {
+    setLocationVerificationStatus("idle");
+    setVerifiedLocation(null);
     setSelectedPlaceId(place.id);
     setActiveView("place");
+  };
+
+  const requestFieldVerification = () => {
+    if (!navigator.geolocation) {
+      setVerifiedLocation(null);
+      setLocationVerificationStatus("unsupported");
+      setToast("이 브라우저에서는 위치 인증을 사용할 수 없어 상태 제보로 등록됩니다.");
+      return;
+    }
+
+    setLocationVerificationStatus("requesting");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setVerifiedLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setLocationVerificationStatus("verified");
+        setToast("실제 GPS 좌표를 확인했습니다. 등록 시 서버에서 장소 반경만 검증합니다.");
+      },
+      () => {
+        setVerifiedLocation(null);
+        setLocationVerificationStatus("denied");
+        setToast("위치 권한 없이 상태 제보로 등록됩니다. 현장 인증 배지는 붙지 않습니다.");
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 8_000,
+      },
+    );
   };
 
   const submitReport = async () => {
@@ -316,26 +358,27 @@ export default function SilsiganRedesign() {
 
     setIsSubmitting(true);
     try {
+      const payload = {
+        placeId: selectedPlace.id,
+        crowdLevel: crowdValueFromLabel(pickedCrowd),
+        lineStatus: lineValueFromLabel(pickedLine),
+        parkingStatus: parkingValueFromLabel(pickedParking),
+        weatherFeel: weatherValueFromLabel(pickedWeather),
+        caption: reportText.trim() || undefined,
+        photoCount: photoAttached ? 1 : 0,
+        hashtagNames: recommendedTags,
+        ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
+      };
       const result = await fetchJson<{ post: PublicPost; credits: { amount: number }[] }>("/api/posts", {
         method: "POST",
-        body: JSON.stringify({
-          placeId: selectedPlace.id,
-          crowdLevel: crowdValueFromLabel(pickedCrowd),
-          lineStatus: lineValueFromLabel(pickedLine),
-          parkingStatus: parkingValueFromLabel(pickedParking),
-          weatherFeel: weatherValueFromLabel(pickedWeather),
-          caption: reportText.trim() || undefined,
-          photoCount: photoAttached ? 1 : 0,
-          hashtagNames: recommendedTags,
-          clientLocation: {
-            latitude: selectedPlace.latitude,
-            longitude: selectedPlace.longitude,
-          },
-        }),
+        body: JSON.stringify(payload),
       });
       const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
-      setToast(`제보 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}`);
+      const badge = result.post.locationVerified ? "현장 인증" : "상태 제보";
+      setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}`);
       setReportText("");
+      setLocationVerificationStatus("idle");
+      setVerifiedLocation(null);
       setActiveView("place");
       await loadData();
     } catch (error) {
@@ -461,6 +504,7 @@ export default function SilsiganRedesign() {
                     pickedLine={pickedLine}
                     pickedWeather={pickedWeather}
                     photoAttached={photoAttached}
+                    locationVerificationStatus={locationVerificationStatus}
                     reportText={reportText}
                     recommendedTags={recommendedTags}
                     setPickedCrowd={setPickedCrowd}
@@ -469,6 +513,7 @@ export default function SilsiganRedesign() {
                     setPickedWeather={setPickedWeather}
                     setPhotoAttached={setPhotoAttached}
                     setReportText={setReportText}
+                    onRequestLocation={requestFieldVerification}
                     onSubmit={submitReport}
                   />
                 )}
@@ -916,6 +961,7 @@ function ReportScreen({
   pickedLine,
   pickedWeather,
   photoAttached,
+  locationVerificationStatus,
   reportText,
   recommendedTags,
   setPickedCrowd,
@@ -924,6 +970,7 @@ function ReportScreen({
   setPickedWeather,
   setPhotoAttached,
   setReportText,
+  onRequestLocation,
   onSubmit,
 }: {
   isSubmitting: boolean;
@@ -933,6 +980,7 @@ function ReportScreen({
   pickedLine: string;
   pickedWeather: string;
   photoAttached: boolean;
+  locationVerificationStatus: LocationVerificationStatus;
   reportText: string;
   recommendedTags: string[];
   setPickedCrowd: (value: string) => void;
@@ -941,8 +989,11 @@ function ReportScreen({
   setPickedWeather: (value: string) => void;
   setPhotoAttached: (value: boolean) => void;
   setReportText: (value: string) => void;
+  onRequestLocation: () => void;
   onSubmit: () => void;
 }) {
+  const verificationCopy = verificationStatusCopy(locationVerificationStatus);
+
   return (
     <div className={styles.screenStack}>
       <section className={styles.formIntroCard}>
@@ -993,13 +1044,15 @@ function ReportScreen({
         </div>
       </section>
 
-      <section className={styles.verifyCard}>
+      <section className={`${styles.verifyCard} ${locationVerificationStatus === "verified" ? styles.verifyCardActive : ""}`}>
         <LocateFixed size={18} />
         <div>
-          <strong>현장 인증 가능</strong>
-          <p>장소 반경 안에서만 신뢰도 배지가 붙습니다.</p>
+          <strong>{verificationCopy.title}</strong>
+          <p>{verificationCopy.body}</p>
         </div>
-        <CheckCircle2 size={18} />
+        <button type="button" onClick={onRequestLocation} disabled={locationVerificationStatus === "requesting"}>
+          {locationVerificationStatus === "requesting" ? "확인 중" : "현장 인증하기"}
+        </button>
       </section>
 
       <button className={styles.submitButton} type="button" onClick={onSubmit} disabled={isSubmitting}>
@@ -1343,6 +1396,41 @@ function StatusMetric({ icon: Icon, label, value }: { icon: LucideIcon; label: s
       <strong>{value}</strong>
     </div>
   );
+}
+
+function verificationStatusCopy(status: LocationVerificationStatus) {
+  if (status === "requesting") {
+    return {
+      title: "실제 위치 확인 중",
+      body: "브라우저 위치 권한을 확인하고 있습니다.",
+    };
+  }
+
+  if (status === "verified") {
+    return {
+      title: "GPS 좌표 준비됨",
+      body: "등록 시 서버가 실제 사용자 좌표와 장소 거리를 계산합니다.",
+    };
+  }
+
+  if (status === "denied") {
+    return {
+      title: "상태 제보로 등록",
+      body: "위치 권한이 없어 현장 인증 배지는 붙지 않습니다.",
+    };
+  }
+
+  if (status === "unsupported") {
+    return {
+      title: "위치 인증 미지원",
+      body: "이 브라우저에서는 위치 없이 상태 제보만 등록합니다.",
+    };
+  }
+
+  return {
+    title: "현장 인증 선택",
+    body: "누르면 실제 GPS를 요청합니다. 선택 장소 좌표는 쓰지 않습니다.",
+  };
 }
 
 function SectionTitle({ title, caption }: { title: string; caption: string }) {

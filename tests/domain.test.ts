@@ -16,6 +16,7 @@ const {
 } = await import(new URL("../src/lib/domain.ts", import.meta.url).href);
 
 const { createPost, createReport, flagPost, listPosts } = await import(new URL("../src/lib/mock-store.ts", import.meta.url).href);
+const { getStore } = await import(new URL("../src/lib/store.ts", import.meta.url).href);
 
 test("reports expire three hours after creation", () => {
   const createdAt = new Date("2026-05-08T00:00:00.000Z");
@@ -148,6 +149,8 @@ test("feed posts generate share cards and privacy reports can hide posts", () =>
   });
 
   assert.equal(created.post.hashtagNames.length, 5);
+  assert.equal(created.post.verifiedRadiusM, 50);
+  assert.equal(created.post.locationVerified, true);
   assert.match(created.post.shareCard.headline, /지금은 비추/);
   assert.equal(judgementFromStatus("packed", "full"), "지금은 비추");
 
@@ -158,4 +161,58 @@ test("feed posts generate share cards and privacy reports can hide posts", () =>
 
   assert.equal(flagResult.hidden, true);
   assert.equal(listPosts({ includeHidden: false }).some((post: { id: string }) => post.id === created.post.id), false);
+});
+
+test("posts without real user location remain status reports", () => {
+  const created = createPost({
+    placeId: "ulsan-taehwagang",
+    crowdLevel: "quiet",
+    lineStatus: "none",
+    parkingStatus: "available",
+    weatherFeel: "good",
+    caption: "위치 권한 없이 상태만 제보합니다.",
+    photoCount: 0,
+    hashtagNames: ["#태화강산책"],
+  });
+
+  assert.equal(created.post.verifiedRadiusM, null);
+  assert.equal(created.post.locationVerified, false);
+});
+
+test("posts more than 300m from the place are created without verification", () => {
+  const created = createPost({
+    placeId: "busan-gwangalli",
+    crowdLevel: "busy",
+    lineStatus: "medium",
+    parkingStatus: "limited",
+    weatherFeel: "good",
+    caption: "멀리서 보는 상황이라 인증 배지는 없어야 합니다.",
+    photoCount: 1,
+    hashtagNames: ["#광안리주차"],
+    clientLocation: {
+      latitude: 35.18,
+      longitude: 129.16,
+    },
+  });
+
+  assert.equal(created.post.verifiedRadiusM, null);
+  assert.equal(created.post.locationVerified, false);
+});
+
+test("api routes can use the store abstraction in demo mode", () => {
+  const store = getStore("demo");
+
+  assert.equal(typeof store.createPost, "function");
+  assert.equal(typeof store.listPosts, "function");
+  assert.equal(typeof store.listHashtags, "function");
+  assert.equal(typeof store.flagPost, "function");
+});
+
+test("store abstraction exposes a supabase driver boundary", () => {
+  const store = getStore("supabase");
+
+  assert.throws(
+    () => store.listPosts(),
+    /Supabase store driver is not implemented/,
+  );
 });

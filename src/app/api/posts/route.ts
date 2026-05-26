@@ -1,5 +1,5 @@
 import { fail, ok } from "@/lib/api";
-import { createPost, listPosts } from "@/lib/mock-store";
+import { store } from "@/lib/store";
 import { createPostSchema, listPostsSchema } from "@/lib/validators";
 
 export async function GET(request: Request) {
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
       includeHidden: url.searchParams.get("includeHidden") ?? undefined,
     });
 
-    return ok(listPosts(filters), {
+    return ok(store.listPosts(filters), {
       ranking: "최근 현장 인증, 판단 도움도, 사진, 질문 반응 순으로 정렬합니다.",
     });
   } catch (error) {
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   try {
     const input = createPostSchema.parse(await request.json());
 
-    return ok(createPost(input));
+    return ok(store.createPost(input));
   } catch (error) {
     return fail(error);
   }

@@ -1005,7 +1005,8 @@
 .questionCard button,
 .operatorHeader button,
 .moderationItem button,
-.photoUploadCard button {
+.photoUploadCard button,
+.verifyCard button {
   border: 0;
   border-radius: 16px;
   font-weight: 950;
@@ -1375,6 +1376,11 @@
   background: #f8fafc;
 }
 
+.verifyCardActive {
+  background: #ecfdf3;
+  border-color: rgba(22, 163, 74, 0.24);
+}
+
 .hashtagSuggestCard {
   padding: 16px;
   border: 1px solid rgba(15, 23, 42, 0.06);
@@ -1429,6 +1435,20 @@
   color: #64748b;
   font-size: 12px;
   font-weight: 750;
+}
+
+.verifyCard button {
+  min-height: 40px;
+  padding: 0 12px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.verifyCard button:disabled {
+  background: #94a3b8;
+  cursor: wait;
 }
 
 .submitButton {
