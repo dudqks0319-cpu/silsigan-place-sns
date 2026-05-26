@@ -316,6 +316,7 @@ export default function SilsiganRedesign() {
   const openPlace = (place: Place) => {
     setLocationVerificationStatus("idle");
     setVerifiedLocation(null);
+    setToast(`${place.name} 현장 정보를 확인합니다. 현장 인증은 작성 화면에서 다시 선택해 주세요.`);
     setSelectedPlaceId(place.id);
     setActiveView("place");
   };
@@ -1309,9 +1310,15 @@ function FeedPostCard({
         <div className={styles.feedPostHeader}>
           <button type="button" onClick={onOpenPlace}>
             <strong>{place.name}</strong>
-            <span>{minutesAgo(post.createdAt)} · {post.locationVerified ? "현장 인증" : "상태 제보"}</span>
+            <span>{minutesAgo(post.createdAt)}</span>
           </button>
-          <span className={`${styles.statusChip} ${styles[place.tone]}`}>{postStatusText(post)}</span>
+          <div className={styles.feedPostChips}>
+            <span className={`${styles.statusChip} ${styles[place.tone]}`}>{postStatusText(post)}</span>
+            <span className={`${styles.verificationChip} ${post.locationVerified ? styles.verificationVerified : styles.verificationReport}`}>
+              {post.locationVerified ? <BadgeCheck size={12} /> : <MapPin size={12} />}
+              {post.locationVerified ? "현장 인증" : "상태 제보"}
+            </span>
+          </div>
         </div>
         <p>{post.caption ?? `${place.name}의 현재 상태가 업데이트됐습니다.`}</p>
         <div className={styles.statusInline}>

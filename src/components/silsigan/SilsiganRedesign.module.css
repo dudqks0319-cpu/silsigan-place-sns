@@ -525,6 +525,42 @@
   color: #94a3b8;
 }
 
+.feedPostChips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+  max-width: 140px;
+}
+
+.verificationChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.verificationChip svg {
+  flex: 0 0 auto;
+}
+
+.verificationVerified {
+  border: 1px solid rgba(22, 163, 74, 0.2);
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.verificationReport {
+  border: 1px solid rgba(100, 116, 139, 0.2);
+  background: #f1f5f9;
+  color: #475569;
+}
+
 .feedPostBody p {
   margin: 0;
   color: #334155;
