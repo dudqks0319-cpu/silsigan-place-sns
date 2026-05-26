@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="실시간">
+  <rect width="64" height="64" rx="16" fill="#0f766e"/>
+  <circle cx="32" cy="28" r="13" fill="#ecfdf5"/>
+  <path d="M32 14a14 14 0 0 0-14 14c0 11 14 24 14 24s14-13 14-24a14 14 0 0 0-14-14Zm0 20a6 6 0 1 1 0-12 6 6 0 0 1 0 12Z" fill="#16a34a"/>
+  <path d="M42 13 51 7l-3 10 9 5-11 1-4 10-4-10-11-1 9-5-3-10 9 6Z" fill="#fde68a"/>
+</svg>

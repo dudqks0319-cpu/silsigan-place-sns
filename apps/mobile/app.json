@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "#실시간",
+    "slug": "silsigan-mobile",
+    "scheme": "silsigan",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "kr.silsigan.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "현장 사진을 제보하려면 카메라 접근 권한이 필요합니다.",
+        "NSLocationWhenInUseUsageDescription": "정확한 좌표를 저장하지 않고 현장 인증 거리 구간만 확인합니다.",
+        "NSPhotoLibraryUsageDescription": "현장 사진을 선택해 제보하려면 사진 접근 권한이 필요합니다."
+      }
+    },
+    "android": {
+      "package": "kr.silsigan.mobile",
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "CAMERA",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    }
+  }
+}

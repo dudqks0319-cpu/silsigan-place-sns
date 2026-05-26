@@ -1,0 +1,11 @@
+{
+  "name": "#실시간 - 현장 상황 지도",
+  "short_name": "#실시간",
+  "description": "출발 전 10초, 지금 거기 상황을 사진과 위치 인증으로 확인하세요.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7faf9",
+  "theme_color": "#0f766e",
+  "lang": "ko",
+  "icons": []
+}
