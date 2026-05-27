@@ -10,13 +10,13 @@ type SharePostPageProps = {
   }>;
 };
 
-function findSharedPost(postId: string) {
-  return store.listPosts({ includeHidden: true }).find((candidate) => candidate.id === postId);
+async function findSharedPost(postId: string) {
+  return (await store.listPosts({ includeHidden: true })).find((candidate) => candidate.id === postId);
 }
 
 export async function generateMetadata({ params }: SharePostPageProps): Promise<Metadata> {
   const { postId } = await params;
-  const post = findSharedPost(postId);
+  const post = await findSharedPost(postId);
 
   if (!post || post.hiddenAt) {
     return {};
@@ -47,7 +47,7 @@ export async function generateMetadata({ params }: SharePostPageProps): Promise<
 
 export default async function SharePostPage({ params }: SharePostPageProps) {
   const { postId } = await params;
-  const post = findSharedPost(postId);
+  const post = await findSharedPost(postId);
 
   if (!post || post.hiddenAt) {
     notFound();
