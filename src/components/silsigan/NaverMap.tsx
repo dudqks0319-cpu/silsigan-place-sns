@@ -8,6 +8,8 @@ type MapPlace = {
   latitude: number;
   longitude: number;
   status: string;
+  signal: string;
+  summary: string;
   crowdLevel: "quiet" | "normal" | "busy" | "packed";
   line: string;
   parking: string;
@@ -16,6 +18,8 @@ type MapPlace = {
 type NaverMapProps<TPlace extends MapPlace> = {
   places: TPlace[];
   compact?: boolean;
+  showTraffic?: boolean;
+  onMapInteraction?: () => void;
   onSelectPlace: (place: TPlace) => void;
 };
 
@@ -48,6 +52,7 @@ type NaverMapsNamespace = {
   }) => { setMap: (map: unknown | null) => void };
   Point: new (x: number, y: number) => unknown;
   Size: new (width: number, height: number) => unknown;
+  TrafficLayer?: new () => { setMap: (map: unknown | null) => void };
 };
 
 declare global {
@@ -61,7 +66,13 @@ declare global {
 
 const naverMapClientId = process.env.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID;
 
-export function NaverMap<TPlace extends MapPlace>({ places, compact = false, onSelectPlace }: NaverMapProps<TPlace>) {
+export function NaverMap<TPlace extends MapPlace>({
+  places,
+  compact = false,
+  showTraffic = false,
+  onMapInteraction,
+  onSelectPlace,
+}: NaverMapProps<TPlace>) {
   const mapRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -109,6 +120,11 @@ export function NaverMap<TPlace extends MapPlace>({ places, compact = false, onS
       mapDataControl: false,
       zoomControl: !compact,
     });
+    const trafficLayer = maps.TrafficLayer ? new maps.TrafficLayer() : null;
+    trafficLayer?.setMap(showTraffic ? map : null);
+    maps.Event.addListener(map, "dragend", () => onMapInteraction?.());
+    maps.Event.addListener(map, "zoom_changed", () => onMapInteraction?.());
+
     const markers = places.map((place) => {
       const markerLabel = markerLabelForPlace(place);
       const marker = new maps.Marker({
@@ -116,9 +132,9 @@ export function NaverMap<TPlace extends MapPlace>({ places, compact = false, onS
         map,
         title: place.name,
         icon: {
-          content: `<button class="naver-marker naver-marker--${place.crowdLevel}" aria-label="${place.name}">${markerLabel}</button>`,
-          size: new maps.Size(58, 34),
-          anchor: new maps.Point(29, 17),
+          content: `<button class="naver-marker naver-marker--${markerToneForPlace(place)}" aria-label="${place.name} ${place.signal}">${markerLabel}</button>`,
+          size: new maps.Size(96, 38),
+          anchor: new maps.Point(48, 19),
         },
       });
       maps.Event.addListener(marker, "click", () => onSelectPlace(place));
@@ -127,9 +143,10 @@ export function NaverMap<TPlace extends MapPlace>({ places, compact = false, onS
     });
 
     return () => {
+      trafficLayer?.setMap(null);
       markers.forEach((marker) => marker.setMap(null));
     };
-  }, [center.latitude, center.longitude, compact, onSelectPlace, places, ready]);
+  }, [center.latitude, center.longitude, compact, onMapInteraction, onSelectPlace, places, ready, showTraffic]);
 
   if (!naverMapClientId || failed) {
     return (
@@ -171,5 +188,12 @@ function markerLabelForPlace(place: MapPlace) {
     return "혼잡";
   }
 
-  return place.status;
+  return place.signal;
+}
+
+function markerToneForPlace(place: MapPlace) {
+  if (place.signal === "가도 좋음") return "good";
+  if (place.signal === "대기 보통") return "normal";
+  if (place.signal === "혼잡 주의") return "busy";
+  return "avoid";
 }

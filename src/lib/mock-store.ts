@@ -155,6 +155,7 @@ const questions: StoredQuestion[] = [
 ];
 const flagsByReportId = new Map<string, FlagReason[]>();
 const flagsByPostId = new Map<string, FlagReason[]>();
+flagsByPostId.set("post_seed_cityhall_sensitive", ["false_content"]);
 
 export function listPlaces() {
   return mockPlaces.map((place) => ({
@@ -391,6 +392,58 @@ export function flagPost(input: FlagPostInput) {
   };
 }
 
+export function listPostModerationQueue(filters: { reason?: FlagReason | "hidden" } = {}) {
+  return posts
+    .map((post) => {
+      const flagReasonsForPost = flagsByPostId.get(post.id) ?? [];
+
+      return {
+        post: publicPost(post),
+        place: findPlace(post.placeId),
+        flagReasons: flagReasonsForPost,
+        flagCount: flagReasonsForPost.length,
+        hidden: Boolean(post.hiddenAt),
+        recommendedAction: moderationRecommendation(flagReasonsForPost, Boolean(post.hiddenAt)),
+      };
+    })
+    .filter((item) => {
+      if (filters.reason === "hidden") {
+        return item.hidden;
+      }
+
+      if (filters.reason) {
+        return item.flagReasons.includes(filters.reason);
+      }
+
+      return item.flagCount > 0 || item.hidden;
+    })
+    .sort((left, right) => right.flagCount - left.flagCount || new Date(right.post.createdAt).getTime() - new Date(left.post.createdAt).getTime());
+}
+
+export function moderatePost(input: { postId: string; action: "keep" | "hide" | "delete" | "restrict_author" }) {
+  const post = findPost(input.postId);
+
+  if (input.action === "keep") {
+    flagsByPostId.set(post.id, []);
+  }
+
+  if ((input.action === "hide" || input.action === "delete") && !post.hiddenAt) {
+    post.hiddenAt = new Date().toISOString();
+  }
+
+  const linkedReport = reports.find((report) => report.id === post.id);
+  if (linkedReport && post.hiddenAt) {
+    linkedReport.hiddenAt = post.hiddenAt;
+  }
+
+  return {
+    postId: post.id,
+    action: input.action,
+    hidden: Boolean(post.hiddenAt),
+    note: "데모 저장소의 운영 액션입니다. 실서비스에서는 처리자, 사유, 처리 로그를 별도 저장해야 합니다.",
+  };
+}
+
 function findPlace(placeId: string) {
   const place = mockPlaces.find((candidate) => candidate.id === placeId);
   if (!place) {
@@ -421,6 +474,26 @@ function verifiedRadiusForInput(place: Place, clientLocation: CreateReportInput[
   const verifiedRadiusM = verifiedRadiusFromDistance(distanceM);
 
   return verifiedRadiusM;
+}
+
+function moderationRecommendation(reasons: FlagReason[], hidden: boolean) {
+  if (hidden) {
+    return "이미 임시 숨김";
+  }
+
+  if (reasons.some((reason) => ["privacy_face", "privacy_plate", "sensitive_info"].includes(reason))) {
+    return "즉시 숨김 검토";
+  }
+
+  if (reasons.includes("false_content")) {
+    return "현장성 재검증";
+  }
+
+  if (reasons.includes("spam")) {
+    return "작성자 제한 검토";
+  }
+
+  return "운영자 확인";
 }
 
 function publicPost(post: StoredPost) {

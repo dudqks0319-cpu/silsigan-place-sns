@@ -52,6 +52,35 @@ button {
   cursor: pointer;
 }
 
+.naver-marker {
+  min-width: 86px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 11px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.24);
+  white-space: nowrap;
+}
+
+.naver-marker--good {
+  background: #16a34a;
+}
+
+.naver-marker--normal {
+  background: #2563eb;
+}
+
+.naver-marker--busy {
+  background: #f97316;
+}
+
+.naver-marker--avoid {
+  background: #ef4444;
+}
+
 a {
   color: inherit;
   text-decoration: none;

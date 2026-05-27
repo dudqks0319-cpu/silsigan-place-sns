@@ -1,4 +1,5 @@
 import { fail, ok } from "@/lib/api";
+import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { createReport, listReports } from "@/lib/mock-store";
 import { createReportSchema, listReportsSchema } from "@/lib/validators";
 
@@ -20,6 +21,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    assertRateLimit({ key: rateLimitKey(request, "create-report"), limit: 12, windowMs: 60_000 });
     const input = createReportSchema.parse(await request.json());
 
     return ok(createReport(input));

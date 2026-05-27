@@ -25,7 +25,7 @@ const variantGradients: Record<string, string> = {
 
 export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
   const { postId } = await params;
-  const post = store.listPosts({ includeHidden: true }).find((candidate) => candidate.id === postId);
+  const post = (await store.listPosts({ includeHidden: true })).find((candidate) => candidate.id === postId);
 
   if (!post || post.hiddenAt) {
     notFound();

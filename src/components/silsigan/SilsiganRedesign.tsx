@@ -39,15 +39,18 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { trackEvent } from "@/lib/analytics";
-import { rankPostsForFeed, recommendHashtags } from "@/lib/domain";
+import { calculateTrustScore, rankPostsForFeed, recommendHashtags } from "@/lib/domain";
 import type {
   CrowdLevel,
+  FieldQuest,
+  FlagReason,
   LineStatus,
   ParkingStatus,
   Place as ApiPlace,
   QuestionType,
   ReportCategory,
   ShareCard,
+  UserReputation,
   WeatherFeel,
 } from "@/lib/domain";
 import { getSupabaseAccessToken } from "@/lib/supabase-browser";
@@ -208,6 +211,20 @@ type Challenge = {
   endsAt: string;
 };
 
+type QuickReportPreset = {
+  id: string;
+  label: string;
+  description: string;
+  patch: Partial<{
+    pickedCrowd: string;
+    pickedParking: string;
+    pickedLine: string;
+    pickedWeather: string;
+    photoAttached: boolean;
+    reportText: string;
+  }>;
+};
+
 type PlaceTab = "실시간" | "사진" | "질문" | "해시태그" | "근처";
 
 const presentationByPlaceId: Record<string, Pick<Place, "distance" | "x" | "y">> = {
@@ -231,6 +248,46 @@ const parkingChips = ["널널", "여유 있음", "거의 없음", "만차"];
 const lineChips = ["없음", "보통", "있음", "매우 김"];
 const weatherChips = ["맑음", "흐림", "비", "실내"];
 const questionExamples = ["주차 자리 있나요?", "줄 많이 긴가요?", "사진으로 볼 수 있나요?", "아이랑 가도 괜찮나요?"];
+const quickReportPresets: QuickReportPreset[] = [
+  {
+    id: "parking-full",
+    label: "주차 만차",
+    description: "주차장이 거의 만차예요.",
+    patch: { pickedParking: "만차", reportText: "주차장이 거의 만차예요.", photoAttached: false },
+  },
+  {
+    id: "line-long",
+    label: "줄 길어요",
+    description: "대기줄이 꽤 길어요.",
+    patch: { pickedLine: "매우 김", reportText: "대기줄이 꽤 길어요.", photoAttached: false },
+  },
+  {
+    id: "quiet",
+    label: "한산해요",
+    description: "지금은 가기 좋아요.",
+    patch: { pickedCrowd: "사람 없음", pickedParking: "여유 있음", pickedLine: "없음", reportText: "지금은 한산해서 가기 좋아요.", photoAttached: false },
+  },
+  {
+    id: "crowd-busy",
+    label: "사람 많아요",
+    description: "현장이 꽤 붐벼요.",
+    patch: { pickedCrowd: "많음", reportText: "지금 사람이 많아서 출발 전 확인이 필요해요.", photoAttached: false },
+  },
+  {
+    id: "photo-spot",
+    label: "사진스팟 좋아요",
+    description: "사진 찍기 좋은 상태예요.",
+    patch: { pickedCrowd: "보통", pickedWeather: "맑음", reportText: "사진 찍기 좋은 상태예요.", photoAttached: true },
+  },
+];
+const postFlagReasonOptions: Array<{ id: FlagReason; label: string; body: string }> = [
+  { id: "privacy_face", label: "얼굴이 보여요", body: "특정인을 알아볼 수 있는 얼굴이 포함됐습니다." },
+  { id: "privacy_plate", label: "차량번호가 보여요", body: "차량번호나 식별 가능한 차량 정보가 포함됐습니다." },
+  { id: "sensitive_info", label: "민감정보가 있어요", body: "서류, 병원, 관공서, 어린이 등 민감한 정보가 포함됐습니다." },
+  { id: "false_content", label: "허위 정보예요", body: "현장 상황과 다른 제보로 보입니다." },
+  { id: "spam", label: "광고/스팸이에요", body: "홍보, 도배, 낚시성 게시물입니다." },
+  { id: "other", label: "기타", body: "다른 이유로 운영자 확인이 필요합니다." },
+];
 const persistedSetKeys = {
   followedPlaceIds: "silsigan.followedPlaceIds.v1",
   followedHashtagNames: "silsigan.followedHashtagNames.v1",
@@ -270,6 +327,40 @@ const challenges: Challenge[] = [
     endsAt: "2026-06-02",
   },
 ];
+const fieldQuests: FieldQuest[] = [
+  {
+    id: "quest-gwangalli-parking",
+    placeId: "busan-gwangalli",
+    questionType: "parking",
+    prompt: "지금 광안리 주차 자리 있나요?",
+    rewardCredits: 1,
+    expiresAt: "2026-06-02T23:59:59.000Z",
+  },
+  {
+    id: "quest-hwangridan-line",
+    placeId: "gyeongju-hwangridan",
+    questionType: "line",
+    prompt: "황리단길 메인 골목 줄이 긴가요?",
+    rewardCredits: 1,
+    expiresAt: "2026-06-02T23:59:59.000Z",
+  },
+  {
+    id: "quest-taehwagang-photo",
+    placeId: "ulsan-taehwagang",
+    questionType: "photo_request",
+    prompt: "태화강 산책로 지금 사진으로 볼 수 있나요?",
+    rewardCredits: 2,
+    expiresAt: "2026-06-02T23:59:59.000Z",
+  },
+  {
+    id: "quest-cityhall-crowd",
+    placeId: "ulsan-city-hall",
+    questionType: "crowd",
+    prompt: "울산시청 민원실 주변 대기가 긴가요?",
+    rewardCredits: 1,
+    expiresAt: "2026-06-02T23:59:59.000Z",
+  },
+];
 
 export default function SilsiganRedesign() {
   const [activeView, setActiveView] = useState<View>("home");
@@ -302,6 +393,7 @@ export default function SilsiganRedesign() {
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(() => new Set());
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [pendingFlagPost, setPendingFlagPost] = useState<PublicPost | null>(null);
 
   const rankedPosts = useMemo(
     () =>
@@ -339,6 +431,26 @@ export default function SilsiganRedesign() {
     () => rankedPosts.filter((post) => post.placeId === selectedPlace?.id),
     [rankedPosts, selectedPlace?.id],
   );
+
+  const userReputation = useMemo<UserReputation>(() => {
+    const verifiedReports = allRankedPosts.filter((post) => post.locationVerified).length;
+    const helpfulReceived = allRankedPosts.reduce((sum, post) => sum + post.helpfulCount, 0);
+    const trustScore = calculateTrustScore({
+      verifiedReports,
+      helpfulReceived,
+      falseReports: 0,
+      privacyViolations: 0,
+    });
+
+    return {
+      userId: "demo-user",
+      trustScore,
+      verifiedReportCount: verifiedReports,
+      helpfulReceivedCount: helpfulReceived,
+      falseReportCount: 0,
+      privacyViolationCount: 0,
+    };
+  }, [allRankedPosts]);
 
   const recommendedTags = useMemo(() => {
     if (!selectedPlace) {
@@ -556,20 +668,53 @@ export default function SilsiganRedesign() {
     }
   };
 
-  const flagPost = async (post: PublicPost) => {
+  const flagPost = async (post: PublicPost, reason: FlagReason) => {
     try {
       const result = await fetchJson<{ hidden: boolean; flagCount: number }>("/api/post-flags", {
         method: "POST",
         body: JSON.stringify({
           postId: post.id,
-          reason: post.safetyWarning ? "sensitive_info" : "privacy_face",
+          reason,
         }),
       });
+      trackEvent("flag_post", { postId: post.id, reason });
       setToast(result.hidden ? "신고가 접수되어 게시물을 임시 숨김 처리했습니다." : `신고가 접수됐습니다. 누적 ${result.flagCount}건`);
+      setPendingFlagPost(null);
       await loadData();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "신고 처리에 실패했습니다.");
     }
+  };
+
+  const applyQuickReportPreset = (preset: QuickReportPreset) => {
+    if (preset.patch.pickedCrowd) setPickedCrowd(preset.patch.pickedCrowd);
+    if (preset.patch.pickedParking) setPickedParking(preset.patch.pickedParking);
+    if (preset.patch.pickedLine) setPickedLine(preset.patch.pickedLine);
+    if (preset.patch.pickedWeather) setPickedWeather(preset.patch.pickedWeather);
+    if (typeof preset.patch.photoAttached === "boolean") setPhotoAttached(preset.patch.photoAttached);
+    if (preset.patch.reportText) setReportText(preset.patch.reportText);
+    trackEvent("submit_quick_report", { presetId: preset.id, placeId: selectedPlace?.id ?? null });
+    setToast(`${preset.label} 빠른 제보가 작성 폼에 반영됐습니다.`);
+  };
+
+  const answerFieldQuest = (quest: FieldQuest) => {
+    if (quest.questionType === "parking") {
+      setPickedParking("거의 없음");
+    }
+    if (quest.questionType === "line") {
+      setPickedLine("있음");
+    }
+    if (quest.questionType === "crowd") {
+      setPickedCrowd("많음");
+    }
+    if (quest.questionType === "photo_request") {
+      setPhotoAttached(true);
+    }
+    setReportText(quest.prompt);
+    setSelectedPlaceId(quest.placeId);
+    setActiveView("report");
+    trackEvent("answer_field_quest", { questId: quest.id, placeId: quest.placeId });
+    setToast("현장 질문을 제보 작성으로 연결했습니다. 위치 인증은 선택 사항입니다.");
   };
 
   const selectHashtag = async (hashtagName: string) => {
@@ -709,7 +854,7 @@ export default function SilsiganRedesign() {
                     helpfulPostIds={helpfulPostIds}
                     savedPostIds={savedPostIds}
                     reports={reports}
-                    onFlagPost={flagPost}
+                    onFlagPost={setPendingFlagPost}
                     onClearHashtagFilter={clearHashtagFilter}
                     onFollowHashtag={toggleHashtagFollow}
                     onHelpfulPost={markHelpful}
@@ -729,6 +874,7 @@ export default function SilsiganRedesign() {
                     onOpenPlace={openPlace}
                     places={places}
                     selectedPlace={selectedPlace}
+                    onToast={setToast}
                   />
                 )}
                 {activeView === "place" && (
@@ -739,8 +885,10 @@ export default function SilsiganRedesign() {
                     questions={questions}
                     reports={selectedReports}
                     nearbyPlaces={places.filter((place) => place.region === selectedPlace.region && place.id !== selectedPlace.id)}
+                    fieldQuests={fieldQuests.filter((quest) => quest.placeId === selectedPlace.id)}
                     onAsk={() => setActiveView("ask")}
-                    onFlagPost={flagPost}
+                    onAnswerQuest={answerFieldQuest}
+                    onFlagPost={setPendingFlagPost}
                     onFollowPlace={() => togglePlaceFollow(selectedPlace)}
                     followedPlace={followedPlaceIds.has(selectedPlace.id)}
                     helpfulPostIds={helpfulPostIds}
@@ -764,12 +912,14 @@ export default function SilsiganRedesign() {
                     locationVerificationStatus={locationVerificationStatus}
                     reportText={reportText}
                     recommendedTags={recommendedTags}
+                    quickReportPresets={quickReportPresets}
                     setPickedCrowd={setPickedCrowd}
                     setPickedParking={setPickedParking}
                     setPickedLine={setPickedLine}
                     setPickedWeather={setPickedWeather}
                     setPhotoAttached={setPhotoAttached}
                     setReportText={setReportText}
+                    onApplyPreset={applyQuickReportPreset}
                     onRequestLocation={requestFieldVerification}
                     onSubmit={submitReport}
                   />
@@ -791,6 +941,7 @@ export default function SilsiganRedesign() {
                     questions={questions}
                     reports={reports}
                     savedPosts={allRankedPosts.filter((post) => savedPostIds.has(post.id))}
+                    userReputation={userReputation}
                   />
                 )}
               </>
@@ -809,6 +960,13 @@ export default function SilsiganRedesign() {
                 closeOnboarding();
                 setActiveView("report");
               }}
+            />
+          )}
+          {pendingFlagPost && (
+            <FlagReasonModal
+              post={pendingFlagPost}
+              onClose={() => setPendingFlagPost(null)}
+              onSubmit={(reason) => void flagPost(pendingFlagPost, reason)}
             />
           )}
         </div>
@@ -1081,16 +1239,30 @@ function MapScreen({
   activeFilter,
   onFilterChange,
   onOpenPlace,
+  onToast,
   places,
   selectedPlace,
 }: {
   activeFilter: string;
   onFilterChange: (filter: string) => void;
   onOpenPlace: (place: Place) => void;
+  onToast: (message: string) => void;
   places: Place[];
   selectedPlace: Place;
 }) {
+  const [trafficEnabled, setTrafficEnabled] = useState(false);
+  const [requeryHintVisible, setRequeryHintVisible] = useState(false);
   const filteredPlaces = filterPlaces(places, activeFilter);
+  const toggleTraffic = () => {
+    const next = !trafficEnabled;
+    setTrafficEnabled(next);
+    trackEvent("toggle_traffic_layer", { enabled: next });
+    onToast(next ? "네이버 교통 레이어를 켰습니다." : "네이버 교통 레이어를 껐습니다.");
+  };
+  const selectMapPlace = (place: Place) => {
+    trackEvent("click_map_marker", { placeId: place.id });
+    onOpenPlace(place);
+  };
 
   return (
     <div className={styles.mapScreen}>
@@ -1112,8 +1284,31 @@ function MapScreen({
         ))}
       </div>
 
+      <div className={styles.mapToolRow}>
+        <button className={trafficEnabled ? styles.mapToolActive : ""} type="button" onClick={toggleTraffic}>
+          {trafficEnabled ? "교통 끄기" : "교통 켜기"}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setRequeryHintVisible(false);
+            onFilterChange("전체");
+            onToast("현재 지도 영역 기준으로 장소를 다시 정렬했습니다. 데모에서는 기존 장소 후보를 사용합니다.");
+          }}
+        >
+          이 지역 다시 검색
+        </button>
+      </div>
+      {requeryHintVisible && <p className={styles.mapRequeryHint}>지도를 움직였습니다. 이 지역 기준으로 다시 검색할 수 있어요.</p>}
+
       <section className={styles.realMapFrame} aria-label="네이버 지도 기반 현장 지도">
-        <NaverMap places={filteredPlaces} compact onSelectPlace={onOpenPlace} />
+        <NaverMap
+          places={filteredPlaces}
+          compact
+          showTraffic={trafficEnabled}
+          onMapInteraction={() => setRequeryHintVisible(true)}
+          onSelectPlace={selectMapPlace}
+        />
       </section>
 
       <section className={styles.mapBottomSheet}>
@@ -1145,7 +1340,9 @@ function PlaceScreen({
   questions,
   reports,
   nearbyPlaces,
+  fieldQuests,
   onAsk,
+  onAnswerQuest,
   onFlagPost,
   onFollowPlace,
   followedPlace,
@@ -1162,7 +1359,9 @@ function PlaceScreen({
   questions: Question[];
   reports: Report[];
   nearbyPlaces: Place[];
+  fieldQuests: FieldQuest[];
   onAsk: () => void;
+  onAnswerQuest: (quest: FieldQuest) => void;
   onFlagPost: (post: PublicPost) => void;
   onFollowPlace: () => void;
   followedPlace: boolean;
@@ -1233,6 +1432,23 @@ function PlaceScreen({
           <p>병원/관공서 사진은 얼굴, 차량번호, 서류, 민원 내용이 보이면 숨김 처리됩니다.</p>
         </section>
       )}
+
+      <section className={styles.fieldQuestCard}>
+        <SectionTitle title="근처 사람이 궁금해해요" caption={`${fieldQuests.length}개`} />
+        <div className={styles.fieldQuestList}>
+          {fieldQuests.map((quest) => (
+            <button key={quest.id} type="button" onClick={() => onAnswerQuest(quest)}>
+              <MessageCircleQuestion size={17} />
+              <div>
+                <strong>{quest.prompt}</strong>
+                <span>답변하면 +{quest.rewardCredits} 물어보기권</span>
+              </div>
+              <ChevronRight size={15} />
+            </button>
+          ))}
+          {fieldQuests.length === 0 && <p className={styles.emptyText}>현재 이 장소에 열린 현장 질문이 없습니다.</p>}
+        </div>
+      </section>
 
       <section className={styles.placeTabs} aria-label="장소 프로필 탭">
         {(["실시간", "사진", "질문", "해시태그", "근처"] as PlaceTab[]).map((tab) => (
@@ -1359,12 +1575,14 @@ function ReportScreen({
   locationVerificationStatus,
   reportText,
   recommendedTags,
+  quickReportPresets,
   setPickedCrowd,
   setPickedParking,
   setPickedLine,
   setPickedWeather,
   setPhotoAttached,
   setReportText,
+  onApplyPreset,
   onRequestLocation,
   onSubmit,
 }: {
@@ -1378,12 +1596,14 @@ function ReportScreen({
   locationVerificationStatus: LocationVerificationStatus;
   reportText: string;
   recommendedTags: string[];
+  quickReportPresets: QuickReportPreset[];
   setPickedCrowd: (value: string) => void;
   setPickedParking: (value: string) => void;
   setPickedLine: (value: string) => void;
   setPickedWeather: (value: string) => void;
   setPhotoAttached: (value: boolean) => void;
   setReportText: (value: string) => void;
+  onApplyPreset: (preset: QuickReportPreset) => void;
   onRequestLocation: () => void;
   onSubmit: () => void;
 }) {
@@ -1396,6 +1616,18 @@ function ReportScreen({
         <div>
           <h2>{place.name} 현장 제보</h2>
           <p>사진이 없어도 등록 가능하고, 현장 인증 때만 반경을 확인합니다.</p>
+        </div>
+      </section>
+
+      <section className={styles.quickReportCard}>
+        <SectionTitle title="10초 빠른 제보" caption="버튼으로 자동 입력" />
+        <div className={styles.quickReportGrid}>
+          {quickReportPresets.map((preset) => (
+            <button key={preset.id} type="button" onClick={() => onApplyPreset(preset)}>
+              <strong>{preset.label}</strong>
+              <span>{preset.description}</span>
+            </button>
+          ))}
         </div>
       </section>
 
@@ -1528,6 +1760,7 @@ function MyScreen({
   questions,
   reports,
   savedPosts,
+  userReputation,
 }: {
   followedHashtagNames: Set<string>;
   followedPlaces: Place[];
@@ -1535,6 +1768,7 @@ function MyScreen({
   questions: Question[];
   reports: Report[];
   savedPosts: PublicPost[];
+  userReputation: UserReputation;
 }) {
   const answeredCount = myQuestions.filter((question) => question.status === "answered").length;
 
@@ -1544,9 +1778,23 @@ function MyScreen({
         <div className={styles.avatar}>실</div>
         <div>
           <h2>실시간러버</h2>
-          <p>지역 제보자 · 신뢰 점수 82</p>
+          <p>지역 제보자 · 신뢰 점수 {userReputation.trustScore}</p>
         </div>
         <Settings size={19} />
+      </section>
+
+      <section className={styles.reputationCard}>
+        <div>
+          <p className={styles.eyebrow}>당근식 로컬 신뢰</p>
+          <h3>현장 인증과 도움돼요가 점수를 올립니다.</h3>
+        </div>
+        <div className={styles.reputationMeter}>
+          <strong>{userReputation.trustScore}</strong>
+          <span>100점 만점</span>
+        </div>
+        <p>
+          현장 인증 {userReputation.verifiedReportCount}건 · 도움돼요 {userReputation.helpfulReceivedCount}건 · 허위/민감정보 위반은 감점됩니다.
+        </p>
       </section>
 
       <section className={styles.myStatsGrid}>
@@ -1738,6 +1986,41 @@ function OnboardingSheet({
           <button type="button" onClick={onClose}>바로 둘러보기</button>
           <button type="button" onClick={onGoMap}>내 주변 보기</button>
           <button type="button" onClick={onGoReport}>사진 없이 제보</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function FlagReasonModal({
+  post,
+  onClose,
+  onSubmit,
+}: {
+  post: PublicPost;
+  onClose: () => void;
+  onSubmit: (reason: FlagReason) => void;
+}) {
+  return (
+    <div className={styles.flagModalOverlay} role="dialog" aria-modal="true" aria-label="게시물 신고 이유 선택">
+      <section className={styles.flagModal}>
+        <div className={styles.flagModalHeader}>
+          <div>
+            <p className={styles.eyebrow}>신고 사유 선택</p>
+            <h2>{post.shareCard.headline}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="신고 닫기">
+            <X size={16} />
+          </button>
+        </div>
+        <p className={styles.flagModalHelp}>개인정보, 차량번호, 민감정보는 1회 신고만으로도 임시 숨김 검토에 들어갑니다.</p>
+        <div className={styles.flagReasonList}>
+          {postFlagReasonOptions.map((reason) => (
+            <button key={reason.id} type="button" onClick={() => onSubmit(reason.id)}>
+              <strong>{reason.label}</strong>
+              <span>{reason.body}</span>
+            </button>
+          ))}
         </div>
       </section>
     </div>

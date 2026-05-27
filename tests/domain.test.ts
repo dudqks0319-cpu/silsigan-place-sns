@@ -3,6 +3,7 @@ import test from "node:test";
 
 const {
   calculateCreditBalance,
+  calculateTrustScore,
   creditEventForQuestion,
   creditEventsForReport,
   judgementFromStatus,
@@ -15,7 +16,9 @@ const {
   verifiedRadiusFromDistance,
 } = await import(new URL("../src/lib/domain.ts", import.meta.url).href);
 
-const { createPost, createReport, flagPost, listPosts } = await import(new URL("../src/lib/mock-store.ts", import.meta.url).href);
+const { createPost, createReport, flagPost, listPostModerationQueue, listPosts } = await import(new URL("../src/lib/mock-store.ts", import.meta.url).href);
+const { isAdminTokenValid } = await import(new URL("../src/lib/admin-auth.ts", import.meta.url).href);
+const { assertRateLimit, clearRateLimitBucketsForTests } = await import(new URL("../src/lib/rate-limit.ts", import.meta.url).href);
 const { getStore } = await import(new URL("../src/lib/store.ts", import.meta.url).href);
 
 test("reports expire three hours after creation", () => {
@@ -60,6 +63,20 @@ test("flag rules hide privacy-sensitive, repeated false, or high-volume reports"
   assert.equal(shouldHideForFlags(["false_content", "false_content"]), true);
   assert.equal(shouldHideForFlags(["spam", "other"]), false);
   assert.equal(shouldHideForFlags(["spam", "other", "false_content"]), true);
+});
+
+test("local reputation score rewards verified helpful reports and penalizes abuse", () => {
+  assert.equal(
+    calculateTrustScore({
+      verifiedReports: 4,
+      helpfulReceived: 12,
+      falseReports: 1,
+      privacyViolations: 0,
+    }),
+    60,
+  );
+  assert.equal(calculateTrustScore({ verifiedReports: 99, helpfulReceived: 99, falseReports: 0, privacyViolations: 0 }), 95);
+  assert.equal(calculateTrustScore({ verifiedReports: 0, helpfulReceived: 0, falseReports: 3, privacyViolations: 2 }), 0);
 });
 
 test("verified radius stores only coarse radius buckets", () => {
@@ -161,6 +178,7 @@ test("feed posts generate share cards and privacy reports can hide posts", () =>
 
   assert.equal(flagResult.hidden, true);
   assert.equal(listPosts({ includeHidden: false }).some((post: { id: string }) => post.id === created.post.id), false);
+  assert.equal(listPostModerationQueue({ reason: "privacy_plate" }).some((item: { post: { id: string } }) => item.post.id === created.post.id), true);
 });
 
 test("posts without real user location remain status reports", () => {
@@ -206,13 +224,38 @@ test("api routes can use the store abstraction in demo mode", () => {
   assert.equal(typeof store.listPosts, "function");
   assert.equal(typeof store.listHashtags, "function");
   assert.equal(typeof store.flagPost, "function");
+  assert.equal(typeof store.listPostModerationQueue, "function");
+  assert.equal(typeof store.moderatePost, "function");
 });
 
-test("store abstraction exposes a supabase driver boundary", () => {
+test("store abstraction exposes a supabase driver boundary", async () => {
   const store = getStore("supabase");
 
-  assert.throws(
+  await assert.rejects(
     () => store.listPosts(),
-    /Supabase store driver is not implemented/,
+    /Supabase 서버 환경변수가 설정되지 않았습니다/,
   );
+});
+
+test("rate limit blocks excess requests within a window", () => {
+  clearRateLimitBucketsForTests();
+  assert.doesNotThrow(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }));
+  assert.doesNotThrow(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }));
+  assert.throws(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }), /요청이 너무 많습니다/);
+});
+
+test("admin token is deny-by-default when configured", () => {
+  const previous = process.env.SILSIGAN_ADMIN_TOKEN;
+  process.env.SILSIGAN_ADMIN_TOKEN = "secret-admin-token";
+
+  try {
+    assert.equal(isAdminTokenValid("wrong-token"), false);
+    assert.equal(isAdminTokenValid("secret-admin-token"), true);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.SILSIGAN_ADMIN_TOKEN;
+    } else {
+      process.env.SILSIGAN_ADMIN_TOKEN = previous;
+    }
+  }
 });

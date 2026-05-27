@@ -67,6 +67,43 @@ export type Place = {
   region: "ulsan" | "busan" | "gyeongju";
 };
 
+export type UserReputation = {
+  userId: string;
+  trustScore: number;
+  verifiedReportCount: number;
+  helpfulReceivedCount: number;
+  falseReportCount: number;
+  privacyViolationCount: number;
+};
+
+export type FieldQuest = {
+  id: string;
+  placeId: string;
+  questionType: "parking" | "line" | "crowd" | "photo_request";
+  prompt: string;
+  rewardCredits: 1 | 2;
+  expiresAt: string;
+};
+
+export type ExternalLiveSource = {
+  id: string;
+  placeId: string;
+  provider: "naver" | "kakao" | "its" | "seoul_citydata" | "youtube";
+  sourceType: "map" | "traffic" | "cctv" | "citydata" | "livecam";
+  sourceName: string;
+  sourceUrl: string | null;
+  apiEndpoint: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  coverageRadiusM: number;
+  canEmbed: boolean;
+  canAnalyze: boolean;
+  licenseNote: string | null;
+  lastCheckedAt: string | null;
+  isActive: boolean;
+  createdAt: string;
+};
+
 export type StoredReport = {
   id: string;
   placeId: string;
@@ -181,6 +218,22 @@ export function creditEventsForReport(hasVerifiedLocation: boolean, hasPhoto: bo
   }
 
   return events;
+}
+
+export function calculateTrustScore(input: {
+  verifiedReports: number;
+  helpfulReceived: number;
+  falseReports: number;
+  privacyViolations: number;
+}): number {
+  const score =
+    50 +
+    Math.min(input.verifiedReports * 2, 25) +
+    Math.min(input.helpfulReceived, 20) -
+    input.falseReports * 10 -
+    input.privacyViolations * 20;
+
+  return Math.max(0, Math.min(100, score));
 }
 
 export function shouldHideForFlags(flagReasonsToReview: FlagReason[]): boolean {

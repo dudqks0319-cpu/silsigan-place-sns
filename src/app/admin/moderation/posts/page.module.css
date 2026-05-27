@@ -1,0 +1,199 @@
+.page {
+  min-height: 100dvh;
+  padding: 32px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", sans-serif;
+}
+
+.hero,
+.metrics div,
+.queueItem,
+.empty {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+}
+
+.hero {
+  padding: 24px;
+  background: linear-gradient(135deg, #0f172a, #14532d);
+  color: #ffffff;
+}
+
+.hero p,
+.hero h1,
+.hero span {
+  margin: 0;
+}
+
+.hero p {
+  color: #86efac;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.hero h1 {
+  margin-top: 8px;
+  font-size: 28px;
+}
+
+.hero span {
+  display: block;
+  margin-top: 10px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.metrics div {
+  padding: 18px;
+}
+
+.metrics strong {
+  display: block;
+  font-size: 26px;
+}
+
+.metrics span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tabs button,
+.actionRow button {
+  border: 0;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+  padding: 9px 12px;
+  font-weight: 900;
+}
+
+.queueList {
+  display: grid;
+  gap: 12px;
+}
+
+.queueItem {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 14px;
+  padding: 16px;
+}
+
+.thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: #fee2e2;
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.itemBody {
+  min-width: 0;
+}
+
+.itemHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.itemHeader strong,
+.itemHeader span {
+  display: block;
+}
+
+.itemHeader span,
+.queueItem p {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.itemHeader em {
+  color: #16a34a;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.queueItem p {
+  margin: 10px 0;
+  line-height: 1.5;
+}
+
+.reasonRow,
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.reasonRow span {
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.actionRow {
+  margin-top: 12px;
+}
+
+.actionRow button {
+  background: #ecfdf3;
+  color: #166534;
+}
+
+.empty {
+  padding: 28px;
+  text-align: center;
+}
+
+.empty p {
+  margin: 8px 0 0;
+  color: #64748b;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 16px;
+  }
+
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .queueItem {
+    grid-template-columns: 1fr;
+  }
+
+  .itemHeader {
+    display: block;
+  }
+}

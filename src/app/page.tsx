@@ -1,5 +1,5 @@
-import SilsiganRedesign from "@/components/silsigan/SilsiganRedesign";
+import SilsiganKoreanUX from "@/components/silsigan/SilsiganKoreanUX";
 
 export default function HomePage() {
-  return <SilsiganRedesign />;
+  return <SilsiganKoreanUX />;
 }
