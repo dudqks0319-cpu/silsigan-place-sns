@@ -77,7 +77,7 @@ const posts: StoredPost[] = [
     photoLabel: "광안리 주차장 입구",
     helpfulCount: 31,
     commentCount: 8,
-    hashtagNames: ["광안리주차", "주차만차", "부산", "지금", "부산아이랑"],
+    hashtagNames: ["광안리주차살려줘", "광안리주차", "주차만차", "부산", "지금"],
     minutesAgo: 12,
   }),
   makeSeedPost({

@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { trackEvent } from "@/lib/analytics";
 import { rankPostsForFeed, recommendHashtags } from "@/lib/domain";
 import type {
   CrowdLevel,
@@ -50,6 +51,7 @@ import type {
   WeatherFeel,
 } from "@/lib/domain";
 import { getSupabaseAccessToken } from "@/lib/supabase-browser";
+import { getSiteUrl } from "@/lib/site-url";
 import { crowdLabels, lineLabels, parkingLabels, weatherLabels } from "./labels";
 import { NaverMap } from "./NaverMap";
 import styles from "./SilsiganRedesign.module.css";
@@ -195,6 +197,19 @@ type ClientLocation = {
   longitude: number;
 };
 
+type Challenge = {
+  id: string;
+  title: string;
+  hashtagName: string;
+  region: Place["region"];
+  description: string;
+  rewardBadge: string;
+  startsAt: string;
+  endsAt: string;
+};
+
+type PlaceTab = "실시간" | "사진" | "질문" | "해시태그" | "근처";
+
 const presentationByPlaceId: Record<string, Pick<Place, "distance" | "x" | "y">> = {
   "ulsan-taehwagang": { distance: "1.2km", x: 31, y: 47 },
   "busan-gwangalli": { distance: "38km", x: 65, y: 39 },
@@ -216,6 +231,45 @@ const parkingChips = ["널널", "여유 있음", "거의 없음", "만차"];
 const lineChips = ["없음", "보통", "있음", "매우 김"];
 const weatherChips = ["맑음", "흐림", "비", "실내"];
 const questionExamples = ["주차 자리 있나요?", "줄 많이 긴가요?", "사진으로 볼 수 있나요?", "아이랑 가도 괜찮나요?"];
+const persistedSetKeys = {
+  followedPlaceIds: "silsigan.followedPlaceIds.v1",
+  followedHashtagNames: "silsigan.followedHashtagNames.v1",
+  helpfulPostIds: "silsigan.helpfulPostIds.v1",
+  savedPostIds: "silsigan.savedPostIds.v1",
+} as const;
+const firstVisitSeenKey = "silsigan.firstVisitSeen.v1";
+const challenges: Challenge[] = [
+  {
+    id: "gwangalli-parking-help",
+    title: "광안리 주차 살려줘",
+    hashtagName: "광안리주차살려줘",
+    region: "busan",
+    description: "광안리 근처 주차 상황만 알려줘도 출발 전 판단에 큰 도움이 됩니다.",
+    rewardBadge: "부산 주차 도우미",
+    startsAt: "2026-05-27",
+    endsAt: "2026-06-02",
+  },
+  {
+    id: "hwangridan-waiting",
+    title: "황리단길 웨이팅 제보",
+    hashtagName: "황리단길웨이팅",
+    region: "gyeongju",
+    description: "카페와 골목 대기 상황을 짧게 제보해 주세요.",
+    rewardBadge: "경주 웨이팅 답변왕",
+    startsAt: "2026-05-27",
+    endsAt: "2026-06-02",
+  },
+  {
+    id: "taehwagang-walk",
+    title: "오늘의 태화강 산책",
+    hashtagName: "태화강산책",
+    region: "ulsan",
+    description: "산책로 혼잡도, 주차 여유, 노을 상태를 공유해 주세요.",
+    rewardBadge: "태화강 제보왕",
+    startsAt: "2026-05-27",
+    endsAt: "2026-06-02",
+  },
+];
 
 export default function SilsiganRedesign() {
   const [activeView, setActiveView] = useState<View>("home");
@@ -246,6 +300,8 @@ export default function SilsiganRedesign() {
   const [followedHashtagNames, setFollowedHashtagNames] = useState<Set<string>>(() => new Set());
   const [helpfulPostIds, setHelpfulPostIds] = useState<Set<string>>(() => new Set());
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(() => new Set());
+  const [persistenceReady, setPersistenceReady] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const rankedPosts = useMemo(
     () =>
@@ -289,14 +345,19 @@ export default function SilsiganRedesign() {
       return [];
     }
 
-    return recommendHashtags({
+    const baseTags = recommendHashtags({
       place: selectedPlace,
       crowdLevel: crowdValueFromLabel(pickedCrowd),
       parkingStatus: parkingValueFromLabel(pickedParking),
       lineStatus: lineValueFromLabel(pickedLine),
       weatherFeel: weatherValueFromLabel(pickedWeather),
     });
-  }, [pickedCrowd, pickedLine, pickedParking, pickedWeather, selectedPlace]);
+    const challengeTag = selectedHashtagName && challenges.some((challenge) => challenge.hashtagName === selectedHashtagName)
+      ? selectedHashtagName
+      : null;
+
+    return challengeTag ? [challengeTag, ...baseTags.filter((tag) => tag !== challengeTag)].slice(0, 5) : baseTags;
+  }, [pickedCrowd, pickedLine, pickedParking, pickedWeather, selectedHashtagName, selectedPlace]);
 
   const loadData = async () => {
     setLoading(true);
@@ -342,6 +403,53 @@ export default function SilsiganRedesign() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setFollowedPlaceIds(readPersistedSet(persistedSetKeys.followedPlaceIds));
+      setFollowedHashtagNames(readPersistedSet(persistedSetKeys.followedHashtagNames));
+      setHelpfulPostIds(readPersistedSet(persistedSetKeys.helpfulPostIds));
+      setSavedPostIds(readPersistedSet(persistedSetKeys.savedPostIds));
+      setShowOnboarding(window.localStorage.getItem(firstVisitSeenKey) !== "true");
+      setPersistenceReady(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+
+    persistSet(persistedSetKeys.followedPlaceIds, followedPlaceIds);
+  }, [followedPlaceIds, persistenceReady]);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+
+    persistSet(persistedSetKeys.followedHashtagNames, followedHashtagNames);
+  }, [followedHashtagNames, persistenceReady]);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+
+    persistSet(persistedSetKeys.helpfulPostIds, helpfulPostIds);
+  }, [helpfulPostIds, persistenceReady]);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+
+    persistSet(persistedSetKeys.savedPostIds, savedPostIds);
+  }, [persistenceReady, savedPostIds]);
+
+  useEffect(() => {
+    if (activeView === "home") {
+      trackEvent("view_home");
+    }
+
+    if (activeView === "place" && selectedPlace) {
+      trackEvent("view_place", { placeId: selectedPlace.id });
+    }
+  }, [activeView, selectedPlace]);
+
   const openPlace = (place: Place) => {
     setLocationVerificationStatus("idle");
     setVerifiedLocation(null);
@@ -351,6 +459,7 @@ export default function SilsiganRedesign() {
   };
 
   const requestFieldVerification = () => {
+    trackEvent("request_location", { placeId: selectedPlace?.id ?? null });
     if (!navigator.geolocation) {
       setVerifiedLocation(null);
       setLocationVerificationStatus("unsupported");
@@ -371,6 +480,7 @@ export default function SilsiganRedesign() {
       () => {
         setVerifiedLocation(null);
         setLocationVerificationStatus("denied");
+        trackEvent("location_denied", { placeId: selectedPlace?.id ?? null });
         setToast("위치 권한 없이 상태 제보로 등록됩니다. 현장 인증 배지는 붙지 않습니다.");
       },
       {
@@ -405,6 +515,7 @@ export default function SilsiganRedesign() {
       });
       const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
       const badge = result.post.locationVerified ? "현장 인증" : "상태 제보";
+      trackEvent("submit_post", { placeId: selectedPlace.id, locationVerified: result.post.locationVerified });
       setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}`);
       setReportText("");
       setLocationVerificationStatus("idle");
@@ -467,6 +578,7 @@ export default function SilsiganRedesign() {
       setPosts(filteredPosts);
       setSelectedHashtagName(hashtagName);
       setActiveView("home");
+      trackEvent("click_hashtag", { hashtagName });
       setToast(`#${hashtagName} 피드 ${filteredPosts.length}건을 불러왔습니다.`);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "해시태그 피드를 불러오지 못했습니다.");
@@ -478,15 +590,22 @@ export default function SilsiganRedesign() {
     await loadData();
   };
 
+  const selectChallenge = async (challenge: Challenge) => {
+    trackEvent("view_challenge", { challengeId: challenge.id, hashtagName: challenge.hashtagName });
+    await selectHashtag(challenge.hashtagName);
+  };
+
   const togglePlaceFollow = (place: Place) => {
     setFollowedPlaceIds((current) => toggleSetValue(current, place.id));
     const isFollowing = followedPlaceIds.has(place.id);
+    trackEvent("follow_place", { placeId: place.id, following: !isFollowing });
     setToast(isFollowing ? `${place.name} 팔로우를 해제했습니다.` : `${place.name} 새 현장 제보를 팔로우합니다.`);
   };
 
   const toggleHashtagFollow = (hashtagName: string) => {
     setFollowedHashtagNames((current) => toggleSetValue(current, hashtagName));
     const isFollowing = followedHashtagNames.has(hashtagName);
+    trackEvent("follow_hashtag", { hashtagName, following: !isFollowing });
     setToast(isFollowing ? `#${hashtagName} 팔로우를 해제했습니다.` : `#${hashtagName} 관심 피드를 팔로우합니다.`);
   };
 
@@ -497,25 +616,68 @@ export default function SilsiganRedesign() {
     }
 
     setHelpfulPostIds((current) => toggleSetValue(current, post.id));
+    trackEvent("helpful_post", { postId: post.id });
     setToast("도움돼요가 반영됐습니다. 피드 랭킹에 즉시 반영됩니다.");
   };
 
   const toggleSavePost = (post: PublicPost) => {
     setSavedPostIds((current) => toggleSetValue(current, post.id));
     const isSaved = savedPostIds.has(post.id);
+    trackEvent("save_post", { postId: post.id, saved: !isSaved });
     setToast(isSaved ? "저장을 해제했습니다." : "마이에 저장했습니다.");
   };
 
   const sharePost = async (post: PublicPost) => {
-    const shareUrl = `${window.location.origin}/share/post/${post.id}`;
+    const shareUrl = `${getSiteUrl()}/share/post/${post.id}`;
     const shareText = `${post.shareCard.headline}\n${post.shareCard.body}\n${post.shareCard.hashtags.map((tag) => `#${tag}`).join(" ")}\n${shareUrl}`;
+    const browserNavigator = navigator as Navigator & {
+      clipboard?: Clipboard;
+      share?: (data: ShareData) => Promise<void>;
+    };
 
     try {
-      await navigator.clipboard.writeText(shareText);
+      if (browserNavigator.share) {
+        await browserNavigator.share({
+          title: post.shareCard.headline,
+          text: `${post.shareCard.body}\n${post.shareCard.hashtags.map((tag) => `#${tag}`).join(" ")}`,
+          url: shareUrl,
+        });
+        trackEvent("share_post", { postId: post.id, method: "native" });
+        setToast("공유 시트를 열었습니다.");
+        return;
+      }
+
+      if (!browserNavigator.clipboard) {
+        throw new Error("Clipboard API unavailable");
+      }
+
+      await browserNavigator.clipboard.writeText(shareText);
+      trackEvent("share_post", { postId: post.id, method: "clipboard" });
       setToast("공유 카드 페이지 링크를 복사했습니다.");
-    } catch {
-      setToast(shareText);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setToast("공유를 취소했습니다.");
+        return;
+      }
+
+      try {
+        if (!browserNavigator.clipboard) {
+          throw new Error("Clipboard API unavailable");
+        }
+
+        await browserNavigator.clipboard.writeText(shareText);
+        trackEvent("share_post", { postId: post.id, method: "clipboard_fallback" });
+        setToast("공유가 어려워 링크를 복사했습니다.");
+      } catch {
+        setToast(shareText);
+      }
     }
+  };
+
+  const closeOnboarding = () => {
+    window.localStorage.setItem(firstVisitSeenKey, "true");
+    setShowOnboarding(false);
+    trackEvent("complete_onboarding");
   };
 
   return (
@@ -541,6 +703,7 @@ export default function SilsiganRedesign() {
                     questions={questions}
                     posts={rankedPosts}
                     hashtags={hashtags}
+                    challenges={challenges}
                     selectedHashtagName={selectedHashtagName}
                     followedHashtagNames={followedHashtagNames}
                     helpfulPostIds={helpfulPostIds}
@@ -552,6 +715,7 @@ export default function SilsiganRedesign() {
                     onHelpfulPost={markHelpful}
                     onOpenPlace={openPlace}
                     onSavePost={toggleSavePost}
+                    onSelectChallenge={selectChallenge}
                     onSharePost={sharePost}
                     onSelectHashtag={selectHashtag}
                     onGoMap={() => setActiveView("map")}
@@ -569,10 +733,12 @@ export default function SilsiganRedesign() {
                 )}
                 {activeView === "place" && (
                   <PlaceScreen
+                    key={selectedPlace.id}
                     place={selectedPlace}
                     posts={selectedPosts}
                     questions={questions}
                     reports={selectedReports}
+                    nearbyPlaces={places.filter((place) => place.region === selectedPlace.region && place.id !== selectedPlace.id)}
                     onAsk={() => setActiveView("ask")}
                     onFlagPost={flagPost}
                     onFollowPlace={() => togglePlaceFollow(selectedPlace)}
@@ -632,6 +798,19 @@ export default function SilsiganRedesign() {
           </div>
 
           <BottomNav activeView={activeView} onChange={setActiveView} />
+          {showOnboarding && (
+            <OnboardingSheet
+              onClose={closeOnboarding}
+              onGoMap={() => {
+                closeOnboarding();
+                setActiveView("map");
+              }}
+              onGoReport={() => {
+                closeOnboarding();
+                setActiveView("report");
+              }}
+            />
+          )}
         </div>
 
         <OperatorPanel hashtags={hashtags} places={places} posts={rankedPosts} questions={questions} />
@@ -694,6 +873,7 @@ function HomeScreen({
   questions,
   posts,
   hashtags,
+  challenges,
   selectedHashtagName,
   followedHashtagNames,
   helpfulPostIds,
@@ -705,6 +885,7 @@ function HomeScreen({
   onHelpfulPost,
   onOpenPlace,
   onSavePost,
+  onSelectChallenge,
   onSharePost,
   onSelectHashtag,
   onGoMap,
@@ -714,6 +895,7 @@ function HomeScreen({
   questions: Question[];
   posts: PublicPost[];
   hashtags: PublicHashtag[];
+  challenges: Challenge[];
   selectedHashtagName: string | null;
   followedHashtagNames: Set<string>;
   helpfulPostIds: Set<string>;
@@ -725,6 +907,7 @@ function HomeScreen({
   onHelpfulPost: (post: PublicPost) => void;
   onOpenPlace: (place: Place) => void;
   onSavePost: (post: PublicPost) => void;
+  onSelectChallenge: (challenge: Challenge) => void;
   onSharePost: (post: PublicPost) => void;
   onSelectHashtag: (hashtagName: string) => void;
   onGoMap: () => void;
@@ -777,6 +960,20 @@ function HomeScreen({
           <span>지금은 비추</span>
           <strong>{avoidCount}</strong>
         </button>
+      </section>
+
+      <section className={styles.challengeSection}>
+        <SectionTitle title="이번 주 실시간 챌린지" caption="해시태그로 참여" />
+        <div className={styles.challengeList}>
+          {challenges.map((challenge) => (
+            <button key={challenge.id} type="button" onClick={() => onSelectChallenge(challenge)}>
+              <span>#{challenge.hashtagName}</span>
+              <strong>{challenge.title}</strong>
+              <p>{challenge.description}</p>
+              <small>{challenge.rewardBadge} 뱃지</small>
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className={styles.sectionBlock}>
@@ -947,6 +1144,7 @@ function PlaceScreen({
   posts,
   questions,
   reports,
+  nearbyPlaces,
   onAsk,
   onFlagPost,
   onFollowPlace,
@@ -963,6 +1161,7 @@ function PlaceScreen({
   posts: PublicPost[];
   questions: Question[];
   reports: Report[];
+  nearbyPlaces: Place[];
   onAsk: () => void;
   onFlagPost: (post: PublicPost) => void;
   onFollowPlace: () => void;
@@ -975,11 +1174,14 @@ function PlaceScreen({
   onSharePost: (post: PublicPost) => void;
   onSelectHashtag: (hashtagName: string) => void;
 }) {
+  const [placeActiveTab, setPlaceActiveTab] = useState<PlaceTab>("실시간");
   const hasSensitivePolicy = place.category === "hospital" || place.category === "public_office";
-  const latestQuestion = questions.find((question) => question.placeId === place.id && !question.answeredReportId);
+  const placeQuestions = questions.filter((question) => question.placeId === place.id);
+  const latestQuestion = placeQuestions.find((question) => !question.answeredReportId);
   const placeHashtags = [...new Set(posts.flatMap((post) => post.hashtagNames))].slice(0, 8);
   const photoCount = posts.reduce((sum, post) => sum + post.photoCount, 0);
   const todayReports = posts.length || reports.length;
+  const tabPosts = placeActiveTab === "사진" ? posts.filter((post) => post.photoCount > 0) : posts;
 
   return (
     <div className={styles.screenStack}>
@@ -1033,32 +1235,84 @@ function PlaceScreen({
       )}
 
       <section className={styles.placeTabs} aria-label="장소 프로필 탭">
-        {["실시간", "사진", "질문", "해시태그", "근처"].map((tab, index) => (
-          <button key={tab} className={index === 0 ? styles.placeTabActive : ""} type="button">{tab}</button>
+        {(["실시간", "사진", "질문", "해시태그", "근처"] as PlaceTab[]).map((tab) => (
+          <button key={tab} className={tab === placeActiveTab ? styles.placeTabActive : ""} type="button" onClick={() => setPlaceActiveTab(tab)}>{tab}</button>
         ))}
       </section>
 
-      <section className={styles.sectionBlock}>
-        <SectionTitle title="장소별 타임라인" caption={`${posts.length}건`} />
-        <div className={styles.feedList}>
-          {posts.map((post) => (
-            <FeedPostCard
-              key={post.id}
-	              post={post}
-	              place={place}
-	              onFlag={() => onFlagPost(post)}
-	              onHelpful={() => onHelpfulPost(post)}
-	              onOpenPlace={() => undefined}
-	              onSave={() => onSavePost(post)}
-	              onShare={() => onSharePost(post)}
-	              onSelectHashtag={onSelectHashtag}
-	              helpfulActive={helpfulPostIds.has(post.id)}
-	              saved={savedPostIds.has(post.id)}
-	            />
-          ))}
-          {posts.length === 0 && <p className={styles.emptyText}>아직 장소별 피드가 없습니다. 첫 제보를 남겨주세요.</p>}
-        </div>
-      </section>
+      {(placeActiveTab === "실시간" || placeActiveTab === "사진") && (
+        <section className={styles.sectionBlock}>
+          <SectionTitle title={placeActiveTab === "사진" ? "사진 있는 게시물" : "장소별 타임라인"} caption={`${tabPosts.length}건`} />
+          <div className={styles.feedList}>
+            {tabPosts.map((post) => (
+              <FeedPostCard
+                key={post.id}
+                post={post}
+                place={place}
+                onFlag={() => onFlagPost(post)}
+                onHelpful={() => onHelpfulPost(post)}
+                onOpenPlace={() => undefined}
+                onSave={() => onSavePost(post)}
+                onShare={() => onSharePost(post)}
+                onSelectHashtag={onSelectHashtag}
+                helpfulActive={helpfulPostIds.has(post.id)}
+                saved={savedPostIds.has(post.id)}
+              />
+            ))}
+            {tabPosts.length === 0 && <p className={styles.emptyText}>{placeActiveTab === "사진" ? "아직 사진이 있는 게시물이 없습니다." : "아직 장소별 피드가 없습니다. 첫 제보를 남겨주세요."}</p>}
+          </div>
+        </section>
+      )}
+
+      {placeActiveTab === "질문" && (
+        <section className={styles.sectionBlock}>
+          <SectionTitle title="장소 질문" caption={`${placeQuestions.length}건`} />
+          <div className={styles.answerList}>
+            {placeQuestions.map((question) => (
+              <article key={question.id} className={styles.answerItem}>
+                <MessageCircleQuestion size={18} />
+                <div>
+                  <strong>{question.body}</strong>
+                  <p>{question.time} · {question.answeredReportId ? "답변 완료" : "답변 대기"}</p>
+                </div>
+                <span>{question.reward}</span>
+              </article>
+            ))}
+            {placeQuestions.length === 0 && <p className={styles.emptyText}>아직 이 장소에 올라온 질문이 없습니다.</p>}
+          </div>
+        </section>
+      )}
+
+      {placeActiveTab === "해시태그" && (
+        <section className={styles.sectionBlock}>
+          <SectionTitle title="장소 해시태그" caption={`${placeHashtags.length}개`} />
+          <div className={styles.hashtagCloud}>
+            {placeHashtags.map((tag) => (
+              <button key={tag} type="button" onClick={() => onSelectHashtag(tag)}><Hash size={13} />{tag}</button>
+            ))}
+            {placeHashtags.length === 0 && <p className={styles.emptyText}>아직 이 장소에 연결된 해시태그가 없습니다.</p>}
+          </div>
+        </section>
+      )}
+
+      {placeActiveTab === "근처" && (
+        <section className={styles.sectionBlock}>
+          <SectionTitle title="근처 장소" caption={`${nearbyPlaces.length}곳`} />
+          <div className={styles.rankingList}>
+            {nearbyPlaces.map((nearbyPlace, index) => (
+              <article key={nearbyPlace.id} className={styles.nearbyPlaceItem}>
+                <span className={styles.rank}>{index + 1}</span>
+                <div>
+                  <strong>{nearbyPlace.name}</strong>
+                  <p>{nearbyPlace.summary}</p>
+                </div>
+                <span className={`${styles.statusChip} ${styles[nearbyPlace.tone]}`}>{nearbyPlace.signal}</span>
+              </article>
+            ))}
+            {nearbyPlaces.length === 0 && <p className={styles.emptyText}>같은 지역의 근처 장소가 아직 없습니다.</p>}
+          </div>
+        </section>
+      )}
 
       <section className={styles.sectionBlock}>
         <SectionTitle title="최근 현장 사진" caption={`${reports.length || 1}건`} />
@@ -1077,17 +1331,6 @@ function PlaceScreen({
           <LiveReportCard key={report.id} report={report} place={place} />
         ))}
       </section>
-
-      {placeHashtags.length > 0 && (
-        <section className={styles.sectionBlock}>
-          <SectionTitle title="장소 해시태그" caption="검색과 공유용" />
-          <div className={styles.hashtagCloud}>
-	            {placeHashtags.map((tag) => (
-	              <button key={tag} type="button" onClick={() => onSelectHashtag(tag)}><Hash size={13} />{tag}</button>
-	            ))}
-          </div>
-        </section>
-      )}
 
       <section className={styles.questionCard}>
         <div>
@@ -1464,6 +1707,40 @@ function BottomNav({ activeView, onChange }: { activeView: View; onChange: (view
         );
       })}
     </nav>
+  );
+}
+
+function OnboardingSheet({
+  onClose,
+  onGoMap,
+  onGoReport,
+}: {
+  onClose: () => void;
+  onGoMap: () => void;
+  onGoReport: () => void;
+}) {
+  return (
+    <div className={styles.onboardingOverlay} role="dialog" aria-modal="true" aria-label="#실시간 첫 방문 안내">
+      <section className={styles.onboardingSheet}>
+        <button className={styles.onboardingClose} type="button" onClick={onClose} aria-label="온보딩 닫기">
+          <X size={16} />
+        </button>
+        <div>
+          <span>처음 오셨나요?</span>
+          <h2>지도보다 먼저, 지금 상황을 보세요.</h2>
+        </div>
+        <ol>
+          <li>출발 전 10초로 사람, 주차, 줄을 확인합니다.</li>
+          <li>사진 없이도 상태만 제보할 수 있습니다.</li>
+          <li>현장 인증은 선택이고 정확한 좌표는 저장하지 않습니다.</li>
+        </ol>
+        <div className={styles.onboardingActions}>
+          <button type="button" onClick={onClose}>바로 둘러보기</button>
+          <button type="button" onClick={onGoMap}>내 주변 보기</button>
+          <button type="button" onClick={onGoReport}>사진 없이 제보</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1907,6 +2184,22 @@ function toggleSetValue<TValue>(set: Set<TValue>, value: TValue) {
   }
 
   return next;
+}
+
+function readPersistedSet(key: string) {
+  try {
+    const value = window.localStorage.getItem(key);
+    if (!value) return new Set<string>();
+    const parsed = JSON.parse(value);
+
+    return Array.isArray(parsed) ? new Set(parsed.filter((item): item is string => typeof item === "string")) : new Set<string>();
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function persistSet(key: string, set: Set<string>) {
+  window.localStorage.setItem(key, JSON.stringify([...set]));
 }
 
 function crowdValueFromLabel(label: string): CrowdLevel {

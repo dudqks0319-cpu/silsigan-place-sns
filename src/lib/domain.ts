@@ -129,6 +129,7 @@ export type ShareCard = {
   body: string;
   url: string;
   hashtags: string[];
+  variant: "avoid" | "good" | "parking_full" | "waiting" | "photo_spot";
 };
 
 export function getCategorySafetyWarning(category: ReportCategory): string | null {
@@ -266,8 +267,9 @@ export function uniqueHashtags(names: string[]): string[] {
   return result;
 }
 
-export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" | "parkingStatus" | "lineStatus" | "createdAt" | "hashtagNames">, place: Pick<Place, "id" | "name">): ShareCard {
+export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" | "parkingStatus" | "lineStatus" | "weatherFeel" | "photoCount" | "createdAt" | "hashtagNames">, place: Pick<Place, "id" | "name">): ShareCard {
   const judgement = judgementFromStatus(post.crowdLevel, post.parkingStatus);
+  const variant = shareCardVariant(post, judgement);
   const statusText = [
     crowdStatusLabel(post.crowdLevel),
     `주차 ${parkingStatusLabel(post.parkingStatus)}`,
@@ -279,7 +281,19 @@ export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" |
     body: `${statusText}\n${minutesAgoLabel(post.createdAt)} 현장 인증 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
     url: `https://silsigan.vercel.app/place/${place.id}`,
     hashtags: post.hashtagNames.slice(0, 5),
+    variant,
   };
+}
+
+function shareCardVariant(
+  post: Pick<StoredPost, "crowdLevel" | "parkingStatus" | "lineStatus" | "photoCount" | "weatherFeel">,
+  judgement: "가도 좋음" | "주의" | "지금은 비추",
+): ShareCard["variant"] {
+  if (post.parkingStatus === "full") return "parking_full";
+  if (post.lineStatus === "medium" || post.lineStatus === "long") return "waiting";
+  if (judgement === "지금은 비추") return "avoid";
+  if (post.photoCount > 0 && post.weatherFeel === "good") return "photo_spot";
+  return "good";
 }
 
 export function rankPostsForFeed<TPost extends Pick<StoredPost, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount" | "hiddenAt">>(postsToRank: TPost[]): TPost[] {

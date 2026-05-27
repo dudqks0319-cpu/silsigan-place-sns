@@ -1,4 +1,6 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { getSiteUrl } from "@/lib/site-url";
 import { store } from "@/lib/store";
 import styles from "./page.module.css";
 
@@ -8,15 +10,50 @@ type SharePostPageProps = {
   }>;
 };
 
+function findSharedPost(postId: string) {
+  return store.listPosts({ includeHidden: true }).find((candidate) => candidate.id === postId);
+}
+
+export async function generateMetadata({ params }: SharePostPageProps): Promise<Metadata> {
+  const { postId } = await params;
+  const post = findSharedPost(postId);
+
+  if (!post || post.hiddenAt) {
+    return {};
+  }
+
+  const siteUrl = getSiteUrl();
+  const shareUrl = `${siteUrl}/share/post/${post.id}`;
+  const imageUrl = `${shareUrl}/opengraph-image`;
+
+  return {
+    title: post.shareCard.headline,
+    description: post.shareCard.body.replace(/\s+/g, " ").slice(0, 150),
+    openGraph: {
+      title: post.shareCard.headline,
+      description: post.shareCard.body.replace(/\s+/g, " ").slice(0, 150),
+      url: shareUrl,
+      images: [{ url: imageUrl, width: 1200, height: 630, alt: post.shareCard.headline }],
+      type: "article",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: post.shareCard.headline,
+      description: post.shareCard.body.replace(/\s+/g, " ").slice(0, 150),
+      images: [imageUrl],
+    },
+  };
+}
+
 export default async function SharePostPage({ params }: SharePostPageProps) {
   const { postId } = await params;
-  const post = store.listPosts({ includeHidden: true }).find((candidate) => candidate.id === postId);
+  const post = findSharedPost(postId);
 
   if (!post || post.hiddenAt) {
     notFound();
   }
 
-  const shareUrl = `https://silsigan.vercel.app/share/post/${post.id}`;
+  const shareUrl = `${getSiteUrl()}/share/post/${post.id}`;
 
   return (
     <main className={styles.page}>
@@ -25,7 +62,7 @@ export default async function SharePostPage({ params }: SharePostPageProps) {
           <span>#실시간</span>
           <strong>{post.locationVerified ? "현장 인증" : "상태 제보"}</strong>
         </div>
-        <div className={styles.hero}>
+        <div className={`${styles.hero} ${styles[post.shareCard.variant]}`}>
           <span>{post.photoLabel}</span>
           <h1>{post.shareCard.headline}</h1>
           <p>{post.shareCard.body}</p>
