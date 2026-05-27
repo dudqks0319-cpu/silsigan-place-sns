@@ -1,0 +1,134 @@
+.page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(34, 197, 94, 0.18), transparent 28%),
+    radial-gradient(circle at 80% 20%, rgba(59, 130, 246, 0.16), transparent 26%),
+    #f8fafc;
+  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", sans-serif;
+}
+
+.card {
+  width: min(100%, 390px);
+  aspect-ratio: 9 / 16;
+  border-radius: 28px;
+  padding: 22px;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto auto;
+  gap: 16px;
+  background: #ffffff;
+  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+}
+
+.topRow,
+.card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topRow span {
+  color: #16a34a;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.topRow strong {
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #15803d;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.hero {
+  min-height: 0;
+  border-radius: 24px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  color: #ffffff;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.28), transparent 24%),
+    linear-gradient(135deg, #16a34a, #f97316);
+}
+
+.hero span {
+  width: fit-content;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.hero h1 {
+  margin: 18px 0 10px;
+  font-size: 34px;
+  line-height: 1.08;
+}
+
+.hero p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 800;
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.statusGrid span {
+  min-height: 46px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.hashtags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.hashtags span {
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #15803d;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.card footer {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 14px;
+}
+
+.card footer span {
+  min-width: 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.card footer strong {
+  flex: 0 0 auto;
+  color: #0f172a;
+  font-size: 12px;
+}

@@ -525,6 +525,33 @@
   color: #94a3b8;
 }
 
+.feedFilterBanner {
+  min-height: 42px;
+  margin: 8px 0 10px;
+  padding: 9px 10px;
+  border-radius: 15px;
+  background: #ecfdf3;
+  color: #166534;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.feedFilterBanner button,
+.followTagButton {
+  border: 0;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .feedPostChips {
   display: flex;
   flex-wrap: wrap;
@@ -589,7 +616,10 @@
   gap: 7px;
 }
 
-.feedHashtags span {
+.feedHashtags button {
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: #15803d;
   font-size: 12px;
   font-weight: 900;
@@ -607,9 +637,16 @@
   color: #94a3b8;
 }
 
+.followTagButton {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .feedActions {
   display: grid;
-  grid-template-columns: 1fr 0.8fr 0.8fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -623,6 +660,11 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
+}
+
+.feedActionActive {
+  background: #dcfce7 !important;
+  color: #15803d !important;
 }
 
 .safetyInline {
@@ -993,6 +1035,11 @@
   font-size: 12px;
   font-weight: 950;
   white-space: nowrap;
+}
+
+.followButtonActive {
+  background: #dcfce7;
+  color: #15803d;
 }
 
 .placeSheetHeader h2 {
@@ -1596,6 +1643,65 @@
 
 .walletCard strong {
   color: #16a34a;
+}
+
+.followList,
+.savedPostList {
+  display: grid;
+  gap: 8px;
+}
+
+.followListItem,
+.savedPostItem {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 10px;
+  border-radius: 15px;
+  background: #f8fafc;
+}
+
+.followListItem svg,
+.savedPostItem svg {
+  margin-top: 2px;
+  color: #16a34a;
+}
+
+.followListItem strong,
+.savedPostItem strong {
+  display: block;
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.followListItem span,
+.savedPostItem span {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.savedTagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.savedTagRow span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #15803d;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .menuList {

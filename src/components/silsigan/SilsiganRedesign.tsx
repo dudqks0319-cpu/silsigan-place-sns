@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { recommendHashtags } from "@/lib/domain";
+import { rankPostsForFeed, recommendHashtags } from "@/lib/domain";
 import type {
   CrowdLevel,
   LineStatus,
@@ -223,6 +223,7 @@ export default function SilsiganRedesign() {
   const [places, setPlaces] = useState<Place[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [posts, setPosts] = useState<PublicPost[]>([]);
+  const [allPosts, setAllPosts] = useState<PublicPost[]>([]);
   const [hashtags, setHashtags] = useState<PublicHashtag[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [myQuestions, setMyQuestions] = useState<MyQuestion[]>([]);
@@ -240,6 +241,33 @@ export default function SilsiganRedesign() {
   const [photoAttached, setPhotoAttached] = useState(true);
   const [locationVerificationStatus, setLocationVerificationStatus] = useState<LocationVerificationStatus>("idle");
   const [verifiedLocation, setVerifiedLocation] = useState<ClientLocation | null>(null);
+  const [selectedHashtagName, setSelectedHashtagName] = useState<string | null>(null);
+  const [followedPlaceIds, setFollowedPlaceIds] = useState<Set<string>>(() => new Set());
+  const [followedHashtagNames, setFollowedHashtagNames] = useState<Set<string>>(() => new Set());
+  const [helpfulPostIds, setHelpfulPostIds] = useState<Set<string>>(() => new Set());
+  const [savedPostIds, setSavedPostIds] = useState<Set<string>>(() => new Set());
+
+  const rankedPosts = useMemo(
+    () =>
+      rankPostsForFeed(
+        posts.map((post) => ({
+          ...post,
+          helpfulCount: post.helpfulCount + (helpfulPostIds.has(post.id) ? 1 : 0),
+        })),
+      ),
+    [helpfulPostIds, posts],
+  );
+
+  const allRankedPosts = useMemo(
+    () =>
+      rankPostsForFeed(
+        allPosts.map((post) => ({
+          ...post,
+          helpfulCount: post.helpfulCount + (helpfulPostIds.has(post.id) ? 1 : 0),
+        })),
+      ),
+    [allPosts, helpfulPostIds],
+  );
 
   const selectedPlace = useMemo(
     () => places.find((place) => place.id === selectedPlaceId) ?? places[0] ?? null,
@@ -252,8 +280,8 @@ export default function SilsiganRedesign() {
   );
 
   const selectedPosts = useMemo(
-    () => posts.filter((post) => post.placeId === selectedPlace?.id),
-    [posts, selectedPlace?.id],
+    () => rankedPosts.filter((post) => post.placeId === selectedPlace?.id),
+    [rankedPosts, selectedPlace?.id],
   );
 
   const recommendedTags = useMemo(() => {
@@ -288,6 +316,7 @@ export default function SilsiganRedesign() {
       setPlaces(mappedPlaces);
       setReports(mappedReports);
       setPosts(apiPosts);
+      setAllPosts(apiPosts);
       setHashtags(apiHashtags);
       setQuestions(mappedQuestions);
       setMyQuestions(apiMyQuestions);
@@ -432,12 +461,58 @@ export default function SilsiganRedesign() {
     }
   };
 
+  const selectHashtag = async (hashtagName: string) => {
+    try {
+      const filteredPosts = await fetchJson<PublicPost[]>(`/api/posts?hashtagName=${encodeURIComponent(hashtagName)}`);
+      setPosts(filteredPosts);
+      setSelectedHashtagName(hashtagName);
+      setActiveView("home");
+      setToast(`#${hashtagName} 피드 ${filteredPosts.length}건을 불러왔습니다.`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "해시태그 피드를 불러오지 못했습니다.");
+    }
+  };
+
+  const clearHashtagFilter = async () => {
+    setSelectedHashtagName(null);
+    await loadData();
+  };
+
+  const togglePlaceFollow = (place: Place) => {
+    setFollowedPlaceIds((current) => toggleSetValue(current, place.id));
+    const isFollowing = followedPlaceIds.has(place.id);
+    setToast(isFollowing ? `${place.name} 팔로우를 해제했습니다.` : `${place.name} 새 현장 제보를 팔로우합니다.`);
+  };
+
+  const toggleHashtagFollow = (hashtagName: string) => {
+    setFollowedHashtagNames((current) => toggleSetValue(current, hashtagName));
+    const isFollowing = followedHashtagNames.has(hashtagName);
+    setToast(isFollowing ? `#${hashtagName} 팔로우를 해제했습니다.` : `#${hashtagName} 관심 피드를 팔로우합니다.`);
+  };
+
+  const markHelpful = (post: PublicPost) => {
+    if (helpfulPostIds.has(post.id)) {
+      setToast("이미 도움돼요를 누른 제보입니다.");
+      return;
+    }
+
+    setHelpfulPostIds((current) => toggleSetValue(current, post.id));
+    setToast("도움돼요가 반영됐습니다. 피드 랭킹에 즉시 반영됩니다.");
+  };
+
+  const toggleSavePost = (post: PublicPost) => {
+    setSavedPostIds((current) => toggleSetValue(current, post.id));
+    const isSaved = savedPostIds.has(post.id);
+    setToast(isSaved ? "저장을 해제했습니다." : "마이에 저장했습니다.");
+  };
+
   const sharePost = async (post: PublicPost) => {
-    const shareText = `${post.shareCard.headline}\n${post.shareCard.body}\n${post.shareCard.hashtags.map((tag) => `#${tag}`).join(" ")}\n${post.shareCard.url}`;
+    const shareUrl = `${window.location.origin}/share/post/${post.id}`;
+    const shareText = `${post.shareCard.headline}\n${post.shareCard.body}\n${post.shareCard.hashtags.map((tag) => `#${tag}`).join(" ")}\n${shareUrl}`;
 
     try {
       await navigator.clipboard.writeText(shareText);
-      setToast("공유 카드 문구를 복사했습니다.");
+      setToast("공유 카드 페이지 링크를 복사했습니다.");
     } catch {
       setToast(shareText);
     }
@@ -464,12 +539,21 @@ export default function SilsiganRedesign() {
                   <HomeScreen
                     places={places}
                     questions={questions}
-                    posts={posts}
+                    posts={rankedPosts}
                     hashtags={hashtags}
+                    selectedHashtagName={selectedHashtagName}
+                    followedHashtagNames={followedHashtagNames}
+                    helpfulPostIds={helpfulPostIds}
+                    savedPostIds={savedPostIds}
                     reports={reports}
                     onFlagPost={flagPost}
+                    onClearHashtagFilter={clearHashtagFilter}
+                    onFollowHashtag={toggleHashtagFollow}
+                    onHelpfulPost={markHelpful}
                     onOpenPlace={openPlace}
+                    onSavePost={toggleSavePost}
                     onSharePost={sharePost}
+                    onSelectHashtag={selectHashtag}
                     onGoMap={() => setActiveView("map")}
                     onGoReport={() => setActiveView("report")}
                   />
@@ -491,9 +575,15 @@ export default function SilsiganRedesign() {
                     reports={selectedReports}
                     onAsk={() => setActiveView("ask")}
                     onFlagPost={flagPost}
+                    onFollowPlace={() => togglePlaceFollow(selectedPlace)}
+                    followedPlace={followedPlaceIds.has(selectedPlace.id)}
+                    helpfulPostIds={helpfulPostIds}
+                    savedPostIds={savedPostIds}
+                    onHelpfulPost={markHelpful}
                     onReport={() => setActiveView("report")}
+                    onSavePost={toggleSavePost}
                     onSharePost={sharePost}
-                    onToast={setToast}
+                    onSelectHashtag={selectHashtag}
                   />
                 )}
                 {activeView === "report" && (
@@ -527,7 +617,16 @@ export default function SilsiganRedesign() {
                     onSubmit={submitQuestion}
                   />
                 )}
-                {activeView === "my" && <MyScreen myQuestions={myQuestions} questions={questions} reports={reports} posts={posts} />}
+                {activeView === "my" && (
+                  <MyScreen
+                    followedHashtagNames={followedHashtagNames}
+                    followedPlaces={places.filter((place) => followedPlaceIds.has(place.id))}
+                    myQuestions={myQuestions}
+                    questions={questions}
+                    reports={reports}
+                    savedPosts={allRankedPosts.filter((post) => savedPostIds.has(post.id))}
+                  />
+                )}
               </>
             )}
           </div>
@@ -535,7 +634,7 @@ export default function SilsiganRedesign() {
           <BottomNav activeView={activeView} onChange={setActiveView} />
         </div>
 
-        <OperatorPanel hashtags={hashtags} places={places} posts={posts} questions={questions} />
+        <OperatorPanel hashtags={hashtags} places={places} posts={rankedPosts} questions={questions} />
       </section>
     </main>
   );
@@ -595,10 +694,19 @@ function HomeScreen({
   questions,
   posts,
   hashtags,
+  selectedHashtagName,
+  followedHashtagNames,
+  helpfulPostIds,
+  savedPostIds,
   reports,
   onFlagPost,
+  onClearHashtagFilter,
+  onFollowHashtag,
+  onHelpfulPost,
   onOpenPlace,
+  onSavePost,
   onSharePost,
+  onSelectHashtag,
   onGoMap,
   onGoReport,
 }: {
@@ -606,10 +714,19 @@ function HomeScreen({
   questions: Question[];
   posts: PublicPost[];
   hashtags: PublicHashtag[];
+  selectedHashtagName: string | null;
+  followedHashtagNames: Set<string>;
+  helpfulPostIds: Set<string>;
+  savedPostIds: Set<string>;
   reports: Report[];
   onFlagPost: (post: PublicPost) => void;
+  onClearHashtagFilter: () => void;
+  onFollowHashtag: (hashtagName: string) => void;
+  onHelpfulPost: (post: PublicPost) => void;
   onOpenPlace: (place: Place) => void;
+  onSavePost: (post: PublicPost) => void;
   onSharePost: (post: PublicPost) => void;
+  onSelectHashtag: (hashtagName: string) => void;
   onGoMap: () => void;
   onGoReport: () => void;
 }) {
@@ -663,7 +780,13 @@ function HomeScreen({
       </section>
 
       <section className={styles.sectionBlock}>
-        <SectionTitle title="실시간 사진 피드" caption="최근 현장 인증 우선" />
+        <SectionTitle title={selectedHashtagName ? `#${selectedHashtagName} 피드` : "실시간 사진 피드"} caption={selectedHashtagName ? `${recentPosts.length}개 현장 게시물` : "최근 현장 인증 우선"} />
+        {selectedHashtagName && (
+          <div className={styles.feedFilterBanner}>
+            <span>해시태그 필터 적용 중</span>
+            <button type="button" onClick={onClearHashtagFilter}>전체 피드 보기</button>
+          </div>
+        )}
         <div className={styles.feedTabs}>
           {["전체", "내 주변", "팔로우", "관광지", "맛집", "주차", "야경"].map((tab, index) => (
             <button key={tab} className={index === 0 ? styles.activeFeedTab : ""} type="button">{tab}</button>
@@ -678,8 +801,13 @@ function HomeScreen({
                 post={post}
                 place={place}
                 onFlag={() => onFlagPost(post)}
+                onHelpful={() => onHelpfulPost(post)}
                 onOpenPlace={() => onOpenPlace(place)}
+                onSave={() => onSavePost(post)}
                 onShare={() => onSharePost(post)}
+                onSelectHashtag={onSelectHashtag}
+                helpfulActive={helpfulPostIds.has(post.id)}
+                saved={savedPostIds.has(post.id)}
               />
             );
           })}
@@ -691,13 +819,19 @@ function HomeScreen({
         <SectionTitle title="인기 해시태그" caption="최대 5개 추천 구조" />
         <div className={styles.hashtagCloud}>
           {hashtags.slice(0, 10).map((tag) => (
-            <button key={tag.id} type="button">
+            <button key={tag.id} type="button" onClick={() => onSelectHashtag(tag.name)}>
               <Hash size={13} />
               {tag.name}
               <span>{tag.postCount}</span>
             </button>
           ))}
         </div>
+        {selectedHashtagName && (
+          <button className={styles.followTagButton} type="button" onClick={() => onFollowHashtag(selectedHashtagName)}>
+            <Bell size={14} />
+            {followedHashtagNames.has(selectedHashtagName) ? "팔로잉 해제" : `#${selectedHashtagName} 팔로우`}
+          </button>
+        )}
       </section>
 
       <section className={styles.sectionBlock}>
@@ -815,9 +949,15 @@ function PlaceScreen({
   reports,
   onAsk,
   onFlagPost,
+  onFollowPlace,
+  followedPlace,
+  helpfulPostIds,
+  savedPostIds,
+  onHelpfulPost,
   onReport,
+  onSavePost,
   onSharePost,
-  onToast,
+  onSelectHashtag,
 }: {
   place: Place;
   posts: PublicPost[];
@@ -825,9 +965,15 @@ function PlaceScreen({
   reports: Report[];
   onAsk: () => void;
   onFlagPost: (post: PublicPost) => void;
+  onFollowPlace: () => void;
+  followedPlace: boolean;
+  helpfulPostIds: Set<string>;
+  savedPostIds: Set<string>;
+  onHelpfulPost: (post: PublicPost) => void;
   onReport: () => void;
+  onSavePost: (post: PublicPost) => void;
   onSharePost: (post: PublicPost) => void;
-  onToast: (message: string) => void;
+  onSelectHashtag: (hashtagName: string) => void;
 }) {
   const hasSensitivePolicy = place.category === "hospital" || place.category === "public_office";
   const latestQuestion = questions.find((question) => question.placeId === place.id && !question.answeredReportId);
@@ -849,8 +995,8 @@ function PlaceScreen({
             <p className={styles.eyebrow}>{place.address}</p>
             <h2>{place.name}</h2>
           </div>
-          <button className={styles.followButton} type="button" onClick={() => onToast(`${place.name} 장소 팔로우를 켰습니다.`)}>
-            팔로우
+          <button className={`${styles.followButton} ${followedPlace ? styles.followButtonActive : ""}`} type="button" onClick={onFollowPlace}>
+            {followedPlace ? "팔로잉" : "팔로우"}
           </button>
         </div>
         <p>{place.summary}</p>
@@ -898,12 +1044,17 @@ function PlaceScreen({
           {posts.map((post) => (
             <FeedPostCard
               key={post.id}
-              post={post}
-              place={place}
-              onFlag={() => onFlagPost(post)}
-              onOpenPlace={() => undefined}
-              onShare={() => onSharePost(post)}
-            />
+	              post={post}
+	              place={place}
+	              onFlag={() => onFlagPost(post)}
+	              onHelpful={() => onHelpfulPost(post)}
+	              onOpenPlace={() => undefined}
+	              onSave={() => onSavePost(post)}
+	              onShare={() => onSharePost(post)}
+	              onSelectHashtag={onSelectHashtag}
+	              helpfulActive={helpfulPostIds.has(post.id)}
+	              saved={savedPostIds.has(post.id)}
+	            />
           ))}
           {posts.length === 0 && <p className={styles.emptyText}>아직 장소별 피드가 없습니다. 첫 제보를 남겨주세요.</p>}
         </div>
@@ -931,9 +1082,9 @@ function PlaceScreen({
         <section className={styles.sectionBlock}>
           <SectionTitle title="장소 해시태그" caption="검색과 공유용" />
           <div className={styles.hashtagCloud}>
-            {placeHashtags.map((tag) => (
-              <button key={tag} type="button"><Hash size={13} />{tag}</button>
-            ))}
+	            {placeHashtags.map((tag) => (
+	              <button key={tag} type="button" onClick={() => onSelectHashtag(tag)}><Hash size={13} />{tag}</button>
+	            ))}
           </div>
         </section>
       )}
@@ -1128,18 +1279,21 @@ function AskScreen({
 }
 
 function MyScreen({
+  followedHashtagNames,
+  followedPlaces,
   myQuestions,
   questions,
   reports,
-  posts,
+  savedPosts,
 }: {
+  followedHashtagNames: Set<string>;
+  followedPlaces: Place[];
   myQuestions: MyQuestion[];
   questions: Question[];
   reports: Report[];
-  posts: PublicPost[];
+  savedPosts: PublicPost[];
 }) {
   const answeredCount = myQuestions.filter((question) => question.status === "answered").length;
-  const savedCount = posts.filter((post) => post.helpfulCount >= 20).length;
 
   return (
     <div className={styles.screenStack}>
@@ -1156,7 +1310,7 @@ function MyScreen({
         <StatBox label="공개 제보" value={String(reports.length)} />
         <StatBox label="내 질문" value={String(myQuestions.length || questions.length)} />
         <StatBox label="답변 완료" value={String(answeredCount)} />
-        <StatBox label="저장" value={String(savedCount)} />
+        <StatBox label="저장" value={String(savedPosts.length)} />
       </section>
 
       <section className={styles.badgeShelf}>
@@ -1173,10 +1327,52 @@ function MyScreen({
         <strong>{questions.length}Q</strong>
       </section>
 
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="팔로우한 장소" caption={`${followedPlaces.length}곳`} />
+        <div className={styles.followList}>
+          {followedPlaces.map((place) => (
+            <article key={place.id} className={styles.followListItem}>
+              <MapPin size={15} />
+              <div>
+                <strong>{place.name}</strong>
+                <span>{place.signal} · {place.updated}</span>
+              </div>
+            </article>
+          ))}
+          {followedPlaces.length === 0 && <p className={styles.emptyText}>장소 상세에서 팔로우하면 여기에 모입니다.</p>}
+        </div>
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="팔로우한 해시태그" caption={`${followedHashtagNames.size}개`} />
+        <div className={styles.savedTagRow}>
+          {[...followedHashtagNames].map((tag) => (
+            <span key={tag}><Hash size={13} />#{tag}</span>
+          ))}
+          {followedHashtagNames.size === 0 && <p className={styles.emptyText}>관심 해시태그를 팔로우하면 재방문 피드가 생깁니다.</p>}
+        </div>
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="저장한 게시물" caption={`${savedPosts.length}개`} />
+        <div className={styles.savedPostList}>
+          {savedPosts.map((post) => (
+            <article key={post.id} className={styles.savedPostItem}>
+              <Bookmark size={15} />
+              <div>
+                <strong>{post.shareCard.headline}</strong>
+                <span>{post.locationVerified ? "현장 인증" : "상태 제보"} · 도움돼요 {post.helpfulCount}</span>
+              </div>
+            </article>
+          ))}
+          {savedPosts.length === 0 && <p className={styles.emptyText}>피드에서 저장한 현장 게시물이 표시됩니다.</p>}
+        </div>
+      </section>
+
       <section className={styles.menuList}>
         <MenuRow icon={Camera} label="내 제보" />
         <MenuRow icon={MessageCircleQuestion} label="내 질문" />
-        <MenuRow icon={Bookmark} label="저장한 장소" />
+        <MenuRow icon={Bookmark} label="저장한 게시물" />
         <MenuRow icon={Hash} label="팔로우한 해시태그" />
         <MenuRow icon={Star} label="지역 뱃지" />
         <MenuRow icon={UserX} label="차단한 사용자" />
@@ -1291,15 +1487,29 @@ function FeedPostCard({
   post,
   place,
   onFlag,
+  onHelpful,
   onOpenPlace,
+  onSave,
   onShare,
+  onSelectHashtag,
+  helpfulActive,
+  saved,
 }: {
   post: PublicPost;
   place: Place;
   onFlag: () => void;
+  onHelpful: () => void;
   onOpenPlace: () => void;
+  onSave: () => void;
   onShare: () => void;
+  onSelectHashtag: (hashtagName: string) => void;
+  helpfulActive: boolean;
+  saved: boolean;
 }) {
+  const verificationTooltip = post.locationVerified
+    ? "현장 인증: 실제 GPS와 장소 반경만 검증하고 정확한 좌표는 저장하지 않습니다."
+    : "상태 제보: 위치 인증 없이 작성되어 판단에는 낮은 가중치로 반영됩니다.";
+
   return (
     <article className={styles.feedPostCard}>
       <button className={`${styles.feedPhoto} ${styles[place.tone]}`} type="button" onClick={onOpenPlace}>
@@ -1314,7 +1524,7 @@ function FeedPostCard({
           </button>
           <div className={styles.feedPostChips}>
             <span className={`${styles.statusChip} ${styles[place.tone]}`}>{postStatusText(post)}</span>
-            <span className={`${styles.verificationChip} ${post.locationVerified ? styles.verificationVerified : styles.verificationReport}`}>
+            <span className={`${styles.verificationChip} ${post.locationVerified ? styles.verificationVerified : styles.verificationReport}`} title={verificationTooltip}>
               {post.locationVerified ? <BadgeCheck size={12} /> : <MapPin size={12} />}
               {post.locationVerified ? "현장 인증" : "상태 제보"}
             </span>
@@ -1328,11 +1538,16 @@ function FeedPostCard({
         </div>
         <div className={styles.feedHashtags}>
           {post.hashtagNames.slice(0, 5).map((tag) => (
-            <span key={tag}>#{tag}</span>
+            <button key={tag} type="button" onClick={() => onSelectHashtag(tag)}>#{tag}</button>
           ))}
         </div>
         <div className={styles.feedActions}>
-          <button type="button"><Heart size={15} />도움돼요 {post.helpfulCount}</button>
+          <button className={helpfulActive ? styles.feedActionActive : ""} type="button" onClick={onHelpful}>
+            <Heart size={15} />도움돼요 {post.helpfulCount}
+          </button>
+          <button className={saved ? styles.feedActionActive : ""} type="button" onClick={onSave}>
+            <Bookmark size={15} />{saved ? "저장됨" : "저장"}
+          </button>
           <button type="button" onClick={onShare}><Share2 size={15} />공유</button>
           <button type="button" onClick={onFlag}><Flag size={15} />신고</button>
         </div>
@@ -1680,6 +1895,18 @@ function trustScoreForPlace(reports: Report[], questionCount: number) {
   const photos = reports.filter((report) => report.hasPhoto).length;
 
   return Math.min(60 + verified * 8 + photos * 5 + questionCount * 2, 98);
+}
+
+function toggleSetValue<TValue>(set: Set<TValue>, value: TValue) {
+  const next = new Set(set);
+
+  if (next.has(value)) {
+    next.delete(value);
+  } else {
+    next.add(value);
+  }
+
+  return next;
 }
 
 function crowdValueFromLabel(label: string): CrowdLevel {
