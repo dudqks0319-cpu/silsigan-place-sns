@@ -4,6 +4,7 @@ import test from "node:test";
 const {
   calculateCreditBalance,
   calculateTrustScore,
+  canActivateRegion,
   creditEventForQuestion,
   creditEventsForReport,
   judgementFromStatus,
@@ -136,6 +137,8 @@ test("hashtag recommendation is specific and capped at five", () => {
       latitude: 35.1532,
       longitude: 129.1186,
       region: "busan",
+      regionId: "busan",
+      launchStage: "active",
     },
     crowdLevel: "packed",
     parkingStatus: "full",
@@ -147,6 +150,39 @@ test("hashtag recommendation is specific and capped at five", () => {
   assert.ok(tags.includes("주차만차"));
   assert.ok(tags.includes("부산"));
   assert.equal(tags.length <= 5, true);
+});
+
+test("region activation requires density and moderation readiness", () => {
+  assert.equal(
+    canActivateRegion({
+      seedPlaceCount: 30,
+      reportsLast7Days: 100,
+      verifiedReportsLast7Days: 30,
+      photoReportsLast7Days: 30,
+      moderationFlowReady: true,
+    }),
+    true,
+  );
+  assert.equal(
+    canActivateRegion({
+      seedPlaceCount: 30,
+      reportsLast7Days: 100,
+      verifiedReportsLast7Days: 29,
+      photoReportsLast7Days: 30,
+      moderationFlowReady: true,
+    }),
+    false,
+  );
+  assert.equal(
+    canActivateRegion({
+      seedPlaceCount: 50,
+      reportsLast7Days: 120,
+      verifiedReportsLast7Days: 35,
+      photoReportsLast7Days: 35,
+      moderationFlowReady: false,
+    }),
+    false,
+  );
 });
 
 test("feed posts generate share cards and privacy reports can hide posts", () => {

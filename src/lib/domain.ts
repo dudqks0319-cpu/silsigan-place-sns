@@ -43,6 +43,49 @@ export type FlagReason = (typeof flagReasons)[number];
 export const hashtagTypes = ["place", "status", "purpose", "time", "region"] as const;
 export type HashtagType = (typeof hashtagTypes)[number];
 
+export const regionLevels = ["province", "city", "district"] as const;
+export type RegionLevel = (typeof regionLevels)[number];
+
+export const regionLaunchStages = ["seed", "beta", "active", "paused"] as const;
+export type RegionLaunchStage = (typeof regionLaunchStages)[number];
+
+export const placeLaunchStages = ["seed", "beta", "active"] as const;
+export type PlaceLaunchStage = (typeof placeLaunchStages)[number];
+
+export type RegionId =
+  | "busan"
+  | "ulsan"
+  | "gyeongju"
+  | "daegu"
+  | "changwon"
+  | "gimhae"
+  | "yangsan"
+  | "pohang"
+  | "seoul"
+  | "jeju"
+  | "gangneung"
+  | "jeonju"
+  | "yeosu"
+  | "sokcho";
+
+export type Region = {
+  id: RegionId;
+  name: string;
+  level: RegionLevel;
+  parentId?: RegionId;
+  isActive: boolean;
+  isFeatured: boolean;
+  launchStage: RegionLaunchStage;
+};
+
+export type RegionActivationMetrics = {
+  seedPlaceCount: number;
+  reportsLast7Days: number;
+  verifiedReportsLast7Days: number;
+  photoReportsLast7Days: number;
+  moderationFlowReady: boolean;
+};
+
 export type CreditEventType =
   | "signup_bonus"
   | "verified_report"
@@ -64,7 +107,9 @@ export type Place = {
   category: ReportCategory;
   latitude: number;
   longitude: number;
-  region: "ulsan" | "busan" | "gyeongju";
+  region: RegionId;
+  regionId: RegionId;
+  launchStage: PlaceLaunchStage;
 };
 
 export type UserReputation = {
@@ -236,6 +281,16 @@ export function calculateTrustScore(input: {
   return Math.max(0, Math.min(100, score));
 }
 
+export function canActivateRegion(metrics: RegionActivationMetrics): boolean {
+  return (
+    metrics.seedPlaceCount >= 30 &&
+    metrics.reportsLast7Days >= 100 &&
+    metrics.verifiedReportsLast7Days >= 30 &&
+    metrics.photoReportsLast7Days >= 30 &&
+    metrics.moderationFlowReady
+  );
+}
+
 export function shouldHideForFlags(flagReasonsToReview: FlagReason[]): boolean {
   const privacyFlags = flagReasonsToReview.filter((reason) =>
     ["privacy_face", "privacy_plate", "sensitive_info"].includes(reason),
@@ -266,7 +321,7 @@ export function classifyHashtag(name: string): HashtagType {
     return "time";
   }
 
-  if (/울산|부산|경주/.test(name)) {
+  if (/울산|부산|경주|대구|창원|김해|양산|포항|서울|제주|강릉|전주|여수|속초/.test(name)) {
     return "region";
   }
 
@@ -407,9 +462,24 @@ function purposeHashtag(placeName: string, weatherFeel: WeatherFeel): string {
 }
 
 function regionHashtag(region: Place["region"]): string {
-  if (region === "busan") return "부산";
-  if (region === "gyeongju") return "경주";
-  return "울산";
+  const labels: Record<RegionId, string> = {
+    busan: "부산",
+    ulsan: "울산",
+    gyeongju: "경주",
+    daegu: "대구",
+    changwon: "창원",
+    gimhae: "김해",
+    yangsan: "양산",
+    pohang: "포항",
+    seoul: "서울",
+    jeju: "제주",
+    gangneung: "강릉",
+    jeonju: "전주",
+    yeosu: "여수",
+    sokcho: "속초",
+  };
+
+  return labels[region];
 }
 
 function scorePost(post: Pick<StoredPost, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount">): number {

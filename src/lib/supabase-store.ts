@@ -27,6 +27,8 @@ type PlaceRow = {
   latitude: number | string;
   longitude: number | string;
   region: Place["region"];
+  region_id?: Place["regionId"] | null;
+  launch_stage?: Place["launchStage"] | null;
 };
 
 type PostRow = {
@@ -387,6 +389,8 @@ function placeFromRow(row: PlaceRow): Place {
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
     region: row.region,
+    regionId: row.region_id ?? row.region,
+    launchStage: row.launch_stage ?? "active",
   };
 }
 
@@ -433,6 +437,8 @@ function placeSummaryForPost(post: Pick<StoredPost, "placeId">): Place {
     latitude: 35.5486,
     longitude: 129.3005,
     region: "ulsan",
+    regionId: "ulsan",
+    launchStage: "seed",
   };
 }
 

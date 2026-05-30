@@ -32,6 +32,8 @@ export const mockPlaces: Place[] = [
     latitude: 35.5486,
     longitude: 129.3005,
     region: "ulsan",
+    regionId: "ulsan",
+    launchStage: "active",
   },
   {
     id: "busan-gwangalli",
@@ -41,6 +43,8 @@ export const mockPlaces: Place[] = [
     latitude: 35.1532,
     longitude: 129.1186,
     region: "busan",
+    regionId: "busan",
+    launchStage: "active",
   },
   {
     id: "gyeongju-hwangridan",
@@ -50,6 +54,8 @@ export const mockPlaces: Place[] = [
     latitude: 35.8382,
     longitude: 129.2098,
     region: "gyeongju",
+    regionId: "gyeongju",
+    launchStage: "active",
   },
   {
     id: "ulsan-city-hall",
@@ -59,6 +65,8 @@ export const mockPlaces: Place[] = [
     latitude: 35.5396,
     longitude: 129.3115,
     region: "ulsan",
+    regionId: "ulsan",
+    launchStage: "active",
   },
 ];
 
