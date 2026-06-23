@@ -89,7 +89,7 @@ erDiagram
 | `bucket_hour` | timestamptz | 집계 시간 |
 | `region_code`, `area_code`, `category` | text | 랭킹 필터 키 |
 | `click_count`, `like_count`, `comment_count`, `photo_count`, `report_count` | integer | 이벤트 집계 |
-| `unique_user_count` | integer | 익명 식별자 기준 유니크 수 |
+| `unique_user_count` | integer | 같은 장소/시간 버킷의 `place_events.anonymous_user_id` distinct 기준 유니크 수 |
 
 ### moderation_reports
 

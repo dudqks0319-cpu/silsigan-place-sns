@@ -189,4 +189,5 @@ Cloudflare 전환 추가 증적:
 - admin API role 실패 테스트 결과.
 - 신고/자동 숨김/복구/삭제 시나리오 테스트 결과.
 - 전국/지역/area/category/map-bounds 랭킹 캐시 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `GET /api/rankings uses CACHE KV read-through cache with bounded TTL`로 `/api/rankings`가 `CACHE` KV binding에 60초 TTL로 miss 결과를 저장하고, 두 번째 요청에서 `cacheStatus=hit`로 같은 데이터를 반환하며, 손상된 cache entry는 miss로 복구하는지 검증한다. 관리자 사진 삭제 시 `rankings:nationwide`, `rankings:map-bounds`, `rankings:region:*`, `rankings:area:*`, `rankings:category:*`, `places:*`, `place-live:*`, `rankings:place:*`, `photos:*` 키를 삭제하고 `rankings:version`을 갱신해 기존 랭킹 캐시 키가 재사용되지 않게 한다.
+- D1 hourly 집계 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `D1 public live surfaces ignore expired three-hour place signals`로 같은 익명 사용자가 한 장소/시간 버킷에 댓글, 사진, 클릭을 각각 남겨도 `place_event_hourly.unique_user_count`는 1로 유지되고 이벤트별 count만 증가하는지 검증한다.
 - 빈 상태와 위치 권한 거부 화면 캡처.

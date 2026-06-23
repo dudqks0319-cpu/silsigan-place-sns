@@ -3035,13 +3035,14 @@ async function recordD1PlaceEvent(
   const now = new Date();
   const createdAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + REPORT_TTL_MS).toISOString();
+  const eventId = `event_${crypto.randomUUID()}`;
   await db
     .prepare(
       `INSERT INTO place_events
         (id, place_id, anonymous_user_id, event_type, source, region_code, area_code, category, created_at, expires_at)
        VALUES (?, ?, ?, ?, 'worker_api', ?, ?, ?, ?, ?)`,
     )
-    .bind(`event_${crypto.randomUUID()}`, place.id, anonymousUserId, eventType, place.regionId, place.areaId, place.categoryId, createdAt, expiresAt)
+    .bind(eventId, place.id, anonymousUserId, eventType, place.regionId, place.areaId, place.categoryId, createdAt, expiresAt)
     .run();
   await incrementD1HourlyAggregate(db, place, eventType, createdAt);
 }
@@ -3053,6 +3054,7 @@ async function incrementD1HourlyAggregate(
   createdAt: string,
 ): Promise<void> {
   const hourBucket = createdAt.slice(0, 13) + ":00:00.000Z";
+  const nextHourBucket = new Date(new Date(hourBucket).getTime() + 60 * 60 * 1000).toISOString();
   const column = `${eventType}_count`;
   await db
     .prepare(
@@ -3064,6 +3066,20 @@ async function incrementD1HourlyAggregate(
          unique_user_count = unique_user_count + 1`,
     )
     .bind(`hour_${crypto.randomUUID()}`, place.id, place.regionId, place.areaId, place.categoryId, hourBucket)
+    .run();
+  await db
+    .prepare(
+      `UPDATE place_event_hourly
+       SET unique_user_count = (
+         SELECT COUNT(DISTINCT anonymous_user_id)
+         FROM place_events
+         WHERE place_id = ?
+           AND created_at >= ?
+           AND created_at < ?
+       )
+       WHERE place_id = ? AND hour_bucket = ?`,
+    )
+    .bind(place.id, hourBucket, nextHourBucket, place.id, hourBucket)
     .run();
 }
 

@@ -2057,6 +2057,27 @@ test("D1 public live surfaces ignore expired three-hour place signals", { skip: 
     assert.equal(activeLive.data.commentCount, 1);
     assert.equal(activeLive.data.photoCount, 1);
 
+    const hourlyAggregate = await db
+      .prepare(
+        `SELECT
+          click_count AS clickCount,
+          comment_count AS commentCount,
+          photo_count AS photoCount,
+          unique_user_count AS uniqueUserCount
+        FROM place_event_hourly
+        WHERE place_id = ?
+        ORDER BY hour_bucket DESC
+        LIMIT 1`,
+      )
+      .bind("busan-gwangalli")
+      .first<{ clickCount: number; commentCount: number; photoCount: number; uniqueUserCount: number }>();
+    assert.deepEqual(hourlyAggregate, {
+      clickCount: 1,
+      commentCount: 1,
+      photoCount: 1,
+      uniqueUserCount: 1,
+    });
+
     const activeRanking = await d1Get<SuccessPayload<Array<{ placeId: string; score: number }>>>(
       db,
       "https://api.test/api/rankings/regions/busan?limit=10",
