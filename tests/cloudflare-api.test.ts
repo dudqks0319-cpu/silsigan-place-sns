@@ -41,6 +41,26 @@ type Place = {
   coordinateStatus: "verified" | "TODO_COORDINATE_VERIFY" | "rejected";
 };
 
+type Ranking = {
+  placeId: string;
+  name: string;
+  regionId: string;
+  regionCode: string;
+  areaCode: string;
+  category: string;
+  score: number;
+  rank: number;
+  windowHours: number;
+  clickCount: number;
+  likeCount: number;
+  commentCount: number;
+  photoCount: number;
+  reportCount: number;
+  uniqueUserCount: number;
+  trend: "up" | "down" | "same";
+  summary: string;
+};
+
 type Comment = {
   id: string;
   anonymousUserId: string;
@@ -1473,16 +1493,18 @@ test("GET /api/rankings uses CACHE KV read-through cache with bounded TTL", asyn
   const cache = new FakeKVNamespace();
   const url = "https://api.test/api/rankings/regions/busan?limit=10";
   const firstResponse = await worker.handleRequest(new Request(url), { CACHE: cache });
-  const firstPayload = (await firstResponse.json()) as SuccessPayload<Array<{ placeId: string }>>;
+  const firstPayload = (await firstResponse.json()) as SuccessPayload<Ranking[]>;
 
   assert.equal(firstResponse.status, 200);
   assert.equal(firstPayload.meta?.cacheStatus, "miss");
   assert.equal(firstPayload.meta?.cacheTtlSeconds, 60);
   assert.equal(cache.puts.length, 1);
   assert.equal(cache.puts[0]?.options?.expirationTtl, 60);
+  assert.equal(firstPayload.data[0]?.name, "광안리해수욕장");
+  assert.equal(typeof firstPayload.data[0]?.summary, "string");
 
   const secondResponse = await worker.handleRequest(new Request(url), { CACHE: cache });
-  const secondPayload = (await secondResponse.json()) as SuccessPayload<Array<{ placeId: string }>>;
+  const secondPayload = (await secondResponse.json()) as SuccessPayload<Ranking[]>;
 
   assert.equal(secondPayload.meta?.cacheStatus, "hit");
   assert.deepEqual(secondPayload.data, firstPayload.data);
@@ -1490,7 +1512,7 @@ test("GET /api/rankings uses CACHE KV read-through cache with bounded TTL", asyn
 
   cache.values.set(cache.puts[0]?.key ?? "", "{not valid json");
   const recoveredResponse = await worker.handleRequest(new Request(url), { CACHE: cache });
-  const recoveredPayload = (await recoveredResponse.json()) as SuccessPayload<Array<{ placeId: string }>>;
+  const recoveredPayload = (await recoveredResponse.json()) as SuccessPayload<Ranking[]>;
 
   assert.equal(recoveredPayload.meta?.cacheStatus, "miss");
   assert.equal(cache.puts.length, 2);
@@ -1529,14 +1551,21 @@ test("Cloudflare API supports required place and ranking route aliases", async (
   const live = await get<SuccessPayload<{ statusSummary: string }>>("https://api.test/api/places/busan-gwangalli/live", anonymousId);
   assert.ok(live.data.statusSummary.length > 0);
 
-  const globalRanking = await get<SuccessPayload<Array<{ rank: number }>>>("https://api.test/api/rankings/global?limit=10", anonymousId);
-  const regionRanking = await get<SuccessPayload<Array<{ regionId: string }>>>("https://api.test/api/rankings/regions/busan?limit=10", anonymousId);
-  const areaRanking = await get<SuccessPayload<Array<{ regionId: string }>>>(
+  const globalRanking = await get<SuccessPayload<Ranking[]>>("https://api.test/api/rankings/global?limit=10", anonymousId);
+  const regionRanking = await get<SuccessPayload<Ranking[]>>("https://api.test/api/rankings/regions/busan?limit=10", anonymousId);
+  const areaRanking = await get<SuccessPayload<Ranking[]>>(
     "https://api.test/api/rankings/regions/busan/areas/busan-suyeong?limit=10",
     anonymousId,
   );
 
   assert.equal(globalRanking.data[0]?.rank, 1);
+  assert.equal(globalRanking.data[0]?.name, "광안리해수욕장");
+  assert.equal(globalRanking.data[0]?.regionCode, "busan");
+  assert.equal(globalRanking.data[0]?.areaCode, "busan-suyeong");
+  assert.equal(globalRanking.data[0]?.category, "tourism");
+  assert.ok((globalRanking.data[0]?.clickCount ?? 0) >= 1);
+  assert.equal(globalRanking.data[0]?.trend, "same");
+  assert.equal(typeof globalRanking.data[0]?.summary, "string");
   assert.ok(regionRanking.data.every((ranking) => ranking.regionId === "busan"));
   assert.ok(areaRanking.data.every((ranking) => ranking.regionId === "busan"));
 });
@@ -1593,9 +1622,29 @@ test("Cloudflare Worker reads places and rankings from D1 when DB binding is pre
   assert.equal(placePayload.data.score, 101);
 
   const rankingsResponse = await worker.handleRequest(new Request("https://api.test/api/rankings/regions/busan?limit=10"), { DB: db });
-  const rankingsPayload = (await rankingsResponse.json()) as SuccessPayload<Array<{ placeId: string; score: number }>>;
+  const rankingsPayload = (await rankingsResponse.json()) as SuccessPayload<Ranking[]>;
   assert.equal(rankingsPayload.meta?.storage, "d1");
-  assert.deepEqual(rankingsPayload.data, [{ placeId: "d1-place", regionId: "busan", score: 101, rank: 1, windowHours: 24 }]);
+  assert.deepEqual(rankingsPayload.data, [
+    {
+      placeId: "d1-place",
+      name: "D1 현장",
+      regionId: "busan",
+      regionCode: "busan",
+      areaCode: "busan-suyeong",
+      category: "tourism",
+      score: 101,
+      rank: 1,
+      windowHours: 24,
+      clickCount: 0,
+      likeCount: 0,
+      commentCount: 0,
+      photoCount: 0,
+      reportCount: 0,
+      uniqueUserCount: 0,
+      trend: "same",
+      summary: "정보 없음",
+    },
+  ]);
 });
 
 test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
@@ -2014,6 +2063,18 @@ test("D1 public live surfaces ignore expired three-hour place signals", { skip: 
 
   try {
     const anonymousId = "anon_d1_expiry_test";
+    await db
+      .prepare(
+        `INSERT INTO places (id, area_id, region_id, category_id, name, address, latitude, longitude, coordinate_status, launch_stage, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind("busan-live-sort-control", "busan-suyeong", "busan", "tourism", "부산 정렬 기준점", "부산 수영구 정렬로", 35.16, 129.12, "verified", "active", 1)
+      .run();
+    await db
+      .prepare("INSERT INTO place_rankings (id, place_id, region_id, score, rank, window_hours) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind("rank_24_busan-live-sort-control", "busan-live-sort-control", "busan", 105, 2, 24)
+      .run();
+
     const comment = await d1Post<SuccessPayload<Comment>>(db, "https://api.test/api/comments", anonymousId, {
       placeId: "busan-gwangalli",
       body: "곧 만료될 현장 댓글입니다.",
@@ -2078,12 +2139,19 @@ test("D1 public live surfaces ignore expired three-hour place signals", { skip: 
       uniqueUserCount: 1,
     });
 
-    const activeRanking = await d1Get<SuccessPayload<Array<{ placeId: string; score: number }>>>(
+    const activeRanking = await d1Get<SuccessPayload<Ranking[]>>(
       db,
       "https://api.test/api/rankings/regions/busan?limit=10",
       anonymousId,
     );
-    assert.equal(activeRanking.data.find((ranking) => ranking.placeId === "busan-gwangalli")?.score, 111);
+    const activeGwangalli = activeRanking.data.find((ranking) => ranking.placeId === "busan-gwangalli");
+    assert.equal(activeRanking.data[0]?.placeId, "busan-gwangalli");
+    assert.equal(activeGwangalli?.score, 111);
+    assert.equal(activeGwangalli?.clickCount, 1);
+    assert.equal(activeGwangalli?.commentCount, 1);
+    assert.equal(activeGwangalli?.photoCount, 1);
+    assert.equal(activeGwangalli?.uniqueUserCount, 1);
+    assert.equal(activeGwangalli?.summary, "댓글 1개 · 사진 1장 · 실시간 사용자 제보 기반");
 
     await db.prepare("UPDATE place_events SET expires_at = '2026-01-01T00:00:00.000Z' WHERE place_id = ?").bind("busan-gwangalli").run();
     await db
@@ -2107,11 +2175,12 @@ test("D1 public live surfaces ignore expired three-hour place signals", { skip: 
     assert.equal(expiredLive.data.commentCount, 0);
     assert.equal(expiredLive.data.photoCount, 0);
 
-    const expiredRanking = await d1Get<SuccessPayload<Array<{ placeId: string; score: number }>>>(
+    const expiredRanking = await d1Get<SuccessPayload<Ranking[]>>(
       db,
       "https://api.test/api/rankings/regions/busan?limit=10",
       anonymousId,
     );
+    assert.equal(expiredRanking.data[0]?.placeId, "busan-live-sort-control");
     assert.equal(expiredRanking.data.find((ranking) => ranking.placeId === "busan-gwangalli")?.score, 98);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

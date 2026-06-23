@@ -76,7 +76,8 @@
 처리 규칙:
 
 - 전국/지역/area/category/map-bounds 랭킹은 검증된 좌표와 활성 장소만 반환한다.
-- D1 랭킹 점수는 `place_rankings` seed score에 최근 3시간 이내 `place_events` live score만 더한다.
+- 응답 `data[]`는 기존 `placeId`, `regionId`, `score`, `rank`, `windowHours`에 더해 `name`, `regionCode`, `areaCode`, `category`, `clickCount`, `likeCount`, `commentCount`, `photoCount`, `reportCount`, `uniqueUserCount`, `trend`, `summary`를 포함한다.
+- D1 랭킹 점수는 `place_rankings` seed score에 최근 3시간 이내 `place_events` live score만 더하고, 정렬도 같은 계산 `score` 기준으로 수행한다.
 - 만료된 `place_events`는 장소 live click count와 랭킹 live score에서 제외한다.
 - 신고 이벤트는 랭킹 가산점이 아니라 감점 신호로 처리한다.
 - `CACHE` KV binding이 있으면 랭킹 응답을 normalized route/scope/bbox/limit key로 60초 read-through cache에 저장한다. 운영 숨김/복구/삭제/좌표 상태 변경은 `rankings:version`을 갱신해 기존 cache key 재사용을 막는다.

@@ -37,10 +37,22 @@ export type CloudflarePlace = {
 
 export type CloudflareRanking = {
   placeId: string;
+  name: string;
   regionId: string;
+  regionCode: string;
+  areaCode: string;
+  category: string;
   score: number;
   rank: number;
   windowHours: number;
+  clickCount: number;
+  likeCount: number;
+  commentCount: number;
+  photoCount: number;
+  reportCount: number;
+  uniqueUserCount: number;
+  trend: "up" | "down" | "same";
+  summary: string;
 };
 
 export type CloudflareComment = {

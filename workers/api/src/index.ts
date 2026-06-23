@@ -158,6 +158,15 @@ type D1PlaceRow = {
   coordinateStatus: "verified";
 };
 
+type RankingCounts = {
+  clickCount: number;
+  likeCount: number;
+  commentCount: number;
+  photoCount: number;
+  reportCount: number;
+  uniqueUserCount: number;
+};
+
 type D1CommentRow = {
   id: string;
   placeId: string;
@@ -1026,10 +1035,22 @@ function isRankingRecord(value: unknown): value is RankingRecord {
   return (
     isRecord(value) &&
     typeof value.placeId === "string" &&
+    typeof value.name === "string" &&
     typeof value.regionId === "string" &&
+    typeof value.regionCode === "string" &&
+    typeof value.areaCode === "string" &&
+    typeof value.category === "string" &&
     typeof value.score === "number" &&
     typeof value.rank === "number" &&
-    typeof value.windowHours === "number"
+    typeof value.windowHours === "number" &&
+    typeof value.clickCount === "number" &&
+    typeof value.likeCount === "number" &&
+    typeof value.commentCount === "number" &&
+    typeof value.photoCount === "number" &&
+    typeof value.reportCount === "number" &&
+    typeof value.uniqueUserCount === "number" &&
+    (value.trend === "up" || value.trend === "down" || value.trend === "same") &&
+    typeof value.summary === "string"
   );
 }
 
@@ -1051,6 +1072,7 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
   }
 
   if (env.DB) {
+    const db = env.DB;
     const { sql, values, limit: d1Limit } = d1PlacesQuery({
       bbox,
       regionId,
@@ -1060,14 +1082,10 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
       limit,
       requireRankingSignal: true,
     });
-    const { results = [] } = await env.DB.prepare(sql).bind(...values).all<D1PlaceRow>();
-    const rankings: RankingRecord[] = results.map((place, index) => ({
-      placeId: place.id,
-      regionId: place.regionId,
-      score: place.score ?? 0,
-      rank: index + 1,
-      windowHours: 24,
-    }));
+    const { results = [] } = await db.prepare(sql).bind(...values).all<D1PlaceRow>();
+    const rankings: RankingRecord[] = await Promise.all(
+      results.map(async (row, index) => rankingRecordForPlace(d1PlaceRowToRecord(row), index + 1, await d1RankingCounts(db, row.id))),
+    );
     const meta = {
       limit: d1Limit,
       regionId: regionId ?? "all",
@@ -1086,13 +1104,7 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
     .filter((place) => !areaId || place.areaId === areaId)
     .filter((place) => !categoryId || place.categoryId === categoryId);
   const ranked = rankRegionPlaces(scopedPlaces, regionId, limit);
-  const rankings: RankingRecord[] = ranked.map((place, index) => ({
-    placeId: place.id,
-    regionId: place.regionId,
-    score: place.score,
-    rank: index + 1,
-    windowHours: 24,
-  }));
+  const rankings: RankingRecord[] = ranked.map((place, index) => rankingRecordForPlace(place, index + 1, memoryRankingCounts(place.id)));
   const meta = {
     limit: rankings.length,
     regionId: regionId ?? "all",
@@ -3028,6 +3040,33 @@ async function countD1Events(db: D1Database, placeId: string, eventType: "click"
   return row?.count ?? 0;
 }
 
+async function countD1UniqueEventUsers(db: D1Database, placeId: string): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(DISTINCT anonymous_user_id) AS count
+       FROM place_events
+       WHERE place_id = ?
+         AND expires_at > ${D1_NOW_SQL}`,
+    )
+    .bind(placeId)
+    .first<D1CountRow>();
+
+  return row?.count ?? 0;
+}
+
+async function d1RankingCounts(db: D1Database, placeId: string): Promise<RankingCounts> {
+  const [clickCount, likeCount, commentCount, photoCount, reportCount, uniqueUserCount] = await Promise.all([
+    countD1Events(db, placeId, "click"),
+    countD1Interactions(db, "place", placeId),
+    countD1VisibleComments(db, placeId),
+    countD1VisiblePhotos(db, placeId),
+    countD1OpenReportsForTarget(db, "place", placeId),
+    countD1UniqueEventUsers(db, placeId),
+  ]);
+
+  return { clickCount, likeCount, commentCount, photoCount, reportCount, uniqueUserCount };
+}
+
 async function recordD1PlaceEvent(
   db: D1Database,
   place: PlaceRecord,
@@ -3599,7 +3638,7 @@ function d1PlacesQuery({
   return {
     sql: `${d1PlaceSelectSql()}
       WHERE ${where.join(" AND ")}
-      ORDER BY COALESCE(r.score, 0) DESC, p.name ASC
+      ORDER BY score DESC, p.name ASC
       LIMIT ?`,
     values,
     limit,
@@ -3618,6 +3657,58 @@ function d1PlaceRowToRecord(row: D1PlaceRow): PlaceRecord {
     score: row.score ?? 0,
     status: row.status,
     coordinateStatus: row.coordinateStatus,
+  };
+}
+
+function rankingRecordForPlace(place: PlaceRecord, rank: number, counts: RankingCounts): RankingRecord {
+  return {
+    placeId: place.id,
+    name: place.name,
+    regionId: place.regionId,
+    regionCode: place.regionId,
+    areaCode: place.areaId,
+    category: place.categoryId,
+    score: place.score,
+    rank,
+    windowHours: 24,
+    clickCount: counts.clickCount,
+    likeCount: counts.likeCount,
+    commentCount: counts.commentCount,
+    photoCount: counts.photoCount,
+    reportCount: counts.reportCount,
+    uniqueUserCount: counts.uniqueUserCount,
+    trend: "same",
+    summary: d1PlaceStatusSummary(counts.commentCount, counts.photoCount),
+  };
+}
+
+function memoryRankingCounts(placeId: string): RankingCounts {
+  const activeComments = comments.filter((comment) => comment.placeId === placeId && !comment.hiddenAt && isActiveRecentContent(comment.createdAt));
+  const activePhotos = photos.filter(
+    (photo) => photo.placeId === placeId && photo.status === "ready" && !photo.deletedAt && isActiveRecentContent(photo.createdAt),
+  );
+  const openPlaceReports = reports.filter((report) => report.targetType === "place" && report.targetId === placeId && report.status === "open");
+  const uniqueUserIds = new Set<string>();
+
+  for (const comment of activeComments) {
+    uniqueUserIds.add(comment.anonymousUserId);
+  }
+
+  for (const photo of activePhotos) {
+    uniqueUserIds.add(photo.anonymousUserId);
+  }
+
+  for (const report of openPlaceReports) {
+    uniqueUserIds.add(report.anonymousUserId);
+  }
+
+  return {
+    clickCount: placeClickCounts.get(placeId) ?? 0,
+    likeCount: placeLikeCounts.get(placeId) ?? 0,
+    commentCount: activeComments.length,
+    photoCount: activePhotos.length,
+    reportCount: openPlaceReports.length,
+    uniqueUserCount: uniqueUserIds.size,
   };
 }
 
