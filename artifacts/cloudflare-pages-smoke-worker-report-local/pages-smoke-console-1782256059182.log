@@ -1,0 +1,19 @@
+console.info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+console.log: [HMR] connected
+console.log: [Fast Refresh] rebuilding
+console.log: [Fast Refresh] done in 205ms
+console.log: [Fast Refresh] rebuilding
+console.log: [Fast Refresh] done in 294ms
+console.info: [silsigan:event] toggle_traffic_layer Object
+console.info: [silsigan:event] toggle_traffic_layer Object
+console.info: [silsigan:event] view_home Object
+console.info: [silsigan:event] complete_onboarding Object
+console.info: [silsigan:event] click_place Object
+console.info: [silsigan:event] click_map_marker Object
+console.info: [silsigan:event] click_place Object
+console.info: [silsigan:event] like_place Object
+console.info: [silsigan:event] create_comment Object
+console.info: [silsigan:event] report_abuse Object
+console.info: [silsigan:event] click_photo Object
+console.info: [silsigan:event] report_abuse Object
+console.info: [silsigan:event] report_abuse Object

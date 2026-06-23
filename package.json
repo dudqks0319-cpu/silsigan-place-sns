@@ -10,10 +10,29 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "smoke:staging": "node scripts/cloudflare-staging-smoke.mjs",
+    "smoke:pages": "node scripts/cloudflare-pages-smoke.mjs",
+    "smoke:pages:local-report": "node scripts/cloudflare-pages-local-report-smoke.mjs",
+    "smoke:tail-redaction": "node scripts/cloudflare-staging-smoke.mjs --tail-only",
+    "release:gate": "node scripts/cloudflare-release-gate.mjs",
+    "release:status": "node scripts/release-state-check.mjs",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf:typegen": "wrangler types cloudflare-env.d.ts --env-interface CloudflareEnv --env-file .env.example --include-runtime false",
+    "cf:web:dry-run": "wrangler deploy --dry-run --env=\"\" --config wrangler.jsonc",
+    "cf:web:dry-run:staging": "wrangler deploy --dry-run --env staging --config wrangler.jsonc",
+    "cf:web:dry-run:production": "wrangler deploy --dry-run --env production --config wrangler.jsonc",
+    "cf:external-state": "node scripts/cloudflare-external-state-check.mjs",
+    "cf:preflight": "node scripts/cloudflare-resource-preflight.mjs",
+    "cf:preflight:staging": "node scripts/cloudflare-resource-preflight.mjs --env staging",
+    "cf:preflight:production": "node scripts/cloudflare-resource-preflight.mjs --env production",
+    "cf:dry-run": "npx --yes wrangler deploy --dry-run --env=\"\" --config workers/api/wrangler.jsonc",
+    "cf:dry-run:staging": "npx --yes wrangler deploy --dry-run --env staging --config workers/api/wrangler.jsonc",
+    "cf:dry-run:production": "npx --yes wrangler deploy --dry-run --env production --config workers/api/wrangler.jsonc",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.98.0",
     "lucide-react": "0.575.0",
     "next": "16.2.6",
     "react": "19.2.3",
@@ -21,12 +40,14 @@
     "zod": "3.24.2"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "1.19.11",
     "@types/node": "22.13.10",
     "@types/react": "19.0.10",
     "@types/react-dom": "19.0.4",
     "eslint": "9.39.1",
     "eslint-config-next": "16.2.6",
-    "typescript": "5.8.2"
+    "typescript": "5.8.2",
+    "wrangler": "4.103.0"
   },
   "pnpm": {
     "overrides": {
@@ -37,7 +58,9 @@
       "picomatch@>=4.0.0 <4.0.4": "4.0.4",
       "postcss": "8.5.10",
       "tar": "7.5.11",
-      "ws": "8.20.1"
+      "ws": "8.21.0",
+      "js-yaml": "4.2.0",
+      "@babel/core": "7.29.6"
     }
   }
 }

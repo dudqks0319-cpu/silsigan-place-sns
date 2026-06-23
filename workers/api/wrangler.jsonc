@@ -1,0 +1,151 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "silsigan-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "ENVIRONMENT": "development"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "silsigan",
+      "database_id": "TODO_CREATE_WITH_WRANGLER_D1",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      "bucket_name": "silsigan-photos"
+    }
+  ],
+  "images": {
+    "binding": "IMAGES"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "TODO_CREATE_WITH_WRANGLER_KV"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PLACE_ROOM",
+        "class_name": "PlaceRoom"
+      },
+      {
+        "name": "REGION_ROOM",
+        "class_name": "RegionRoom"
+      },
+      {
+        "name": "GLOBAL_ROOM",
+        "class_name": "GlobalRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["PlaceRoom", "RegionRoom", "GlobalRoom"]
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "silsigan-api-staging",
+      "vars": {
+        "ENVIRONMENT": "staging"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "silsigan-staging",
+          "database_id": "cce30710-d706-4534-acfa-90e93154bcf7",
+          "migrations_dir": "./migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "PHOTOS",
+          "bucket_name": "silsigan-photos-staging"
+        }
+      ],
+      "images": {
+        "binding": "IMAGES"
+      },
+      "kv_namespaces": [
+        {
+          "binding": "CACHE",
+          "id": "fdb7fa7af2d74554a359f0ce88098bf4"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "PLACE_ROOM",
+            "class_name": "PlaceRoom"
+          },
+          {
+            "name": "REGION_ROOM",
+            "class_name": "RegionRoom"
+          },
+          {
+            "name": "GLOBAL_ROOM",
+            "class_name": "GlobalRoom"
+          }
+        ]
+      }
+    },
+    "production": {
+      "name": "silsigan-api-production",
+      "vars": {
+        "ENVIRONMENT": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "silsigan-production",
+          "database_id": "0df6539f-c080-4209-ac9c-876abffe7cf0",
+          "migrations_dir": "./migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "PHOTOS",
+          "bucket_name": "silsigan-photos-production"
+        }
+      ],
+      "images": {
+        "binding": "IMAGES"
+      },
+      "kv_namespaces": [
+        {
+          "binding": "CACHE",
+          "id": "4bb8fec1a58a4a2188d4b693492a1d9c"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "PLACE_ROOM",
+            "class_name": "PlaceRoom"
+          },
+          {
+            "name": "REGION_ROOM",
+            "class_name": "RegionRoom"
+          },
+          {
+            "name": "GLOBAL_ROOM",
+            "class_name": "GlobalRoom"
+          }
+        ]
+      }
+    }
+  }
+}

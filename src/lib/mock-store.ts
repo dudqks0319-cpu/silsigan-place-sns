@@ -1,6 +1,9 @@
 import {
   type FlagReason,
   type Place,
+  type RegionActivationMetrics,
+  type RegionActivationStatus,
+  type RegionId,
   type StoredHashtag,
   type StoredPost,
   type StoredQuestion,
@@ -10,6 +13,7 @@ import {
   creditEventForQuestion,
   creditEventsForReport,
   distanceMeters,
+  evaluateRegionActivation,
   getCategorySafetyWarning,
   getQuestionCost,
   getReportExpiry,
@@ -22,6 +26,23 @@ import {
 } from "./domain.ts";
 import { ApiError } from "./errors.ts";
 import type { CreatePostInput, CreateQuestionInput, CreateReportInput, FlagPostInput, FlagReportInput } from "./validators.ts";
+
+export type RegionActivationDashboardRow = {
+  regionId: RegionId;
+  regionName: string;
+  areaId: string;
+  areaName: string;
+  owner: string;
+  metrics: RegionActivationMetrics;
+  status: RegionActivationStatus;
+  updatedAt: string;
+};
+
+type ScopedListFilters = {
+  placeId?: string;
+  regionId?: string;
+  limit?: number;
+};
 
 export const mockPlaces: Place[] = [
   {
@@ -165,31 +186,96 @@ const flagsByReportId = new Map<string, FlagReason[]>();
 const flagsByPostId = new Map<string, FlagReason[]>();
 flagsByPostId.set("post_seed_cityhall_sensitive", ["false_content"]);
 
-export function listPlaces() {
-  return mockPlaces.map((place) => ({
-    ...place,
-    safetyWarning: getCategorySafetyWarning(place.category),
-  }));
+const regionActivationSnapshots: Array<Omit<RegionActivationDashboardRow, "status">> = [
+  {
+    regionId: "busan",
+    regionName: "부산",
+    areaId: "busan-suyeong",
+    areaName: "수영구",
+    owner: "operator:busan",
+    metrics: {
+      seedPlaceCount: 36,
+      reportsLast7Days: 128,
+      verifiedReportsLast7Days: 44,
+      photoReportsLast7Days: 38,
+      moderationFlowReady: true,
+    },
+    updatedAt: minutesAgoIso(9),
+  },
+  {
+    regionId: "ulsan",
+    regionName: "울산",
+    areaId: "ulsan-nam",
+    areaName: "남구",
+    owner: "operator:ulsan",
+    metrics: {
+      seedPlaceCount: 27,
+      reportsLast7Days: 96,
+      verifiedReportsLast7Days: 34,
+      photoReportsLast7Days: 25,
+      moderationFlowReady: true,
+    },
+    updatedAt: minutesAgoIso(18),
+  },
+  {
+    regionId: "gyeongju",
+    regionName: "경주",
+    areaId: "gyeongju-hwango",
+    areaName: "황오동",
+    owner: "operator:gyeongju",
+    metrics: {
+      seedPlaceCount: 31,
+      reportsLast7Days: 72,
+      verifiedReportsLast7Days: 20,
+      photoReportsLast7Days: 19,
+      moderationFlowReady: false,
+    },
+    updatedAt: minutesAgoIso(33),
+  },
+];
+
+export function listPlaces(filters: { regionId?: string; q?: string; limit?: number } = {}) {
+  const query = filters.q?.trim().toLocaleLowerCase("ko-KR");
+
+  return mockPlaces
+    .filter((place) => {
+      if (filters.regionId && place.regionId !== filters.regionId) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      return [place.name, place.address, place.category, place.regionId].some((value) => value.toLocaleLowerCase("ko-KR").includes(query));
+    })
+    .slice(0, normalizeListLimit(filters.limit))
+    .map((place) => ({
+      ...place,
+      safetyWarning: getCategorySafetyWarning(place.category),
+    }));
 }
 
-export function listReports(filters: { placeId?: string; includeExpired?: boolean } = {}) {
+export function listReports(filters: ScopedListFilters & { includeExpired?: boolean } = {}) {
   const now = new Date();
 
-  return reports.filter((report) => {
-    if (filters.placeId && report.placeId !== filters.placeId) {
-      return false;
-    }
+  return reports
+    .filter((report) => {
+      if (!matchesScopedPlace(report.placeId, filters)) {
+        return false;
+      }
 
-    if (report.hiddenAt) {
-      return false;
-    }
+      if (report.hiddenAt) {
+        return false;
+      }
 
-    if (!filters.includeExpired && isReportExpired(new Date(report.expiresAt), now)) {
-      return false;
-    }
+      if (!filters.includeExpired && isReportExpired(new Date(report.expiresAt), now)) {
+        return false;
+      }
 
-    return true;
-  });
+      return true;
+    })
+    .slice(0, normalizeListLimit(filters.limit));
 }
 
 export function createReport(input: CreateReportInput) {
@@ -228,9 +314,9 @@ export function createReport(input: CreateReportInput) {
   };
 }
 
-export function listPosts(filters: { placeId?: string; hashtagName?: string; includeHidden?: boolean } = {}) {
+export function listPosts(filters: ScopedListFilters & { hashtagName?: string; includeHidden?: boolean } = {}) {
   const filteredPosts = posts.filter((post) => {
-    if (filters.placeId && post.placeId !== filters.placeId) {
+    if (!matchesScopedPlace(post.placeId, filters)) {
       return false;
     }
 
@@ -245,7 +331,7 @@ export function listPosts(filters: { placeId?: string; hashtagName?: string; inc
     return true;
   });
 
-  return rankPostsForFeed(filteredPosts).map(publicPost);
+  return rankPostsForFeed(filteredPosts).slice(0, normalizeListLimit(filters.limit)).map(publicPost);
 }
 
 export function listHashtags(): StoredHashtag[] {
@@ -318,8 +404,10 @@ export function createPost(input: CreatePostInput) {
   };
 }
 
-export function listQuestions(placeId?: string) {
-  return questions.filter((question) => !placeId || question.placeId === placeId);
+export function listQuestions(filters: string | ScopedListFilters = {}) {
+  const normalizedFilters = typeof filters === "string" ? { placeId: filters } : filters;
+
+  return questions.filter((question) => matchesScopedPlace(question.placeId, normalizedFilters)).slice(0, normalizeListLimit(normalizedFilters.limit));
 }
 
 export function createQuestion(input: CreateQuestionInput) {
@@ -428,18 +516,31 @@ export function listPostModerationQueue(filters: { reason?: FlagReason | "hidden
     .sort((left, right) => right.flagCount - left.flagCount || new Date(right.post.createdAt).getTime() - new Date(left.post.createdAt).getTime());
 }
 
+export function listRegionActivationDashboard(): RegionActivationDashboardRow[] {
+  return regionActivationSnapshots
+    .map((snapshot) => ({
+      ...snapshot,
+      status: evaluateRegionActivation(snapshot.metrics),
+    }))
+    .sort((left, right) => Number(right.status.canActivate) - Number(left.status.canActivate) || left.regionName.localeCompare(right.regionName, "ko"));
+}
+
 export function moderatePost(input: { postId: string; action: "keep" | "hide" | "delete" | "restrict_author" }) {
   const post = findPost(input.postId);
+  const linkedReport = reports.find((report) => report.id === post.id);
 
   if (input.action === "keep") {
     flagsByPostId.set(post.id, []);
+    post.hiddenAt = null;
+    if (linkedReport) {
+      linkedReport.hiddenAt = null;
+    }
   }
 
   if ((input.action === "hide" || input.action === "delete") && !post.hiddenAt) {
     post.hiddenAt = new Date().toISOString();
   }
 
-  const linkedReport = reports.find((report) => report.id === post.id);
   if (linkedReport && post.hiddenAt) {
     linkedReport.hiddenAt = post.hiddenAt;
   }
@@ -559,4 +660,24 @@ function makeSeedPost(input: Omit<StoredPost, "userId" | "locationVerified" | "v
 
 function minutesAgoIso(minutes: number) {
   return new Date(Date.now() - minutes * 60_000).toISOString();
+}
+
+function matchesScopedPlace(placeId: string, filters: ScopedListFilters) {
+  if (filters.placeId && placeId !== filters.placeId) {
+    return false;
+  }
+
+  if (!filters.regionId) {
+    return true;
+  }
+
+  return mockPlaces.some((place) => place.id === placeId && place.regionId === filters.regionId);
+}
+
+function normalizeListLimit(limit: number | undefined) {
+  if (!Number.isFinite(limit)) {
+    return 100;
+  }
+
+  return Math.min(200, Math.max(1, Math.trunc(limit ?? 100)));
 }

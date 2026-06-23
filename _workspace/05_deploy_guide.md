@@ -1,152 +1,162 @@
-# #실시간 Vercel/Supabase 배포 가이드
+# #실시간 Cloudflare 배포 가이드
 
 ## 1. 배포 원칙
 
 - 운영 데이터는 최소수집, 최소보관, 최소노출을 기본값으로 한다.
-- Supabase RLS는 모든 사용자 데이터 테이블에 필수이며 deny-by-default로 시작한다.
+- 브라우저는 D1/R2/Durable Objects에 직접 접근하지 않고 Cloudflare Worker API만 호출한다.
 - 위치 원본 좌표는 영구 저장하지 않는다. 거리 구간 또는 장소 검증 결과만 저장한다.
-- 사진은 EXIF 제거와 재인코딩 후 저장한다. 원본 파일명과 원본 메타데이터를 노출하지 않는다.
+- 사진은 클라이언트 1280px 재인코딩, Worker EXIF/GPS metadata stripping, Cloudflare Images binding 서버 픽셀 재인코딩 후 저장한다. 원본 파일명과 원본 메타데이터를 노출하지 않는다.
 - 병원/관공서 카테고리는 민감정보 업로드 제한과 빠른 신고/삭제 운영을 필수로 한다.
 
-## 2. Vercel 환경변수
+## 2. 환경변수와 Secret
 
 | 이름 | 노출 | 설명 | 운영 기준 |
 | --- | --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | 브라우저 가능 | Supabase 프로젝트 URL | 운영 프로젝트 URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 브라우저 가능 | RLS 전제 anon key | RLS 없이는 사용 금지 |
-| `SUPABASE_SERVICE_ROLE_KEY` | 서버 전용 | 관리자/서버 작업 키 | 브라우저 코드 import 금지, 로그 출력 금지 |
 | `NEXT_PUBLIC_SITE_URL` | 브라우저 가능 | 사이트 URL | production 도메인 |
+| `NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL` | 브라우저 가능 | Worker API 공개 URL | staging/production 분리 |
+| `SILSIGAN_WORKER_API_BASE_URL` | 서버 전용 | Next 관리자 화면에서 사용할 Worker API URL | 서버 API route 전용, 브라우저 번들 금지 |
+| `SILSIGAN_WORKER_ADMIN_TOKEN` | 서버 전용 | Next 관리자 화면의 Worker 신고 큐 proxy 토큰 | `moderator` 이상, 브라우저 번들 금지 |
+| `SILSIGAN_STAGING_PAGES_URL` | 배포 gate 전용 | staging Pages 공개 URL | HTTPS, localhost 금지, production과 분리 |
+| `SILSIGAN_STAGING_API_BASE_URL` | 배포 gate/smoke 전용 | staging Worker API 공개 URL | HTTPS, localhost 금지, production과 분리 |
+| `SILSIGAN_PRODUCTION_PAGES_URL` | 배포 gate 전용 | production Pages 공개 URL | HTTPS, staging과 분리 |
+| `SILSIGAN_PRODUCTION_API_BASE_URL` | 배포 gate 전용 | production Worker API 공개 URL | HTTPS, staging과 분리 |
+| `CLOUDFLARE_D1_DATABASE_ID` | 서버/배포 전용 | D1 DB 식별자 | 브라우저 번들 금지 |
+| `CLOUDFLARE_R2_BUCKET` | 서버/배포 전용 | R2 bucket 이름 | staging/production 분리 |
+| `IMAGES` | Worker Images binding | R2 저장 전 서버 픽셀 재인코딩 | staging/production에서 binding smoke 필수 |
+| `ADMIN_TOKEN` | Worker secret | 기존 단일 운영자 토큰 호환 경로 | production에서는 `ADMIN_TOKENS` 우선 |
+| `ADMIN_TOKENS` | Worker secret | `operator`, `moderator`, `admin` role별 토큰 JSON | `wrangler secret put`로 등록 |
+| `MODERATION_ALERT_WEBHOOK_URL` | Worker secret | 신규 신고 큐 운영자 알림 webhook URL | HTTPS만 허용, staging/production 분리 |
+| `MODERATION_ALERT_WEBHOOK_TOKEN` | Worker secret | 운영자 알림 webhook bearer token | 선택값, 저장소/로그 노출 금지 |
+| `CACHE` | Worker KV binding | 랭킹/장소/댓글/사진 캐시 무효화 | staging/production 분리 |
 
-서비스 롤 키는 Vercel Production/Preview 환경변수에만 저장한다. `NEXT_PUBLIC_` 접두사를 붙이면 안 되며, 클라이언트 컴포넌트나 브라우저 번들에서 참조하면 출시 차단이다.
+Cloudflare API 토큰과 관리자 토큰은 저장소, 로그, 브라우저 번들, 응답 본문에 노출하면 출시 차단이다.
 
-## 3. Supabase 설정
+## 3. Cloudflare 리소스
 
-### 3.1 Auth
+### 3.1 Worker
 
-- 이메일/소셜 로그인 여부와 무관하게 `auth.uid()` 기반 RLS를 사용한다.
-- 신규 가입 시 질문권 3개 부여는 서버 트랜잭션 또는 DB 함수로 처리한다.
-- 포인트/질문권/신뢰도 변경은 클라이언트 직접 업데이트를 금지한다.
+- `workers/api/wrangler.jsonc`를 기준으로 Worker를 배포한다.
+- `workers/api/wrangler.jsonc`는 development, staging, production environment를 분리한다. Wrangler environment의 `vars`와 binding은 상속되지 않으므로 D1/R2/Images/KV/Durable Object binding을 environment마다 명시한다.
+- 기본 development Worker dry-run은 local config sanity check이다. root config의 D1/KV ID는 development 리소스를 만들기 전까지 placeholder로 남기며, release evidence는 concrete binding이 들어간 staging/production dry-run만 사용한다.
+- 모든 쓰기 API는 Worker 입력 검증, rate limit, 익명 식별자 소유권 검사를 거친다.
+- 관리자 API는 deny-by-default로 두고 role별 토큰과 감사 로그를 요구한다.
+- Next 관리자 화면은 `/api/admin/moderation/reports`, `/api/admin/places/coordinate-status`, `/api/admin/users/restrict`, `/api/admin/users/unrestrict` server route를 통해서만 Worker 운영 API를 호출하고, Worker 운영 토큰은 브라우저로 내려보내지 않는다.
+- 운영자 숨김/복구는 `moderator` 이상, 삭제는 `admin` 이상을 요구한다.
+- 운영자 숨김/복구/삭제 API는 사진 삭제 시 D1 상태 변경, R2 object delete, `CACHE` KV key 삭제를 함께 수행한다.
+- 신규 open 신고는 `MODERATION_ALERT_WEBHOOK_URL`이 있을 때 운영자 알림 채널로 전송한다. payload는 신고 ID, 대상 ID, 사유, 우선순위, 큐 경로만 포함하고 신고자 ID, note 원문, 원좌표, 원본 파일명은 제외한다.
 
-### 3.2 Database/RLS 필수 정책
+### 3.2 D1
 
-모든 테이블은 RLS를 켠다.
+- 스키마 기준 파일은 `workers/api/src/db/schema.sql`이다.
+- 마이그레이션 기준 파일은 `workers/api/migrations/0001_initial.sql`이다.
+- seed 기준 파일은 `workers/api/seeds/001_core_seed.sql`이다.
+- 운영 전 두 파일이 동일한 컬럼/인덱스 정책을 유지하는지 확인한다.
+- seed는 `ON CONFLICT` 기반이라 재실행해도 장소/랭킹 행이 중복되지 않는다. 현재 로컬 검증은 `pnpm test`의 `D1 core seed SQL is idempotent` 케이스가 담당한다.
+- 좌표 미검증 seed는 `coordinate_status = 'TODO_COORDINATE_VERIFY'`와 null 좌표로 저장하고 공개 장소/지도/랭킹 API에서 제외한다.
+- 좌표 미검증 seed는 `/api/admin/places/coordinate-status`에서 `operator` 이상 권한으로만 verified/rejected 전환하며, verified가 되기 전까지 공개 장소/지도/랭킹 API에 노출하지 않는다.
+- Worker는 D1 바인딩이 있을 때 장소/랭킹 read path뿐 아니라 댓글, 사진 완료, 좋아요, 신고, admin action을 D1에 기록한다.
+- 열린 신고는 `(anonymous_user_id, target_type, target_id, reason)` unique index와 Worker 중복 검사로 동일 익명 사용자의 반복 집계를 막는다.
+- `blocked_users`는 `admin` 권한 운영 API로만 설정/해제하며, active 제한 상태의 익명 사용자는 새 댓글/사진/좋아요/클릭/신고 write가 `USER_RESTRICTED`로 차단된다.
+- 운영자 hide/restore/delete 결과는 `admin_actions`에 남기고 public read path는 숨김/삭제 상태를 제외한다.
 
-```sql
-alter table public.reports enable row level security;
-alter table public.questions enable row level security;
-alter table public.user_credits enable row level security;
-alter table public.moderation_reports enable row level security;
-```
+### 3.3 KV 캐시
 
-공개 조회는 만료/삭제/숨김 상태를 제외한다.
+- `workers/api/wrangler.jsonc`는 `CACHE` KV binding을 가진다.
+- 관리자 조치 후 Worker는 전국/지도/지역/area/category 랭킹, 장소 상세, 장소 live, 댓글/사진 목록 캐시 키를 삭제한다.
+- 현재 로컬 검증은 `pnpm test`의 `admin moderation role gates update D1 R2 and CACHE invalidation` 케이스가 담당한다.
 
-```sql
-create policy "read active public reports"
-on public.reports
-for select
-using (
-  deleted_at is null
-  and hidden_at is null
-  and expires_at > now()
-);
-```
+### 3.4 R2 사진 저장소
 
-작성자는 본인 레코드만 수정/삭제한다.
+- 업로드 경로는 UUID 기반으로 생성하고 원본 파일명을 저장하지 않는다.
+- 브라우저 `PhotoUploader`는 JPEG/WebP 파일을 1280px 이하 캔버스 이미지로 재인코딩한 뒤 `imageBase64`와 실제 byte size/dimension을 Worker에 보낸다.
+- R2 binding이 있는 Worker는 `/api/photos/complete`에서 `imageBase64`를 받아 JPEG APP1/COM/metadata segment 또는 WebP EXIF/XMP chunk를 제거한 뒤, `IMAGES` binding이 있으면 서버 픽셀 재인코딩 결과만 R2에 저장한다.
+- `workers/api/wrangler.jsonc`는 `PHOTOS` R2 binding과 `IMAGES` Images binding을 함께 선언한다.
+- Worker는 R2 저장 전 정화/재인코딩된 최종 이미지 바이트의 SHA-256 fingerprint를 계산하고, 삭제되지 않은 동일 fingerprint 사진이 D1에 있으면 `409 PHOTO_DUPLICATE`로 거부한다. fingerprint는 D1 중복 방지용이며 public API와 R2 metadata에 노출하지 않는다.
+- 공개 URL을 쓰더라도 DB의 `status`, `deleted_at`, `report_count` 정책과 함께 노출을 제어한다.
+- 운영자 사진 삭제는 R2 object key를 삭제한 뒤 D1에서 `deleted_at`과 `hidden_at`을 기록한다.
+- 사진 중복/도용 기준은 `pnpm test`의 `D1 photo complete rejects duplicate sanitized image content before a second R2 write`로 검증한다.
+- GPS EXIF 샘플 사진의 metadata 제거는 `pnpm test`의 `photo complete strips GPS EXIF sample before writing to R2`로 검증한다.
+- 서버 픽셀 재인코딩은 `pnpm test`의 `photo complete reencodes pixels with Cloudflare Images binding before writing to R2`로 검증한다.
+- 브라우저 업로드 smoke는 Playwright 모바일 viewport에서 `PhotoUploader` 파일 선택, Worker `/api/photos/upload-url` 201, `/api/photos/complete` 201, 상세 시트 `사진4장` 표시로 검증한다.
+- Cloudflare staging에서는 실제 `IMAGES` binding으로 `/api/photos/complete` smoke를 한 번 더 확인한 뒤 대량 사용자 사진 수집을 연다.
 
-```sql
-create policy "update own report"
-on public.reports
-for update
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
-```
+### 3.5 Durable Objects
 
-민감 테이블은 본인 또는 서버 함수만 접근한다.
+- 장소, 지역, 전국 실시간 방을 Durable Object로 분리한다.
+- WebSocket 또는 polling 전환 시 같은 path alias를 유지한다.
 
-```sql
-create policy "read own credits"
-on public.user_credits
-for select
-using (auth.uid() = user_id);
-```
+## 4. 배포 순서
 
-### 3.3 위치 데이터 모델 기준
-
-저장 금지:
-
-- 사용자의 원본 위도/경도
-- 사진 EXIF GPS
-- 위치 인증 당시의 정확한 이동 경로
-- 운영 로그의 raw coordinate
-
-저장 허용:
-
-- `place_id`
-- `distance_band`: `within_50m`, `50_150m`, `150_300m`, `outside`
-- `verified_at`
-- 선택적 coarse geohash 또는 행정동 수준 값
-- 서버에서 계산한 `location_verified: boolean`
-
-서버는 클라이언트 좌표를 검증 입력으로만 사용하고, 저장 전 폐기한다.
-
-## 4. Storage/사진 업로드 설정
-
-- 업로드 bucket은 `reports`처럼 용도를 분리한다.
-- 쓰기는 인증 사용자에게만 허용한다.
-- 읽기는 공개가 필요해도 DB의 `hidden_at`, `deleted_at`, `expires_at` 정책과 함께 동작하도록 URL 발급/노출을 제어한다.
-- 업로드 파일은 서버에서 MIME sniffing, 크기 제한, 확장자 제한을 수행한다.
-- 저장 전 이미지 처리 파이프라인에서 EXIF 제거, 재인코딩, 썸네일 생성을 수행한다.
-- 원본 파일명 대신 UUID 기반 경로를 사용한다.
-
-권장 처리 흐름:
-
-```txt
-client upload request
--> server validates auth and category
--> server receives image
--> MIME sniff + size limit
--> decode image
--> strip EXIF
--> re-encode jpeg/webp
--> store sanitized image
--> create DB record with sanitized path only
-```
-
-## 5. Vercel 배포 순서
-
-1. `pnpm-lock.yaml` 생성 후 커밋한다.
-2. Vercel 프로젝트를 생성하고 Git 저장소를 연결한다.
-3. Production/Preview 환경변수를 분리 등록한다.
-4. Supabase staging과 production 프로젝트를 분리한다.
-5. `pnpm install --frozen-lockfile` 기준으로 빌드한다.
-6. Preview 배포에서 RLS, 업로드, 신고/삭제, 로그 redaction을 확인한다.
-7. Production 배포 전 보안 게이트를 체크한다.
+1. `pnpm install --frozen-lockfile`로 lockfile 정합성을 확인한다.
+2. `pnpm verify`로 lint, typecheck, test, build를 통과시킨다.
+3. `pnpm cf:typegen`으로 `.env.example` 기반 Cloudflare env type을 생성해 로컬 개인 `.env.local` 키 유입을 피한다.
+4. `pnpm cf:build`로 OpenNext Cloudflare frontend bundle을 생성하고 `.open-next/worker.js`, `.open-next/assets`를 확인한다.
+5. `pnpm cf:web:dry-run`, `pnpm cf:web:dry-run:staging`, `pnpm cf:web:dry-run:production`으로 frontend Worker/Assets bundle을 검증한다.
+6. D1 staging/production DB는 생성 및 `workers/api/migrations/0001_initial.sql`, `workers/api/seeds/001_core_seed.sql` 적용이 완료된 상태에서 시작한다. 재검증은 원격 D1 count query로 `verified_places=5`, `rankings=6`을 확인한다.
+7. Cloudflare Dashboard에서 R2를 활성화한 뒤 `silsigan-photos-staging`, `silsigan-photos-production` bucket을 만들고 CORS/공개 URL/캐시 무효화 정책을 확인한다.
+8. Worker secret을 staging과 production에 분리 등록한다. production은 role별 JSON 형태의 `ADMIN_TOKENS`를 우선 사용하고, 신고 알림은 `MODERATION_ALERT_WEBHOOK_URL`과 선택값 `MODERATION_ALERT_WEBHOOK_TOKEN`을 별도 secret으로 등록한다.
+9. staging Worker를 배포하고 `SILSIGAN_STAGING_API_BASE_URL`을 실제 HTTPS 배포 URL로 export한다.
+10. Cloudflare Pages staging frontend를 배포하고 `SILSIGAN_STAGING_PAGES_URL`을 실제 HTTPS 배포 URL로 export한 뒤 `pnpm cf:preflight`를 통과시킨다.
+11. Web preview에서 Worker staging API를 연결해 장소/랭킹/댓글/사진/좋아요/신고/admin action smoke를 확인한다.
+12. Production 배포 전 `docs/security-gate.md`의 residual risk를 다시 판정한다.
 
 검증 명령:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
+pnpm verify
+pnpm release:status -- --strict
 pnpm audit --audit-level critical
+pnpm cf:typegen
+pnpm cf:build
+pnpm cf:web:dry-run
+pnpm cf:web:dry-run:staging
+pnpm cf:web:dry-run:production
+pnpm cf:dry-run
+pnpm cf:dry-run:staging
+pnpm cf:dry-run:production
+export SILSIGAN_STAGING_PAGES_URL=https://<staging-pages>
+export SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker>
+export SILSIGAN_PRODUCTION_PAGES_URL=https://<production-pages>
+export SILSIGAN_PRODUCTION_API_BASE_URL=https://<production-worker>
+pnpm cf:preflight
+SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> pnpm smoke:staging
+SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging
+SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> SILSIGAN_STAGING_MUTATION=1 SILSIGAN_STAGING_ADMIN_TOKEN=<admin-token> pnpm smoke:staging -- --require-admin
+SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> SILSIGAN_STAGING_MUTATION=1 SILSIGAN_STAGING_ADMIN_TOKEN=<admin-token> SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE=1 SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID=<place-id> SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE=<lat> SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE=<lng> pnpm smoke:staging -- --require-admin
+SILSIGAN_STAGING_PAGES_URL=https://<staging-pages> SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> pnpm smoke:pages
+SILSIGAN_STAGING_PAGES_URL=https://<staging-pages> SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> SILSIGAN_STAGING_BROWSER_MUTATION=1 pnpm smoke:pages
+SILSIGAN_STAGING_PAGES_URL=https://<staging-pages> SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> SILSIGAN_STAGING_BROWSER_MUTATION=1 SILSIGAN_STAGING_BROWSER_REPORT=1 pnpm smoke:pages
+pnpm release:gate -- --skip-verify --skip-dry-run --collect-blockers --tail-file=artifacts/cloudflare-tail/staging-tail.log
+pnpm release:gate -- --local-pages-report --tail-required --tail-file=artifacts/cloudflare-tail/staging-tail.log
+pnpm release:gate -- --release-candidate --tail-file=artifacts/cloudflare-tail/staging-tail.log
+pnpm release:gate -- --production-candidate
+SILSIGAN_STAGING_TAIL_LOG_FILE=artifacts/cloudflare-tail/staging-tail.log pnpm smoke:tail-redaction
+cd workers/api
+wrangler d1 execute DB --env staging --remote --command "SELECT (SELECT COUNT(*) FROM places WHERE coordinate_status = 'verified') AS verified_places, (SELECT COUNT(*) FROM place_rankings) AS rankings;" --json
+wrangler d1 execute DB --env production --remote --command "SELECT (SELECT COUNT(*) FROM places WHERE coordinate_status = 'verified') AS verified_places, (SELECT COUNT(*) FROM place_rankings) AS rankings;" --json
 ```
 
-## 6. 운영 모니터링
+## 5. 운영 모니터링
 
-- Vercel logs: raw coordinate, service role key, anon key 외 비밀값이 출력되지 않는지 확인.
-- Supabase logs: 실패한 RLS 접근, upload rejection, 신고 처리 지연을 모니터링.
-- 신고 큐: 개인정보/얼굴/차량번호/병원/관공서 신고는 우선순위 높음.
+- Local redaction guard: `pnpm test`의 `worker generic errors do not echo secrets or raw sensitive values`, `analytics console events redact sensitive values`가 통과해야 한다.
+- Release state ledger: `pnpm release:status`는 `docs/current-release-state.md`, wrangler resource IDs, staging/production Pages/API URL 상태를 JSON으로 요약한다. 출시 전에는 `pnpm release:status -- --strict`가 통과해야 한다.
+- Resource preflight: `pnpm cf:preflight`는 staging/production D1/KV resource ID placeholder, secret-like `vars`, 누락된 R2/Images/Durable Object binding, 비어 있거나 localhost/http/query/fragment/credential이 포함된 Pages/API URL, staging/production URL 중복을 출시 차단으로 실패시킨다.
+- Release gate: `pnpm release:gate`는 로컬 검증 뒤 `--local-pages-report` baseline과 지정된 `--tail-file` redaction을 strict URL/resource checks보다 먼저 실행한다. 따라서 staging URL이 아직 없어도 로컬 브라우저 baseline과 tail 로그 안전성은 먼저 실패/통과가 드러나며, 이 둘이 통과한 뒤 deployment URL blocker에서 멈춘다. `--collect-blockers`는 non-mutating 진단 모드로 첫 실패 뒤에도 strict status, preflight, external-state, read-only smoke를 계속 실행해 missing URL/R2 blocker를 한 번에 모은다. `--release-candidate`는 최종 staging 후보 증거용으로 mutating Worker smoke, Pages 신고 생성 smoke, 공개 사진 클릭 요구, tail 필수 검증을 함께 켠다. `--production-candidate`는 production Pages/API HTTPS URL readiness를 실행 전 검증하고 production API/Pages read-only smoke를 추가하되 staging 쓰기 smoke나 tail 필수를 자동으로 켜지 않는다. Local Pages report baseline은 network redaction과 신고 target type뿐 아니라 `map.controlsUncovered`, `onboarding.dismiss`, map marker detail hit-testing을 포함한 필수 smoke check integrity도 검증한다.
+- Staging smoke: `pnpm smoke:staging`은 `SILSIGAN_STAGING_API_BASE_URL` 또는 `--base-url`이 없으면 실패하며, 기본 읽기 API, 공개 좌표, place/region/global realtime room, 랭킹, 댓글/사진 목록, 무권한 admin 차단을 확인한다. `SILSIGAN_STAGING_MUTATION=1`일 때만 실제 R2/Images 사진 완료/삭제/공개 목록 제외, 댓글 생성/작성자 삭제/공개 목록 제외, 장소 좋아요/취소를 확인한다. 같은 실행 전에 `SILSIGAN_STAGING_ADMIN_TOKEN`을 shell에 설정하면 장소 신고 생성, 운영자 open 큐 조회, rejected 처리, open 큐 정리, 전용 익명 사용자 임시 제한/차단 확인/해제/댓글 정리까지 확인한다. 좌표 상태 변경은 실제 장소 레코드를 바꾸므로 `SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE=1`과 대상 장소/좌표 환경변수를 명시한 경우에만 verified 운영 경로와 공개 상세 노출을 확인한다.
+- Pages smoke: `pnpm smoke:pages`는 headless Chrome으로 Pages 프론트를 직접 열고 지도 surface의 실제 크기/내부 콘텐츠, 초기 지도 도구와 현재 위치 버튼이 하단 내비게이션에 가려지지 않는지, 첫 방문 안내가 실제 클릭으로 닫히는지, 교통/필터 버튼 클릭 상태 변화, 전국/지역/지도 화면 안 TOP 10 랭킹 패널과 랭킹 항목 상세 열기, 지도 마커 상세 열기, Worker `/api/places` 요청, place/region/global realtime room 요청을 검증한다. `SILSIGAN_STAGING_BROWSER_MUTATION=1`은 좋아요/댓글/사진 클릭을 실제 Worker API로 확인하고 좋아요/댓글은 같은 익명 세션으로 정리한다. 신고 생성은 운영 영향이 있으므로 `SILSIGAN_STAGING_BROWSER_REPORT=1`을 명시한 경우에만 실행하며, 이때 장소/댓글/사진 신고가 모두 `/api/moderation/reports`로 들어가는지 `targetType` 기준으로 확인한다. 스테이징 URL이 준비되기 전에는 `pnpm smoke:pages:local-report -- --timeout-ms=45000` 또는 `pnpm release:gate -- --local-pages-report --tail-required --tail-file=artifacts/cloudflare-tail/staging-tail.log`로 local mock Worker + Next dev + 같은 Pages browser smoke를 실행해 `--mutating --report --require-photo` 경로와 필수 smoke check integrity를 반복 검증한다. 이 로컬 baseline은 staging Pages/Worker 증적을 대체하지 않는다.
+- Worker logs: staging에서 `wrangler tail` 또는 Cloudflare dashboard 로그 샘플을 `SILSIGAN_STAGING_TAIL_LOG_FILE`에 저장한 뒤 `pnpm smoke:tail-redaction`으로 raw coordinate, Cloudflare API token, 관리자 토큰, 익명 식별자 원문, 이메일, 원본 파일명이 출력되지 않는지 확인한다. 이 gate의 안전 로그 통과와 raw 민감값 실패 경로는 `pnpm test`의 tail redaction smoke 테스트가 고정한다.
+- D1 metrics: 신고 처리 지연, 랭킹 집계 지연, 쓰기 실패율을 모니터링한다.
+- R2 logs: 업로드 거부, 삭제 실패, 공개 URL 노출 범위를 확인한다.
+- 신고 큐: 개인정보/얼굴/차량번호/병원/관공서 신고는 우선순위 높음. `pnpm test`의 `D1 report creation sends a redacted moderation alert webhook`은 신규 신고가 redacted webhook payload로 운영자 채널에 전달되는지 검증한다.
 - 삭제 SLA: 명백한 개인정보 또는 민감정보는 확인 즉시 숨김, 24시간 내 최종 삭제 판단.
-- 데이터 보관: 제보 기본 노출은 3시간, 운영 감사 로그는 필요한 최소 기간만 보관.
 
-## 7. 롤백 기준
+## 6. 롤백 기준
 
 다음 중 하나라도 발생하면 즉시 배포 롤백 또는 기능 플래그 비활성화:
 
 - 사용자 원본 좌표 저장 또는 로그 노출 확인.
 - 사진 EXIF GPS 노출 확인.
-- RLS 우회 또는 타인 데이터 접근 확인.
-- service role key 브라우저 노출 확인.
+- D1/R2 직접 접근 또는 타인 데이터 접근 확인.
+- Cloudflare API 토큰 또는 관리자 토큰 브라우저 노출 확인.
 - 신고/삭제 큐 장애로 민감 사진을 숨길 수 없는 상태.

@@ -1,0 +1,347 @@
+[
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/css/app/layout.css?v=1781878813009"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/css/app/page.css?v=1781878813009"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/chunks/webpack.js?v=1781878813009"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/chunks/main-app.js?v=1781878813009"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/chunks/app-pages-internals.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/chunks/app/page.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/manifest.webmanifest"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/css/app/layout.css?v=1781878813009"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/css/app/page.css?v=1781878813009"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/chunks/webpack.js?v=1781878813009"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/manifest.webmanifest"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/chunks/app-pages-internals.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/chunks/app/page.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/chunks/main-app.js?v=1781878813009"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/favicon.svg"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/favicon.svg"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:4331/api/places?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/api/reports?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/api/posts?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/api/hashtags"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/api/questions?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/api/my-questions"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:4331/api/places?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:4331/api/places?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "http://127.0.0.1:4331/api/places?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/webpack/e22dd496674493b7.webpack.hot-update.json"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/webpack/e22dd496674493b7.webpack.hot-update.json"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/webpack/webpack.e22dd496674493b7.hot-update.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/webpack/webpack.e22dd496674493b7.hot-update.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/webpack/9663dabfd5361e64.webpack.hot-update.json"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/api/questions?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/api/my-questions"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/api/reports?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/api/posts?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/api/hashtags"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:4331/api/photos?placeId=busan-gwangalli&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:4331/api/photos?placeId=busan-gwangalli&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:4331/api/photos?placeId=seoul-hangang&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:4331/api/photos?placeId=seoul-hangang&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "http://127.0.0.1:4331/api/photos?placeId=busan-gwangalli&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:4331/api/photos?placeId=busan-gwangalli&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "http://127.0.0.1:4331/api/photos?placeId=seoul-hangang&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:4331/api/photos?placeId=seoul-hangang&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/webpack/9663dabfd5361e64.webpack.hot-update.json"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=5coqaq388h&callback=__silsiganNaverMapReady"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3021/_next/static/webpack/webpack.9663dabfd5361e64.hot-update.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3021/_next/static/webpack/webpack.9663dabfd5361e64.hot-update.js"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:4331/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "http://127.0.0.1:4331/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:4331/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "http://127.0.0.1:4331/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:4331/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "http://127.0.0.1:4331/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:4331/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:4331/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:4331/api/places/busan-gwangalli/like"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "http://127.0.0.1:4331/api/places/busan-gwangalli/like"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "http://127.0.0.1:4331/api/places/busan-gwangalli/like"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:4331/api/places/busan-gwangalli/like"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:4331/api/comments"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "http://127.0.0.1:4331/api/comments"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "http://127.0.0.1:4331/api/comments"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:4331/api/comments"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "http://127.0.0.1:4331/api/photos/photo_pages_smoke_1/click"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:4331/api/photos/photo_pages_smoke_1/click"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "http://127.0.0.1:4331/api/photos/photo_pages_smoke_1/click"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:4331/api/photos/photo_pages_smoke_1/click"
+  }
+]

@@ -8,7 +8,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const filters = listPostsSchema.parse({
       placeId: url.searchParams.get("placeId") ?? undefined,
+      regionId: url.searchParams.get("regionId") ?? url.searchParams.get("region") ?? undefined,
       hashtagName: url.searchParams.get("hashtagName") ?? undefined,
+      limit: url.searchParams.get("limit") ?? undefined,
       includeHidden: url.searchParams.get("includeHidden") ?? undefined,
     });
 

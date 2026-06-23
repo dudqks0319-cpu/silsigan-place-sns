@@ -38,6 +38,8 @@
   ],
   "exclude": [
     "node_modules",
+    "cloudflare-env.d.ts",
+    "worker-configuration.d.ts",
     "apps/mobile"
   ]
 }

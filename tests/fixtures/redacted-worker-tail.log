@@ -1,0 +1,2 @@
+{"level":"error","message":"policy failure","error":"POLICY_ERROR","path":"/api/photos/complete","anon":"[redacted]","latitude":"[redacted]","longitude":"[redacted]","originalFilename":"[redacted]","token":"[redacted]"}
+{"level":"info","message":"admin moderation denied","path":"/api/admin/moderation/hide","adminSubject":"[redacted]","status":403}
