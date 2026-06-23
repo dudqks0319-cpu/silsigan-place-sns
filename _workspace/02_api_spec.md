@@ -79,6 +79,7 @@
 - D1 랭킹 점수는 `place_rankings` seed score에 최근 3시간 이내 `place_events` live score만 더한다.
 - 만료된 `place_events`는 장소 live click count와 랭킹 live score에서 제외한다.
 - 신고 이벤트는 랭킹 가산점이 아니라 감점 신호로 처리한다.
+- `CACHE` KV binding이 있으면 랭킹 응답을 normalized route/scope/bbox/limit key로 60초 read-through cache에 저장한다. 운영 숨김/복구/삭제/좌표 상태 변경은 `rankings:version`을 갱신해 기존 cache key 재사용을 막는다.
 
 ## POST /api/reports
 
