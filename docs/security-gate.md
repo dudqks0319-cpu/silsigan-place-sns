@@ -3,11 +3,11 @@
 기준일: 2026-06-18
 범위: 무료 출시 기준의 Cloudflare Pages/Workers, D1, R2, KV 또는 Cache API 전환.
 
-출시 전 P0 항목은 모두 통과해야 한다. 2026-06-24 로컬 구현 기준선은 `node --check` for Worker and smoke scripts, `pnpm verify`, `pnpm test` 95 passed, `pnpm audit --audit-level critical`, `git diff --check`, 로컬 Pages report smoke, 직접 Worker ranking cache driver가 통과한 상태다.
+출시 전 P0 항목은 모두 통과해야 한다. 2026-06-24 로컬 구현 기준선은 `node --check` for Worker and smoke scripts, `pnpm verify`, `pnpm test` 96 passed, `pnpm audit --audit-level critical`, `git diff --check`, 로컬 Pages report smoke, 직접 Worker ranking cache driver가 통과한 상태다.
 
 ## P0 출시 차단 항목
 
-- [x] 현재 기준선에서 `pnpm test`가 95 passed 상태다.
+- [x] 현재 기준선에서 `pnpm test`가 96 passed 상태다.
 - [x] 현재 기준선에서 `pnpm typecheck`가 통과했다.
 - [x] 현재 기준선에서 `pnpm lint`가 통과했다.
 - [x] 현재 기준선에서 `pnpm build`가 통과했다.
@@ -97,6 +97,7 @@
 
 - 제보/댓글/사진/신고/질문 API에 rate limit을 둔다.
 - 댓글 작성은 익명 사용자/IP 기준 1분 5개, 1일 100개를 초과하면 429로 차단한다.
+- 댓글 본문은 전화번호, 주민번호, 스크립트, URL 도배 패턴을 서버에서 거부하고 원문을 오류 응답에 되돌려주지 않는다.
 - 신고 3회 자동 숨김과 민감정보 1회 임시 숨김을 적용한다.
 - 동일 사용자 중복 신고는 1회만 점수에 반영한다.
 - 반복 허위 제보자와 신고 악용자는 D1 `blocked_users` 정책으로 새 댓글/사진/좋아요/클릭/신고 write를 제한한다.
@@ -188,6 +189,7 @@ Cloudflare 전환 추가 증적:
 - Workers 플랫폼 로그 redaction 확인 결과. 로컬 redaction guard는 통과했으며, staging에서는 `wrangler tail` 또는 Cloudflare dashboard 로그 샘플로 raw 좌표, 토큰, 원본 파일명, 익명 ID 원문 미노출을 별도 첨부한다.
 - admin API role 실패 테스트 결과.
 - 신고/자동 숨김/복구/삭제 시나리오 테스트 결과.
+- 댓글 본문 보호 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `comment create rejects privacy script and URL spam patterns`로 전화번호, 주민번호, script tag, URL-only spam 댓글이 `400 COMMENT_BODY_REJECTED`로 거부되고 오류 응답이 원문 body를 되돌려주지 않는지 검증한다.
 - 전국/지역/area/category/map-bounds 랭킹 캐시 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `GET /api/rankings uses CACHE KV read-through cache with bounded TTL`로 `/api/rankings`가 `CACHE` KV binding에 60초 TTL로 miss 결과를 저장하고, 두 번째 요청에서 `cacheStatus=hit`로 같은 데이터를 반환하며, 손상된 cache entry는 miss로 복구하는지 검증한다. 관리자 사진 삭제 시 `rankings:nationwide`, `rankings:map-bounds`, `rankings:region:*`, `rankings:area:*`, `rankings:category:*`, `places:*`, `place-live:*`, `rankings:place:*`, `photos:*` 키를 삭제하고 `rankings:version`을 갱신해 기존 랭킹 캐시 키가 재사용되지 않게 한다.
 - 프론트 랭킹 client 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `Cloudflare API client supports scoped ranking query params`로 프론트 Worker client가 `regionId`, `areaId`, `categoryId`, `bbox`, `limit`를 `/api/rankings` query에 그대로 전달해 전국/지역/권역/카테고리/지도 bounds TOP 10 호출을 타입 우회 없이 구성할 수 있는지 검증한다.
 - D1 hourly 집계 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `D1 public live surfaces ignore expired three-hour place signals`로 같은 익명 사용자가 한 장소/시간 버킷에 댓글, 사진, 클릭을 각각 남겨도 `place_event_hourly.unique_user_count`는 1로 유지되고 이벤트별 count만 증가하는지 검증한다.

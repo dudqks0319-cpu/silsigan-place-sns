@@ -402,6 +402,8 @@ const roomEvents = new Map<string, RoomBroadcast[]>();
 const photoContentHashes = new Map<string, string>();
 const commentCreateMinuteLimit = 5;
 const commentCreateDailyLimit = 100;
+const commentBodyMaxLength = 280;
+const commentBodyMinLength = 2;
 const oneMinuteMs = 60_000;
 const oneDayMs = 24 * 60 * 60_000;
 const adminRoles = ["operator", "moderator", "admin"] as const;
@@ -1149,7 +1151,7 @@ async function listComments(url: URL, env: Env): Promise<Response> {
 async function createComment(request: Request, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
   const body = await readJson(request);
   const placeId = stringField(body, "placeId", 80);
-  const commentBody = stringField(body, "body", 300);
+  const commentBody = commentBodyField(body);
   const place = await resolvePlaceRecord(placeId, env);
   const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
   if (env.DB) {
@@ -3213,6 +3215,41 @@ function stringField(body: JsonObject, field: string, maxLength: number): string
   }
 
   return value.trim();
+}
+
+function commentBodyField(body: JsonObject): string {
+  const value = stringField(body, "body", commentBodyMaxLength);
+  if (value.length < commentBodyMinLength) {
+    throw new HttpError(400, "VALIDATION_ERROR", "body 값이 올바르지 않습니다.");
+  }
+
+  const rejectionReason = commentBodyRejectionReason(value);
+  if (rejectionReason) {
+    throw new HttpError(400, "COMMENT_BODY_REJECTED", "댓글에 공개할 수 없는 정보나 스팸 패턴이 포함되어 있습니다.", { reason: rejectionReason });
+  }
+
+  return value;
+}
+
+function commentBodyRejectionReason(value: string): "phone" | "resident_id" | "script" | "url_spam" | null {
+  const normalized = value.toLocaleLowerCase("ko-KR");
+  if (/(?:\+?82[-.\s]?)?0(?:10|2|[3-6][1-5])[-.\s]?\d{3,4}[-.\s]?\d{4}/.test(value)) {
+    return "phone";
+  }
+  if (/\b\d{6}[-\s]?[1-4]\d{6}\b/.test(value)) {
+    return "resident_id";
+  }
+  if (/<\s*script\b|javascript\s*:|on(?:error|load|click|mouseover)\s*=/.test(normalized)) {
+    return "script";
+  }
+
+  const urlMatches = value.match(/\b(?:https?:\/\/|www\.)\S+/gi) ?? [];
+  const urlTextLength = urlMatches.reduce((sum, match) => sum + match.length, 0);
+  if (urlMatches.length >= 2 || (urlMatches.length === 1 && urlTextLength / value.length > 0.6)) {
+    return "url_spam";
+  }
+
+  return null;
 }
 
 function optionalStringField(body: JsonObject, field: string, maxLength: number): string | undefined {

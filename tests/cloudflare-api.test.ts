@@ -3013,6 +3013,28 @@ test("comment create rate limit blocks slow daily spam per anonymous user", asyn
   }
 });
 
+test("comment create rejects privacy script and URL spam patterns", async () => {
+  const blockedBodies = [
+    "연락처 010-1234-5678로 홍보합니다.",
+    "주민번호 900101-1234567 메모입니다.",
+    "<script>alert('xss')</script>",
+    "https://spam.example",
+  ];
+
+  for (const [index, body] of blockedBodies.entries()) {
+    const response = await rawPost("https://api.test/api/comments", `anon_comment_policy_${index}`, {
+      placeId: "busan-gwangalli",
+      body,
+    });
+    const payload = (await response.json()) as FailurePayload;
+    const serializedPayload = JSON.stringify(payload);
+
+    assert.equal(response.status, 400);
+    assert.equal(payload.error.code, "COMMENT_BODY_REJECTED");
+    assert.equal(serializedPayload.includes(body), false);
+  }
+});
+
 test("Cloudflare API client sends moderation reports to the Worker moderation endpoint", async () => {
   const requestedUrls: string[] = [];
   const client = createCloudflareApiClient({
