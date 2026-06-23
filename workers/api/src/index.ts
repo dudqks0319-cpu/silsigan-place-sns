@@ -112,6 +112,8 @@ type ImagesOutput = {
 };
 
 type KVNamespace = {
+  get: (key: string) => Promise<string | null>;
+  put: (key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>;
   delete: (key: string) => Promise<void>;
 };
 
@@ -227,6 +229,18 @@ type CacheInvalidationResult = {
 };
 
 type JsonObject = Record<string, unknown>;
+
+type RankingCacheEntry = {
+  data: RankingRecord[];
+  meta: Record<string, unknown>;
+};
+
+type RankingRoute = {
+  kind: "generic" | "global" | "region" | "area" | "category";
+  regionId: string | null;
+  areaId: string | null;
+  categoryId: string | null;
+};
 
 type AdminBulkModerationTarget = {
   targetType: ReportRecord["targetType"];
@@ -397,6 +411,9 @@ const adminRoleRank: Record<AdminRole, number> = {
   admin: 3,
 };
 const REPORT_TTL_MS = 3 * 60 * 60 * 1000;
+const RANKING_CACHE_TTL_SECONDS = 60;
+const RANKING_CACHE_VERSION_KEY = "rankings:version";
+const DEFAULT_RANKING_CACHE_VERSION = "initial";
 const D1_NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 const D1_ACTIVE_CONTENT_CUTOFF_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3 hours')";
 
@@ -926,21 +943,119 @@ async function unlikePlace(placeId: string, session: AnonymousSession, env: Env)
   return json({ placeId: place.id, likeCount: placeLikeCounts.get(place.id) ?? 0, deleted });
 }
 
+async function rankingCacheKey(
+  env: Env,
+  route: RankingRoute["kind"],
+  regionId: string | null,
+  areaId: string | null,
+  categoryId: string | null,
+  bbox: BBox | null,
+  limit: number,
+): Promise<string | null> {
+  if (!env.CACHE) {
+    return null;
+  }
+
+  const version = (await env.CACHE.get(RANKING_CACHE_VERSION_KEY)) ?? DEFAULT_RANKING_CACHE_VERSION;
+  const bboxPart = bbox ? `${bbox.minLng},${bbox.minLat},${bbox.maxLng},${bbox.maxLat}` : "none";
+  const parts = [
+    "rankings",
+    "v",
+    version,
+    `route=${route}`,
+    `region=${regionId ?? "all"}`,
+    `area=${areaId ?? "all"}`,
+    `category=${categoryId ?? "all"}`,
+    `bbox=${bboxPart}`,
+    `limit=${limit}`,
+  ];
+
+  return parts.map((part) => encodeURIComponent(part)).join(":");
+}
+
+async function readRankingCache(env: Env, cacheKey: string | null): Promise<RankingCacheEntry | null> {
+  if (!cacheKey || !env.CACHE) {
+    return null;
+  }
+
+  const raw = await env.CACHE.get(cacheKey);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return rankingCacheEntry(parsed);
+  } catch {
+    return null;
+  }
+}
+
+async function writeRankingCache(
+  env: Env,
+  cacheKey: string | null,
+  data: RankingRecord[],
+  meta: Record<string, unknown>,
+): Promise<void> {
+  if (!cacheKey || !env.CACHE) {
+    return;
+  }
+
+  await env.CACHE.put(cacheKey, JSON.stringify({ data, meta }), {
+    expirationTtl: RANKING_CACHE_TTL_SECONDS,
+  });
+}
+
+function rankingCacheEntry(value: unknown): RankingCacheEntry | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const data = value.data;
+  const meta = value.meta;
+  if (!Array.isArray(data) || !data.every(isRankingRecord) || !isRecord(meta)) {
+    return null;
+  }
+
+  return { data, meta };
+}
+
+function isRankingRecord(value: unknown): value is RankingRecord {
+  return (
+    isRecord(value) &&
+    typeof value.placeId === "string" &&
+    typeof value.regionId === "string" &&
+    typeof value.score === "number" &&
+    typeof value.rank === "number" &&
+    typeof value.windowHours === "number"
+  );
+}
+
 async function listRankings(url: URL, path: string, env: Env): Promise<Response> {
   const route = parseRankingRoute(path);
   const regionId = route.regionId ?? url.searchParams.get("region") ?? url.searchParams.get("regionId");
   const areaId = route.areaId ?? url.searchParams.get("area") ?? url.searchParams.get("areaId");
   const categoryId = route.categoryId ?? url.searchParams.get("category") ?? url.searchParams.get("categoryId");
   const bbox = parseBBox(url.searchParams.get("bbox"));
+  const limit = clampLimit(url.searchParams.get("limit"), MAX_REGION_RANKING_LIMIT, 10);
+  const cacheKey = await rankingCacheKey(env, route.kind, regionId, areaId, categoryId, bbox, limit);
+  const cached = await readRankingCache(env, cacheKey);
+  if (cached) {
+    return json(cached.data, {
+      ...cached.meta,
+      cacheStatus: "hit",
+      cacheTtlSeconds: RANKING_CACHE_TTL_SECONDS,
+    });
+  }
 
   if (env.DB) {
-    const { sql, values, limit } = d1PlacesQuery({
+    const { sql, values, limit: d1Limit } = d1PlacesQuery({
       bbox,
       regionId,
       areaId,
       categoryId,
       query: null,
-      limit: clampLimit(url.searchParams.get("limit"), MAX_REGION_RANKING_LIMIT, 10),
+      limit,
       requireRankingSignal: true,
     });
     const { results = [] } = await env.DB.prepare(sql).bind(...values).all<D1PlaceRow>();
@@ -951,22 +1066,24 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
       rank: index + 1,
       windowHours: 24,
     }));
-
-    return json(rankings, {
-      limit,
+    const meta = {
+      limit: d1Limit,
       regionId: regionId ?? "all",
       areaId: areaId ?? null,
       categoryId: categoryId ?? null,
       route: route.kind,
       storage: "d1",
-      cachePolicy: "30-60s ranking cache before D1 materialization",
-    });
+      cachePolicy: "60s ranking KV cache",
+    };
+    await writeRankingCache(env, cacheKey, rankings, meta);
+
+    return json(rankings, { ...meta, cacheStatus: cacheKey ? "miss" : "disabled", cacheTtlSeconds: cacheKey ? RANKING_CACHE_TTL_SECONDS : null });
   }
 
   const scopedPlaces = filterPlacesByBBox(seedPlaces, bbox)
     .filter((place) => !areaId || place.areaId === areaId)
     .filter((place) => !categoryId || place.categoryId === categoryId);
-  const ranked = rankRegionPlaces(scopedPlaces, regionId, url.searchParams.get("limit"));
+  const ranked = rankRegionPlaces(scopedPlaces, regionId, limit);
   const rankings: RankingRecord[] = ranked.map((place, index) => ({
     placeId: place.id,
     regionId: place.regionId,
@@ -974,15 +1091,17 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
     rank: index + 1,
     windowHours: 24,
   }));
-
-  return json(rankings, {
+  const meta = {
     limit: rankings.length,
     regionId: regionId ?? "all",
     areaId: areaId ?? null,
     categoryId: categoryId ?? null,
     route: route.kind,
-    cachePolicy: "30-60s ranking cache before D1 materialization",
-  });
+    cachePolicy: "60s ranking KV cache",
+  };
+  await writeRankingCache(env, cacheKey, rankings, meta);
+
+  return json(rankings, { ...meta, cacheStatus: cacheKey ? "miss" : "disabled", cacheTtlSeconds: cacheKey ? RANKING_CACHE_TTL_SECONDS : null });
 }
 
 async function listComments(url: URL, env: Env): Promise<Response> {
@@ -2241,6 +2360,7 @@ async function invalidateModerationCache(
   for (const key of keys) {
     await env.CACHE.delete(key);
   }
+  await env.CACHE.put(RANKING_CACHE_VERSION_KEY, String(Date.now()));
 
   return { binding: "CACHE", keys, deletedKeys: keys };
 }
@@ -3290,12 +3410,7 @@ function placeClickWindowsFor(anonymousUserId: string): Map<string, number> {
   return next;
 }
 
-function parseRankingRoute(path: string): {
-  kind: "generic" | "global" | "region" | "area" | "category";
-  regionId: string | null;
-  areaId: string | null;
-  categoryId: string | null;
-} {
+function parseRankingRoute(path: string): RankingRoute {
   if (path === "/api/rankings/global") {
     return { kind: "global", regionId: null, areaId: null, categoryId: null };
   }

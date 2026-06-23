@@ -3,11 +3,11 @@
 기준일: 2026-06-18
 범위: 무료 출시 기준의 Cloudflare Pages/Workers, D1, R2, KV 또는 Cache API 전환.
 
-출시 전 P0 항목은 모두 통과해야 한다. 2026-06-24 로컬 구현 기준선은 `node --check` for Worker and smoke scripts, `pnpm lint`, `pnpm typecheck`, `pnpm test` 93 passed, `pnpm build`, `pnpm audit --audit-level critical`, `git diff --check`, 로컬 Pages report smoke가 통과한 상태다.
+출시 전 P0 항목은 모두 통과해야 한다. 2026-06-24 로컬 구현 기준선은 `node --check` for Worker and smoke scripts, `pnpm verify`, `pnpm test` 94 passed, `pnpm audit --audit-level critical`, `git diff --check`, 로컬 Pages report smoke, 직접 Worker ranking cache driver가 통과한 상태다.
 
 ## P0 출시 차단 항목
 
-- [x] 현재 기준선에서 `pnpm test`가 93 passed 상태다.
+- [x] 현재 기준선에서 `pnpm test`가 94 passed 상태다.
 - [x] 현재 기준선에서 `pnpm typecheck`가 통과했다.
 - [x] 현재 기준선에서 `pnpm lint`가 통과했다.
 - [x] 현재 기준선에서 `pnpm build`가 통과했다.
@@ -188,5 +188,5 @@ Cloudflare 전환 추가 증적:
 - Workers 플랫폼 로그 redaction 확인 결과. 로컬 redaction guard는 통과했으며, staging에서는 `wrangler tail` 또는 Cloudflare dashboard 로그 샘플로 raw 좌표, 토큰, 원본 파일명, 익명 ID 원문 미노출을 별도 첨부한다.
 - admin API role 실패 테스트 결과.
 - 신고/자동 숨김/복구/삭제 시나리오 테스트 결과.
-- 전국/지역/area/category/map-bounds 랭킹 캐시 무효화 테스트 결과. 현재 로컬 기준선은 관리자 사진 삭제 시 `rankings:nationwide`, `rankings:map-bounds`, `rankings:region:*`, `rankings:area:*`, `rankings:category:*`, `places:*`, `place-live:*`, `rankings:place:*`, `photos:*` 키를 `CACHE` KV binding에서 삭제하는지 검증한다.
+- 전국/지역/area/category/map-bounds 랭킹 캐시 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `GET /api/rankings uses CACHE KV read-through cache with bounded TTL`로 `/api/rankings`가 `CACHE` KV binding에 60초 TTL로 miss 결과를 저장하고, 두 번째 요청에서 `cacheStatus=hit`로 같은 데이터를 반환하며, 손상된 cache entry는 miss로 복구하는지 검증한다. 관리자 사진 삭제 시 `rankings:nationwide`, `rankings:map-bounds`, `rankings:region:*`, `rankings:area:*`, `rankings:category:*`, `places:*`, `place-live:*`, `rankings:place:*`, `photos:*` 키를 삭제하고 `rankings:version`을 갱신해 기존 랭킹 캐시 키가 재사용되지 않게 한다.
 - 빈 상태와 위치 권한 거부 화면 캡처.

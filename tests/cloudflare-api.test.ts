@@ -1469,6 +1469,33 @@ test("GET /api/rankings clamps region limit to requested MVP max", async () => {
   assert.ok(payload.data.every((ranking) => ranking.regionId === "busan"));
 });
 
+test("GET /api/rankings uses CACHE KV read-through cache with bounded TTL", async () => {
+  const cache = new FakeKVNamespace();
+  const url = "https://api.test/api/rankings/regions/busan?limit=10";
+  const firstResponse = await worker.handleRequest(new Request(url), { CACHE: cache });
+  const firstPayload = (await firstResponse.json()) as SuccessPayload<Array<{ placeId: string }>>;
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(firstPayload.meta?.cacheStatus, "miss");
+  assert.equal(firstPayload.meta?.cacheTtlSeconds, 60);
+  assert.equal(cache.puts.length, 1);
+  assert.equal(cache.puts[0]?.options?.expirationTtl, 60);
+
+  const secondResponse = await worker.handleRequest(new Request(url), { CACHE: cache });
+  const secondPayload = (await secondResponse.json()) as SuccessPayload<Array<{ placeId: string }>>;
+
+  assert.equal(secondPayload.meta?.cacheStatus, "hit");
+  assert.deepEqual(secondPayload.data, firstPayload.data);
+  assert.equal(cache.puts.length, 1);
+
+  cache.values.set(cache.puts[0]?.key ?? "", "{not valid json");
+  const recoveredResponse = await worker.handleRequest(new Request(url), { CACHE: cache });
+  const recoveredPayload = (await recoveredResponse.json()) as SuccessPayload<Array<{ placeId: string }>>;
+
+  assert.equal(recoveredPayload.meta?.cacheStatus, "miss");
+  assert.equal(cache.puts.length, 2);
+});
+
 test("Cloudflare API supports required place and ranking route aliases", async () => {
   const anonymousId = "anon_place_alias_test";
   const place = await get<SuccessPayload<Place>>("https://api.test/api/places/busan-gwangalli", anonymousId);
@@ -3543,10 +3570,22 @@ class FakeDurableObjectNamespace {
 }
 
 class FakeKVNamespace {
+  readonly values = new Map<string, string>();
+  readonly puts: Array<{ key: string; value: string; options?: { expirationTtl?: number } }> = [];
   readonly deletedKeys: string[] = [];
+
+  async get(key: string): Promise<string | null> {
+    return this.values.get(key) ?? null;
+  }
+
+  async put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
+    this.values.set(key, value);
+    this.puts.push({ key, value, options });
+  }
 
   async delete(key: string): Promise<void> {
     this.deletedKeys.push(key);
+    this.values.delete(key);
   }
 }
 
