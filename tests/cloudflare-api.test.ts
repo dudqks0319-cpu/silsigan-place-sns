@@ -3051,6 +3051,40 @@ test("Cloudflare API client sends moderation reports to the Worker moderation en
   assert.deepEqual(requestedUrls, ["https://api.test/api/moderation/reports"]);
 });
 
+test("Cloudflare API client supports scoped ranking query params", async () => {
+  const requestedUrls: string[] = [];
+  const client = createCloudflareApiClient({
+    baseUrl: "https://api.test",
+    fetcher: async (input) => {
+      requestedUrls.push(input.toString());
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: [],
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  await client.listRankings({
+    limit: 10,
+    regionId: "busan",
+    areaId: "busan-suyeong",
+    categoryId: "tourism",
+    bbox: "129.0,35.0,129.2,35.2",
+  });
+
+  assert.equal(requestedUrls.length, 1);
+  const requestedUrl = new URL(requestedUrls[0] ?? "");
+  assert.equal(requestedUrl.pathname, "/api/rankings");
+  assert.equal(requestedUrl.searchParams.get("limit"), "10");
+  assert.equal(requestedUrl.searchParams.get("regionId"), "busan");
+  assert.equal(requestedUrl.searchParams.get("areaId"), "busan-suyeong");
+  assert.equal(requestedUrl.searchParams.get("categoryId"), "tourism");
+  assert.equal(requestedUrl.searchParams.get("bbox"), "129.0,35.0,129.2,35.2");
+});
+
 test("Cloudflare API client supports place like and realtime room endpoints", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const client = createCloudflareApiClient({

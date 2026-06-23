@@ -103,10 +103,18 @@ export type CompletePhotoInput = {
   imageBase64?: string;
 };
 
+export type ListRankingParams = {
+  limit?: number;
+  regionId?: string;
+  areaId?: string;
+  categoryId?: string;
+  bbox?: string;
+};
+
 export type CloudflareApiClient = {
   anonymousId: string | null;
   listPlaces: (params?: { limit?: number; bbox?: string; lat?: number; lng?: number; radius?: number; regionId?: string; categoryId?: string }) => Promise<CloudflareApiSuccess<CloudflarePlace[]>>;
-  listRankings: (params?: { limit?: number; regionId?: string }) => Promise<CloudflareApiSuccess<CloudflareRanking[]>>;
+  listRankings: (params?: ListRankingParams) => Promise<CloudflareApiSuccess<CloudflareRanking[]>>;
   listComments: (params?: { placeId?: string; limit?: number }) => Promise<CloudflareApiSuccess<CloudflareComment[]>>;
   createComment: (input: { placeId: string; body: string }) => Promise<CloudflareApiSuccess<CloudflareComment>>;
   likePlace: (placeId: string) => Promise<CloudflareApiSuccess<{ placeId: string; likeCount: number; created: boolean }>>;
