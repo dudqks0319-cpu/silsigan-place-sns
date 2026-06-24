@@ -2993,6 +2993,70 @@ test("Durable Object realtime rooms receive place region and global fanout event
   assert.equal(globalRoom.events[0]?.payload.placeId, "busan-gwangalli");
 });
 
+test("Durable Object realtime WebSocket connections receive broadcast events", async () => {
+  const previousWebSocketPair = Reflect.get(globalThis, "WebSocketPair");
+  const hadWebSocketPair = Object.prototype.hasOwnProperty.call(globalThis, "WebSocketPair");
+  const pairs: FakeWebSocketPair[] = [];
+  class TestWebSocketPair extends FakeWebSocketPair {
+    constructor() {
+      super();
+      pairs.push(this);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocketPair", {
+    configurable: true,
+    value: TestWebSocketPair,
+  });
+
+  try {
+    const room = new worker.PlaceRoom();
+    const response = await room.fetch(
+      new Request("https://api.test/api/realtime/place/busan-gwangalli?roomId=busan-gwangalli", {
+        headers: { Upgrade: "websocket" },
+      }),
+    );
+    const websocketResponse = response as Response & { webSocket?: FakeWorkerWebSocket };
+    assert.equal(response.status, 101);
+    assert.equal(websocketResponse.webSocket, pairs[0]?.client);
+
+    const broadcast = await room.fetch(
+      new Request("https://api.test/api/realtime/broadcast?roomId=busan-gwangalli", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "comment.created",
+          scope: "place",
+          roomId: "busan-gwangalli",
+          payload: { id: "comment_ws_1", placeId: "busan-gwangalli" },
+          createdAt: "2026-06-24T00:00:00.000Z",
+        }),
+      }),
+    );
+    const payload = (await broadcast.json()) as SuccessPayload<{ delivered: number; mode: string }>;
+
+    assert.equal(payload.data.mode, "durable-object");
+    assert.equal(payload.data.delivered, 1);
+    assert.equal(pairs[0]?.client.receivedMessages.length, 1);
+    assert.deepEqual(JSON.parse(pairs[0]?.client.receivedMessages[0] ?? "{}"), {
+      type: "comment.created",
+      scope: "place",
+      roomId: "busan-gwangalli",
+      payload: { id: "comment_ws_1", placeId: "busan-gwangalli" },
+      createdAt: "2026-06-24T00:00:00.000Z",
+    });
+  } finally {
+    if (hadWebSocketPair) {
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: previousWebSocketPair,
+      });
+    } else {
+      Reflect.deleteProperty(globalThis, "WebSocketPair");
+    }
+  }
+});
+
 test("place like broadcasts a realtime room event", async () => {
   const anonymousId = "anon_realtime_like_fanout";
   const waitUntilPromises: Promise<unknown>[] = [];
@@ -3712,6 +3776,50 @@ class FakeDurableObjectNamespace {
     const room = this.roomFactory();
     this.rooms.set(name, room);
     return new FakeDurableObjectStub(room);
+  }
+}
+
+type FakeWebSocketListener = (event: { data: string | ArrayBuffer }) => void;
+
+class FakeWorkerWebSocket {
+  readonly receivedMessages: string[] = [];
+  readyState = 1;
+  peer: FakeWorkerWebSocket | null = null;
+  private readonly listeners = new Map<"message" | "close" | "error", FakeWebSocketListener>();
+
+  accept(): void {}
+
+  send(message: string): void {
+    this.peer?.receivedMessages.push(message);
+  }
+
+  close(): void {
+    this.readyState = 3;
+    this.listeners.get("close")?.({ data: "" });
+  }
+
+  addEventListener(type: "message" | "close" | "error", listener: FakeWebSocketListener): void {
+    this.listeners.set(type, listener);
+  }
+
+  emitMessage(data: string): void {
+    this.listeners.get("message")?.({ data });
+  }
+}
+
+class FakeWebSocketPair {
+  readonly 0: FakeWorkerWebSocket;
+  readonly 1: FakeWorkerWebSocket;
+  readonly client: FakeWorkerWebSocket;
+  readonly server: FakeWorkerWebSocket;
+
+  constructor() {
+    this.client = new FakeWorkerWebSocket();
+    this.server = new FakeWorkerWebSocket();
+    this.client.peer = this.server;
+    this.server.peer = this.client;
+    this[0] = this.client;
+    this[1] = this.server;
   }
 }
 

@@ -682,9 +682,7 @@ class InMemoryRoom {
         webSocket: client,
       };
 
-      return new Response(null, {
-        ...responseInit,
-      });
+      return createWebSocketResponse(client, responseInit);
     }
 
     return json({ mode: "durable-object-polling", scope, roomId, events: this.eventsByRoom.get(roomKey(scope, roomId)) ?? [] });
@@ -697,6 +695,25 @@ class InMemoryRoom {
       }
     }
   }
+}
+
+function createWebSocketResponse(client: WorkerWebSocket, responseInit: WorkerResponseInit): Response {
+  try {
+    return new Response(null, responseInit);
+  } catch (error) {
+    if (!isNodeStatus101ResponseError(error)) {
+      throw error;
+    }
+
+    const response = new Response(null);
+    Object.defineProperty(response, "status", { value: 101 });
+    Object.defineProperty(response, "webSocket", { value: client });
+    return response;
+  }
+}
+
+function isNodeStatus101ResponseError(error: unknown): boolean {
+  return error instanceof RangeError && error.message.includes("status") && error.message.includes("200 to 599");
 }
 
 function roomBroadcastFromUnknown(value: unknown, scope: RoomBroadcast["scope"], roomId: string): RoomBroadcast {

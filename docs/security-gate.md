@@ -3,11 +3,11 @@
 기준일: 2026-06-18
 범위: 무료 출시 기준의 Cloudflare Pages/Workers, D1, R2, KV 또는 Cache API 전환.
 
-출시 전 P0 항목은 모두 통과해야 한다. 2026-06-24 로컬 구현 기준선은 `node --check` for Worker and smoke scripts, `pnpm verify`, `pnpm test` 96 passed, `pnpm audit --audit-level critical`, `git diff --check`, 로컬 Pages report smoke, 직접 Worker ranking cache/enriched payload driver가 통과한 상태다.
+출시 전 P0 항목은 모두 통과해야 한다. 2026-06-24 로컬 구현 기준선은 `node --check` for Worker and smoke scripts, `pnpm verify`, `pnpm test` 97 passed, `pnpm audit --audit-level critical`, `git diff --check`, 로컬 Pages report smoke, 직접 Worker ranking cache/enriched payload driver가 통과한 상태다.
 
 ## P0 출시 차단 항목
 
-- [x] 현재 기준선에서 `pnpm test`가 96 passed 상태다.
+- [x] 현재 기준선에서 `pnpm test`가 97 passed 상태다.
 - [x] 현재 기준선에서 `pnpm typecheck`가 통과했다.
 - [x] 현재 기준선에서 `pnpm lint`가 통과했다.
 - [x] 현재 기준선에서 `pnpm build`가 통과했다.
@@ -147,7 +147,7 @@ Cloudflare 전환 추가 증적:
 - Legacy artifact/runtime URL 결과. 현재 로컬 기준선은 `supabase/` migrations와 `vercel.json`을 제거했고, runtime share URL 기본값을 Cloudflare Pages로 전환했으며, `pnpm release:status`가 Supabase 프로젝트 산출물, Vercel 배포 설정, `@supabase/*` dependency, Vercel public runtime URL이 없음을 검사한다.
 - OpenNext frontend 결과. 현재 로컬 기준선은 `open-next.config.ts`의 `defineCloudflareConfig`, pinned `@opennextjs/cloudflare@1.19.11`, pinned `wrangler@4.103.0`, `.env.example` 기반 `cf:typegen`, `cf:build`/`cf:preview`/`cf:deploy`/frontend dry-run scripts를 `pnpm release:status`에서 검사한다. `pnpm cf:typegen`은 로컬 개인 `.env.local`이 아니라 `.env.example`의 Cloudflare release key만 읽고, `pnpm cf:build`는 `.open-next/worker.js`와 `.open-next/assets`를 생성했으며, `pnpm cf:web:dry-run`, `pnpm cf:web:dry-run:staging`, `pnpm cf:web:dry-run:production`은 89개 assets와 `ASSETS` binding을 dry-run으로 검증했다.
 - R2/deployment external-state 결과. `pnpm cf:external-state`는 Wrangler OAuth, R2 bucket visibility, staging/production deployment URL shape, staging/production Worker dry-run을 non-mutating JSON check로 분리한다. 현재 기준선은 OAuth pass, staging/production dry-run pass, deployment URL 4개 missing fail, `cloudflare.r2.enabled` fail with `R2_NOT_ENABLED`이다. 직접 `wrangler r2 bucket list`도 Cloudflare code `10042`로 실패하며 Dashboard에서 R2 활성화가 필요하다고 반환한다. R2 활성화 전에는 Worker URL과 staging mutation smoke를 완료할 수 없다.
-- Durable Object realtime 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `Durable Object realtime rooms receive place region and global fanout events`로 댓글 생성 이벤트가 deterministic DO place/region/global room에 fanout되고, `/api/realtime/place/:id`, `/api/realtime/region/:id`, `/api/realtime/global` polling 응답에 같은 redacted event가 노출되는지 검증한다.
+- Durable Object realtime 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `Durable Object realtime rooms receive place region and global fanout events`와 `Durable Object realtime WebSocket connections receive broadcast events`로 댓글 생성 이벤트가 deterministic DO place/region/global room에 fanout되고, `/api/realtime/place/:id`, `/api/realtime/region/:id`, `/api/realtime/global` polling 응답과 WebSocket client broadcast에 같은 redacted event가 노출되는지 검증한다.
 - 프론트 realtime 소비 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `Cloudflare API client supports place like and realtime room endpoints`와 Chrome headless CDP smoke로 지도 상세가 Cloudflare API base 설정 시 `/api/realtime/place/:id`를 polling하고 상세 시트에 `Cloudflare DO`/`댓글 업데이트`를 표시하며, 장소 좋아요와 장소 신고가 Worker API로 동기화되는지 검증한다. 스크린샷 증적은 `artifacts/realtime-event-visible-smoke-2026-06-19.png`.
 - 선택 지역 scoped fetch 결과. 현재 로컬 기준선은 `tests/domain.test.ts`의 `scoped API paths normalize nationwide and clamp broad list limits`, `local demo lists support region-scoped bounded reads`로 Next 로컬 API와 프론트 초기/폴링 fetch가 선택 지역 `regionId`와 bounded `limit` 계약을 사용해 전국 fetch-all MVP 병목으로 되돌아가지 않는지 검증한다. 해시태그 피드는 같은 `regionId`를 유지하고, Worker 사진은 전역 `/api/photos` 목록이 아니라 현재 장소 ID별 `/api/photos?placeId=...&limit=...` 호출로 가져온다.
 - Wrangler environment dry-run 결과. 현재 로컬 기준선은 release gate가 `pnpm cf:dry-run:staging`, `pnpm cf:dry-run:production`으로 staging/production bundle과 concrete binding config를 검증한다. `pnpm cf:dry-run` 기본 development dry-run은 root Worker config의 local placeholder D1/KV ID를 보여주는 로컬 config sanity check이며, release evidence로 쓰지 않는다.

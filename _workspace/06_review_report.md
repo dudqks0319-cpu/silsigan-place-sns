@@ -98,7 +98,7 @@
 | Next admin Worker proxy | 통과 | 서버 proxy가 Worker 운영 토큰을 브라우저로 노출하지 않고 신고 큐/좌표 상태/사용자 제한 payload를 최소화하며, Next 관리자 인증 누락 시 Worker로 proxy하지 않는 route-level 테스트 통과 |
 | Admin user restriction | 통과 | `admin` 권한으로만 익명 사용자 제한/해제를 수행하고, 제한된 사용자의 새 public write를 D1에서 차단하는 negative-path 테스트 통과 |
 | Operator coordinate status | 통과 | `operator` 권한으로 좌표 미검증 seed를 검증/반려하고 공개 장소/랭킹 노출을 제어하는 D1 테스트 통과 |
-| Durable Object realtime | 통과 | place/region/global room deterministic routing, fanout polling, 프론트 place room 소비 경로, Pages browser place/region/global realtime room 요청 smoke 통과 |
+| Durable Object realtime | 통과 | place/region/global room deterministic routing, fanout polling, WebSocket broadcast, 프론트 place room 소비 경로, Pages browser place/region/global realtime room 요청 smoke 통과 |
 | 프론트 화면 | 통과 | 지도 fallback, bounds 기반 `/api/places?bbox=...` 재조회, Worker base 설정 시 장소 목록 `/api/places` Worker read path, 전국/지역/지도 화면 안 TOP 10 랭킹 패널과 랭킹 항목 상세 열기, 마커 클릭의 Worker click 이벤트 동기화, 상세 댓글 작성의 Worker comment 이벤트 동기화, 상세 버튼 클릭, 사진 업로드/미리보기/클릭 UI, realtime event strip smoke, 선택 지역 scoped fetch, 홈 피드 탭/알림 토글 smoke, `마이` 메뉴 섹션 이동 smoke, 관리자 신고 필터 탭/action smoke 확인 |
 | 도메인 테스트 | 통과 | 만료/신고/거리 구간/Cloudflare 정책 |
 | 보안 게이트 | 부분 통과 | R2 EXIF 제거, Images binding 재인코딩, 로컬 로그/응답 redaction guard와 captured-log validator는 통과. Workers 플랫폼 tail 증적은 배포 전 재검증 |
