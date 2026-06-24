@@ -1,6 +1,6 @@
 "use client";
 
-import { Camera, Flag, Image as ImageIcon } from "lucide-react";
+import { Camera, Flag, Image as ImageIcon, Trash2 } from "lucide-react";
 import { type CSSProperties, useId, useRef, useState } from "react";
 import styles from "./SilsiganRedesign.module.css";
 import { EmptyState } from "./EmptyState";
@@ -14,6 +14,7 @@ export type PlacePhoto = {
   id: string;
   label: string;
   meta: string;
+  ownedByCurrentSession?: boolean;
   previewUrl?: string;
   workerPhotoId?: string;
 };
@@ -27,12 +28,14 @@ export type PreparedPhotoUpload = {
 };
 
 export function PhotoUploader({
+  onDeletePhoto,
   onPhotoClick,
   onReportPhoto,
   onUpload,
   photos,
   safetyNotice,
 }: {
+  onDeletePhoto?: (photo: PlacePhoto) => Promise<void>;
   onPhotoClick?: (photo: PlacePhoto) => Promise<void>;
   onReportPhoto?: (photo: PlacePhoto) => void;
   onUpload: (photo: PreparedPhotoUpload) => Promise<void>;
@@ -44,6 +47,7 @@ export function PhotoUploader({
   const [status, setStatus] = useState<"idle" | "processing" | "uploading" | "done" | "error">("idle");
   const [message, setMessage] = useState("JPEG 또는 WebP 1장, 최대 3MB");
   const [clickingPhotoId, setClickingPhotoId] = useState<string | null>(null);
+  const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
   const busy = status === "processing" || status === "uploading";
 
   const selectPhoto = () => {
@@ -93,6 +97,26 @@ export function PhotoUploader({
       setMessage(error instanceof Error ? error.message : "사진 확인을 반영하지 못했습니다.");
     } finally {
       setClickingPhotoId(null);
+    }
+  };
+
+  const deletePhoto = async (photo: PlacePhoto) => {
+    if (!photo.workerPhotoId || !photo.ownedByCurrentSession || !onDeletePhoto || deletingPhotoId) {
+      return;
+    }
+
+    setDeletingPhotoId(photo.id);
+    setStatus("processing");
+    setMessage("내 사진을 삭제하는 중");
+    try {
+      await onDeletePhoto(photo);
+      setStatus("done");
+      setMessage("내 사진이 삭제됐습니다.");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "사진을 삭제하지 못했습니다.");
+    } finally {
+      setDeletingPhotoId(null);
     }
   };
 
@@ -149,6 +173,18 @@ export function PhotoUploader({
                     <button className={styles.photoReportButton} type="button" onClick={() => onReportPhoto(photo)} aria-label={`${photo.label} 사진 신고`}>
                       <Flag size={13} />
                       신고
+                    </button>
+                  )}
+                  {photo.ownedByCurrentSession && onDeletePhoto && (
+                    <button
+                      className={styles.photoDeleteButton}
+                      type="button"
+                      onClick={() => void deletePhoto(photo)}
+                      aria-label={`${photo.label} 사진 삭제`}
+                      disabled={deletingPhotoId === photo.id}
+                    >
+                      <Trash2 size={13} />
+                      삭제
                     </button>
                   )}
                 </div>

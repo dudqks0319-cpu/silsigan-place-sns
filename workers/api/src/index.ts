@@ -312,6 +312,7 @@ type PublicPhotoRecord = Pick<
   PhotoRecord,
   "id" | "placeId" | "mimeType" | "byteSize" | "width" | "height" | "clickCount" | "status" | "createdAt"
 > & {
+  ownedByCurrentSession: boolean;
   previewUrl: string | null;
 };
 
@@ -575,7 +576,7 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
     }
 
     if (path === "/api/photos" && request.method === "GET") {
-      return withHeaders(await listPhotos(url, env), sessionHeaders);
+      return withHeaders(await listPhotos(url, session, env), sessionHeaders);
     }
 
     if (path === "/api/photos/upload-url" && request.method === "POST") {
@@ -1381,10 +1382,11 @@ async function deleteComment(commentId: string, session: AnonymousSession, env: 
   return json({ commentId, deleted: true });
 }
 
-async function listPhotos(url: URL, env: Env): Promise<Response> {
+async function listPhotos(url: URL, session: AnonymousSession, env: Env): Promise<Response> {
   const placeId = url.searchParams.get("placeId");
   const limit = clampLimit(url.searchParams.get("limit"), 20, 20);
   if (env.DB) {
+    const currentAnonymousUserId = await anonymousUserIdForSession(session);
     const where = ["status = 'ready'", "deleted_at IS NULL", "hidden_at IS NULL", `created_at > ${D1_ACTIVE_CONTENT_CUTOFF_SQL}`];
     const values: D1Value[] = [];
     if (placeId) {
@@ -1416,7 +1418,7 @@ async function listPhotos(url: URL, env: Env): Promise<Response> {
       .bind(...values)
       .all<D1PhotoRow>();
 
-    return json(results.map((photo) => photoToPublicPhoto(photo, url, env)), { limit, order: "latest", storage: "d1" });
+    return json(results.map((photo) => photoToPublicPhoto(photo, url, env, currentAnonymousUserId)), { limit, order: "latest", storage: "d1" });
   }
 
   const data = photos
@@ -1425,10 +1427,10 @@ async function listPhotos(url: URL, env: Env): Promise<Response> {
     .filter((photo) => !placeId || photo.placeId === placeId)
     .slice(0, limit);
 
-  return json(data.map((photo) => photoToPublicPhoto(photo, url, env)), { limit, order: "latest" });
+  return json(data.map((photo) => photoToPublicPhoto(photo, url, env, session.id)), { limit, order: "latest" });
 }
 
-function photoToPublicPhoto(photo: PhotoRecord, requestUrl: URL, env: Env): PublicPhotoRecord {
+function photoToPublicPhoto(photo: PhotoRecord, requestUrl: URL, env: Env, currentAnonymousUserId: string): PublicPhotoRecord {
   return {
     id: photo.id,
     placeId: photo.placeId,
@@ -1439,6 +1441,7 @@ function photoToPublicPhoto(photo: PhotoRecord, requestUrl: URL, env: Env): Publ
     clickCount: photo.clickCount,
     status: photo.status,
     createdAt: photo.createdAt,
+    ownedByCurrentSession: photo.anonymousUserId === currentAnonymousUserId,
     previewUrl: env.PHOTOS ? new URL(`/api/photos/${encodeURIComponent(photo.id)}/file`, requestUrl.origin).toString() : null,
   };
 }
@@ -3103,8 +3106,8 @@ async function resolveReportTarget(targetType: ReportRecord["targetType"], targe
 }
 
 async function ensureD1AnonymousUser(db: D1Database, session: AnonymousSession): Promise<string> {
-  const sessionHash = await sha256Hex(`silsigan-anon:${session.id}`);
-  const anonymousUserId = `anon_${sessionHash.slice(0, 48)}`;
+  const sessionHash = await anonymousSessionHash(session);
+  const anonymousUserId = anonymousUserIdFromHash(sessionHash);
   const now = new Date().toISOString();
   await db
     .prepare(
@@ -3116,6 +3119,19 @@ async function ensureD1AnonymousUser(db: D1Database, session: AnonymousSession):
     .run();
 
   return anonymousUserId;
+}
+
+async function anonymousUserIdForSession(session: AnonymousSession): Promise<string> {
+  const sessionHash = await anonymousSessionHash(session);
+  return anonymousUserIdFromHash(sessionHash);
+}
+
+async function anonymousSessionHash(session: AnonymousSession): Promise<string> {
+  return sha256Hex(`silsigan-anon:${session.id}`);
+}
+
+function anonymousUserIdFromHash(sessionHash: string): string {
+  return `anon_${sessionHash.slice(0, 48)}`;
 }
 
 async function getD1AnonymousUser(db: D1Database, anonymousUserId: string): Promise<{ id: string } | null> {

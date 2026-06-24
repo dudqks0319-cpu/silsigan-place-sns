@@ -215,6 +215,7 @@ type WorkerPhoto = {
   clickCount: number;
   status: "pending" | "ready" | "rejected";
   createdAt: string;
+  ownedByCurrentSession?: boolean;
 };
 
 type PhotoUploadTicket = {
@@ -231,6 +232,11 @@ type PhotoClickResult = {
   photoId: string;
   clickCount: number;
   created: boolean;
+};
+
+type PhotoDeleteResult = {
+  photoId: string;
+  deleted: boolean;
 };
 
 type WorkerComment = {
@@ -1067,7 +1073,7 @@ export default function SilsiganRedesign() {
         }),
       });
 
-      setWorkerPhotos((current) => mergeWorkerPhotos([result.photo], current).slice(0, 80));
+      setWorkerPhotos((current) => mergeWorkerPhotos([{ ...result.photo, ownedByCurrentSession: true }], current).slice(0, 80));
       appendRealtimeEvent(place.id, "photo.ready", result.photo.createdAt, { id: result.photo.id, placeId: place.id });
       trackEvent("upload_photo", { placeId: place.id, mimeType: photo.mimeType, byteSize: photo.byteSize });
       setToast(`${place.name} 사진 제보가 등록됐습니다.`);
@@ -1103,6 +1109,35 @@ export default function SilsiganRedesign() {
       setToast(result.created ? "사진 확인이 랭킹 신호에 반영됐습니다." : "이미 확인한 사진입니다.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "사진 확인 반영에 실패했습니다.";
+      setToast(message);
+      throw error;
+    }
+  };
+
+  const deletePlacePhoto = async (place: Place, photo: PlacePhoto) => {
+    const workerPhotoId = photo.workerPhotoId;
+    if (!workerPhotoId || !photo.ownedByCurrentSession) {
+      return;
+    }
+
+    trackEvent("delete_photo", { placeId: place.id, photoId: workerPhotoId });
+
+    if (!cloudflareApiConfigured) {
+      const message = "사진 삭제는 Worker API base 설정 후 사용할 수 있습니다.";
+      setToast(message);
+      throw new Error(message);
+    }
+
+    try {
+      const result = await fetchJson<PhotoDeleteResult>(cloudflareApiUrl(`/api/photos/${encodeURIComponent(workerPhotoId)}`), {
+        method: "DELETE",
+      });
+      if (result.deleted) {
+        setWorkerPhotos((current) => current.filter((workerPhoto) => workerPhoto.id !== workerPhotoId));
+      }
+      setToast(`${place.name}에 올린 내 사진을 삭제했습니다.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "사진 삭제에 실패했습니다.";
       setToast(message);
       throw error;
     }
@@ -1497,6 +1532,7 @@ export default function SilsiganRedesign() {
                     onRegionChange={changeActiveRegion}
                     onReport={startReportForPlace}
                     onReportPlace={reportMapPlace}
+                    onPhotoDelete={deletePlacePhoto}
                     onPhotoClick={clickPlacePhoto}
                     onPhotoUpload={uploadPlacePhoto}
                     onReportComment={openCommentReport}
@@ -1528,6 +1564,7 @@ export default function SilsiganRedesign() {
                     savedPostIds={savedPostIds}
                     onHelpfulPost={markHelpful}
                     onReport={() => setActiveView("report")}
+                    onPhotoDelete={deletePlacePhoto}
                     onPhotoClick={clickPlacePhoto}
                     onPhotoUpload={uploadPlacePhoto}
                     onReportPhoto={openPhotoReport}
@@ -1920,6 +1957,7 @@ function MapScreen({
   onLocation,
   onLocationPermissionChange,
   onMapBoundsChange,
+  onPhotoDelete,
   onPhotoClick,
   onPhotoUpload,
   onPreviewPlace,
@@ -1952,6 +1990,7 @@ function MapScreen({
   onLocation: (location: UiLocation | null) => void;
   onLocationPermissionChange: (permission: LocationPermissionState) => void;
   onMapBoundsChange: (bounds: MapBounds) => void;
+  onPhotoDelete: (place: Place, photo: PlacePhoto) => Promise<void>;
   onPhotoClick: (photo: PlacePhoto) => Promise<void>;
   onPhotoUpload: (place: Place, photo: PreparedPhotoUpload) => Promise<void>;
   onPreviewPlace: (place: Place, source?: "map_marker" | "ranking") => void;
@@ -2116,6 +2155,7 @@ function MapScreen({
             onCommentSubmit={(body) => onCommentSubmit(detailPlace, body)}
             onCommentLike={(comment) => onLikeComment(detailPlace, comment)}
             onLike={() => onLikePlace(detailPlace)}
+            onPhotoDelete={(photo) => onPhotoDelete(detailPlace, photo)}
             onPhotoClick={onPhotoClick}
             onPhotoUpload={(photo) => onPhotoUpload(detailPlace, photo)}
             onReport={() => onReport(detailPlace)}
@@ -2174,6 +2214,7 @@ function PlaceScreen({
   helpfulPostIds,
   savedPostIds,
   onHelpfulPost,
+  onPhotoDelete,
   onPhotoClick,
   onPhotoUpload,
   onReport,
@@ -2197,6 +2238,7 @@ function PlaceScreen({
   helpfulPostIds: Set<string>;
   savedPostIds: Set<string>;
   onHelpfulPost: (post: PublicPost) => void;
+  onPhotoDelete: (place: Place, photo: PlacePhoto) => Promise<void>;
   onPhotoClick: (photo: PlacePhoto) => Promise<void>;
   onPhotoUpload: (place: Place, photo: PreparedPhotoUpload) => Promise<void>;
   onReport: () => void;
@@ -2369,6 +2411,7 @@ function PlaceScreen({
         <SectionTitle title="최근 현장 사진" caption={`${photos.length}건`} />
         <PhotoUploader
           photos={photos}
+          onDeletePhoto={(photo) => onPhotoDelete(place, photo)}
           onPhotoClick={onPhotoClick}
           onReportPhoto={(photo) => onReportPhoto(place, photo)}
           onUpload={(photo) => onPhotoUpload(place, photo)}
@@ -3452,6 +3495,7 @@ function photosForPlace(posts: PublicPost[], reports: Report[], workerPhotos: Wo
       id: `photo:${photo.id}`,
       label: `${Math.max(1, Math.round(photo.byteSize / 1024))}KB 현장 사진`,
       meta: `${minutesAgo(photo.createdAt)} · 클릭 ${photo.clickCount}`,
+      ownedByCurrentSession: photo.ownedByCurrentSession,
       previewUrl: photo.previewUrl ?? undefined,
       workerPhotoId: photo.id,
     }));

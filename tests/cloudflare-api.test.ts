@@ -2905,14 +2905,29 @@ test("photo complete strips GPS EXIF sample before writing to R2", async () => {
     }),
     { PHOTOS: r2 },
   );
-  const photosPayload = (await photosResponse.json()) as SuccessPayload<Array<{ id: string; previewUrl: string | null }>>;
+  const photosPayload = (await photosResponse.json()) as SuccessPayload<Array<{ id: string; ownedByCurrentSession: boolean; previewUrl: string | null }>>;
   const listedPhoto = photosPayload.data.find((photo) => photo.id === payload.data.photo.id);
   assert.equal(listedPhoto?.previewUrl, `https://api.test/api/photos/${payload.data.photo.id}/file`);
+  assert.equal(listedPhoto?.ownedByCurrentSession, true);
   assert.equal(JSON.stringify(listedPhoto).includes("anonymousUserId"), false);
   assert.equal(JSON.stringify(listedPhoto).includes("storageKey"), false);
   assert.equal(JSON.stringify(listedPhoto).includes("deletedAt"), false);
   assert.equal(JSON.stringify(listedPhoto).includes("imageHash"), false);
   assert.equal(JSON.stringify(listedPhoto).includes("originalFilename"), false);
+
+  const otherSessionPhotosResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos?placeId=busan-gwangalli", {
+      headers: {
+        "x-silsigan-anon-id": "anon_photo_exif_strip_other",
+      },
+    }),
+    { PHOTOS: r2 },
+  );
+  const otherSessionPhotosPayload = (await otherSessionPhotosResponse.json()) as SuccessPayload<
+    Array<{ id: string; ownedByCurrentSession: boolean }>
+  >;
+  const otherSessionPhoto = otherSessionPhotosPayload.data.find((photo) => photo.id === payload.data.photo.id);
+  assert.equal(otherSessionPhoto?.ownedByCurrentSession, false);
 
   const fileResponse = await worker.handleRequest(new Request(listedPhoto?.previewUrl ?? ""), { PHOTOS: r2 });
   const fileBytes = new Uint8Array(await fileResponse.arrayBuffer());

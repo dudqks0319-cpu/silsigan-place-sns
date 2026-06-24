@@ -388,8 +388,7 @@ async function runMutatingBrowserChecks(client, config, networkEvents) {
     await waitForReportDialogClosed(client, config.timeoutMs);
     record(config.checks, "reports.commentCreate", "pass", "댓글 신고 UI가 Worker API로 POST 됐습니다.");
 
-    if (await clickFirstPhotoReport(client)) {
-      await waitForReportDialogOpen(client, config.timeoutMs);
+    if (await openFirstPhotoReportDialog(client, config.timeoutMs)) {
       await clickModalReason(client, "기타");
       await waitFor(() => hasApiReportRequest(networkEvents, config.apiBaseUrl, "photo"), "reports.photoCreate", config.timeoutMs);
       await waitForReportDialogClosed(client, config.timeoutMs);
@@ -398,6 +397,15 @@ async function runMutatingBrowserChecks(client, config, networkEvents) {
       throw new SmokeError("PHOTO_REPORT_BUTTON_REQUIRED", "신고 가능한 Worker 사진 타일을 찾지 못했습니다.");
     } else {
       record(config.checks, "reports.photoCreate", "skip", "공개 Worker 사진 타일이 없어 사진 신고 smoke를 건너뜁니다.");
+    }
+
+    if (await clickFirstPhotoDelete(client)) {
+      await waitFor(() => hasApiPhotoDeleteRequest(networkEvents, config.apiBaseUrl), "photos.delete", config.timeoutMs);
+      record(config.checks, "photos.delete", "pass", "내 사진 삭제 UI가 Worker API로 DELETE 됐습니다.");
+    } else if (config.requirePhoto) {
+      throw new SmokeError("PHOTO_DELETE_BUTTON_REQUIRED", "소유한 Worker 사진 삭제 버튼을 찾지 못했습니다.");
+    } else {
+      record(config.checks, "photos.delete", "skip", "소유한 Worker 사진 타일이 없어 사진 삭제 smoke를 건너뜁니다.");
     }
 
     record(config.checks, "reports.create", "pass", "장소/댓글/사진 신고 UI의 Worker API POST 경로를 확인했습니다.");
@@ -862,6 +870,28 @@ async function clickFirstPhotoReport(client) {
   return result === true;
 }
 
+async function openFirstPhotoReportDialog(client, timeoutMs) {
+  return waitFor(async () => {
+    if (await isReportDialogOpen(client)) {
+      return true;
+    }
+    if (!(await clickFirstPhotoReport(client))) {
+      return false;
+    }
+    await delay(250);
+    return isReportDialogOpen(client);
+  }, "photo.reportDialogOpen", timeoutMs)
+    .then(() => true)
+    .catch(() => false);
+}
+
+async function clickFirstPhotoDelete(client) {
+  const result = await clickHitTestedButton(client, {
+    ariaIncludes: "사진 삭제",
+  });
+  return result === true;
+}
+
 async function clickModalReason(client, text) {
   await clickHitTestedTextButton(client, text, {
     withinSelector: '[role="dialog"][aria-label="신고 이유 선택"]',
@@ -904,6 +934,10 @@ async function fillTextareaById(client, id, value) {
 
 async function waitForReportDialogOpen(client, timeoutMs) {
   await waitForEvaluate(client, `Boolean(document.querySelector('[role="dialog"][aria-label="신고 이유 선택"]'))`, "report.dialogOpen", timeoutMs);
+}
+
+async function isReportDialogOpen(client) {
+  return Boolean(await evaluate(client, `Boolean(document.querySelector('[role="dialog"][aria-label="신고 이유 선택"]'))`));
 }
 
 async function waitForReportDialogClosed(client, timeoutMs) {
@@ -972,6 +1006,10 @@ async function waitFor(predicate, name, timeoutMs) {
   throw new SmokeError(name, `${name} 조건이 ${timeoutMs}ms 안에 충족되지 않았습니다.`);
 }
 
+async function delay(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function hasResponse(events, origin) {
   return events.some((event) => event.type === "response" && event.url?.startsWith(origin) && event.status >= 200 && event.status < 500);
 }
@@ -1007,6 +1045,14 @@ export function hasApiCommentLikeRequest(events, apiBaseUrl) {
   return events.some((event) => {
     const url = matchingApiRequestOrigin(event, expected.origin, "POST");
     return Boolean(url && /^\/api\/comments\/[^/]+\/like$/.test(url.pathname));
+  });
+}
+
+export function hasApiPhotoDeleteRequest(events, apiBaseUrl) {
+  const expected = new URL("/api/photos/", apiBaseUrl);
+  return events.some((event) => {
+    const url = matchingApiRequestOrigin(event, expected.origin, "DELETE");
+    return Boolean(url && /^\/api\/photos\/[^/]+$/.test(url.pathname));
   });
 }
 

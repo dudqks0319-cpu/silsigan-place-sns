@@ -29,6 +29,7 @@ const requiredSmokeCheckNames = [
   "comments.create",
   "comments.like",
   "photos.click",
+  "photos.delete",
   "reports.placeCreate",
   "reports.commentCreate",
   "reports.photoCreate",
@@ -281,6 +282,7 @@ async function startMockWorker(port) {
     fieldReports: [],
     likeCount: 0,
     photoClickCount: 3,
+    photoDeleted: false,
     reportTargetTypes: [],
   };
   const server = createServer(async (request, response) => {
@@ -404,7 +406,7 @@ async function startMockWorker(port) {
     }
 
     if (request.method === "GET" && url.pathname === "/api/photos") {
-      send(200, success([workerPhoto(url.origin, state.photoClickCount)]));
+      send(200, success(state.photoDeleted ? [] : [workerPhoto(url.origin, state.photoClickCount)]));
       return;
     }
 
@@ -420,6 +422,12 @@ async function startMockWorker(port) {
     if (request.method === "POST" && url.pathname === "/api/photos/photo-local-report-smoke/click") {
       state.photoClickCount += 1;
       send(200, success({ photoId: "photo-local-report-smoke", clickCount: state.photoClickCount, created: true }));
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname === "/api/photos/photo-local-report-smoke") {
+      state.photoDeleted = true;
+      send(200, success({ photoId: "photo-local-report-smoke", deleted: true }));
       return;
     }
 
@@ -534,6 +542,7 @@ function workerPhoto(origin, clickCount) {
     width: 1,
     height: 1,
     clickCount,
+    ownedByCurrentSession: true,
     status: "ready",
     createdAt: "2026-06-22T00:00:00.000Z",
   };

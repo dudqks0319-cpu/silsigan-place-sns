@@ -34,6 +34,7 @@ export function PlaceDetailSheet({
   onCommentLike,
   onLike,
   onCommentSubmit,
+  onPhotoDelete,
   onPhotoClick,
   onPhotoUpload,
   onReportComment,
@@ -53,6 +54,7 @@ export function PlaceDetailSheet({
   onCommentLike: (comment: PlaceComment) => Promise<void>;
   onLike: () => void;
   onCommentSubmit: (body: string) => Promise<void>;
+  onPhotoDelete: (photo: PlacePhoto) => Promise<void>;
   onPhotoClick: (photo: PlacePhoto) => Promise<void>;
   onPhotoUpload: (photo: PreparedPhotoUpload) => Promise<void>;
   onReportComment: (comment: PlaceComment) => void;
@@ -178,6 +180,7 @@ export function PlaceDetailSheet({
         </div>
         <PhotoUploader
           photos={photos}
+          onDeletePhoto={onPhotoDelete}
           onPhotoClick={onPhotoClick}
           onReportPhoto={onReportPhoto}
           onUpload={onPhotoUpload}
