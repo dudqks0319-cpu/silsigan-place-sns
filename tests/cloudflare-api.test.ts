@@ -1544,7 +1544,7 @@ test("Cloudflare API supports required place and ranking route aliases", async (
   const firstClick = await post<SuccessPayload<{ clickCount: number; created: boolean }>>(
     "https://api.test/api/places/busan-gwangalli/click",
     anonymousId,
-    {},
+    { source: "ranking" },
   );
   const secondClick = await post<SuccessPayload<{ clickCount: number; created: boolean }>>(
     "https://api.test/api/places/busan-gwangalli/click",
@@ -1553,6 +1553,7 @@ test("Cloudflare API supports required place and ranking route aliases", async (
   );
   assert.equal(firstClick.data.created, true);
   assert.equal(secondClick.data.created, false);
+  assert.equal(firstClick.meta?.source, "ranking");
 
   const liked = await post<SuccessPayload<{ likeCount: number; created: boolean }>>(
     "https://api.test/api/places/busan-gwangalli/like",
@@ -2278,21 +2279,23 @@ test("D1 public live surfaces ignore expired three-hour place signals", { skip: 
       db,
       "https://api.test/api/places/busan-gwangalli/click",
       anonymousId,
-      {},
+      { source: "detail" },
     );
 
     const eventWindow = await db
       .prepare(
         `SELECT
           created_at AS createdAt,
-          expires_at AS expiresAt
+          expires_at AS expiresAt,
+          source
         FROM place_events
         WHERE place_id = 'busan-gwangalli'
         ORDER BY created_at DESC
         LIMIT 1`,
       )
-      .first<{ createdAt: string; expiresAt: string }>();
+      .first<{ createdAt: string; expiresAt: string; source: string }>();
     assert.ok(eventWindow);
+    assert.equal(eventWindow.source, "detail");
     assert.equal(new Date(eventWindow.expiresAt).getTime() - new Date(eventWindow.createdAt).getTime(), 3 * 60 * 60 * 1000);
 
     const activeLive = await d1Get<SuccessPayload<{ clickCount: number; commentCount: number; photoCount: number }>>(

@@ -382,9 +382,12 @@ type PublicFieldReportRecord = Omit<FieldReportRecord, "anonymousUserId" | "weat
   weatherFeel?: FieldReportRecord["weatherFeel"];
 };
 
+type PlaceEventSource = "worker_api" | "field_report" | "detail" | "map_marker" | "ranking" | "search_result";
+type PlaceClickSource = Exclude<PlaceEventSource, "field_report">;
+
 type D1PlaceEventOptions = {
   id?: string;
-  source?: "worker_api" | "field_report";
+  source?: PlaceEventSource;
   crowdLevel?: FieldReportRecord["crowdLevel"] | null;
   lineStatus?: FieldReportRecord["lineStatus"] | null;
   parkingStatus?: FieldReportRecord["parkingStatus"] | null;
@@ -530,7 +533,7 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
 
       if (request.method === "POST" && action === "click") {
         await enforceRateLimit("place:click", request, session.id, 60, 60_000);
-        return withHeaders(await clickPlace(placeId, session, env), sessionHeaders);
+        return withHeaders(await clickPlace(request, placeId, session, env), sessionHeaders);
       }
 
       if (request.method === "POST" && action === "like") {
@@ -929,8 +932,9 @@ async function getPlaceLive(placeId: string, env: Env): Promise<Response> {
   );
 }
 
-async function clickPlace(placeId: string, session: AnonymousSession, env: Env): Promise<Response> {
+async function clickPlace(request: Request, placeId: string, session: AnonymousSession, env: Env): Promise<Response> {
   const place = await resolvePlaceRecord(placeId, env);
+  const source = await placeClickSource(request);
   if (env.DB) {
     const anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
     await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
@@ -940,7 +944,7 @@ async function clickPlace(placeId: string, session: AnonymousSession, env: Env):
     const created = !previous || now - previous >= 5 * 60_000;
     if (created) {
       userWindows.set(place.id, now);
-      await recordD1PlaceEvent(env.DB, place, anonymousUserId, "click");
+      await recordD1PlaceEvent(env.DB, place, anonymousUserId, "click", { source });
     }
     const clickCount = await countD1Events(env.DB, place.id, "click");
 
@@ -950,7 +954,7 @@ async function clickPlace(placeId: string, session: AnonymousSession, env: Env):
         clickCount,
         created,
       },
-      { duplicatePolicy: "same-anonymous-user-place-counts-once-per-5-minutes", storage: "d1" },
+      { duplicatePolicy: "same-anonymous-user-place-counts-once-per-5-minutes", source, storage: "d1" },
     );
   }
 
@@ -970,8 +974,24 @@ async function clickPlace(placeId: string, session: AnonymousSession, env: Env):
       clickCount: placeClickCounts.get(place.id) ?? 0,
       created,
     },
-    { duplicatePolicy: "same-anonymous-user-place-counts-once-per-5-minutes" },
+    { duplicatePolicy: "same-anonymous-user-place-counts-once-per-5-minutes", source },
   );
+}
+
+async function placeClickSource(request: Request): Promise<PlaceClickSource> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return "worker_api";
+  }
+
+  const body = await readJson(request);
+  const source = body.source;
+
+  return isPlaceClickSource(source) ? source : "worker_api";
+}
+
+function isPlaceClickSource(value: unknown): value is PlaceClickSource {
+  return value === "worker_api" || value === "detail" || value === "map_marker" || value === "ranking" || value === "search_result";
 }
 
 async function likePlace(placeId: string, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
