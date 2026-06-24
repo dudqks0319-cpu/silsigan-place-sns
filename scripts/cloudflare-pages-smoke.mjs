@@ -511,12 +511,43 @@ async function runMapControlChecks(client, config) {
   );
   record(config.checks, "map.requeryButton", "pass", "이 지역 다시 검색 버튼 클릭 후 토스트가 갱신됐습니다.");
 
+  await clickHitTestedButton(client, { ariaIncludes: "안전 정책" });
+  await waitForEvaluate(
+    client,
+    `document.body.innerText.includes('정확한 좌표, 원본 파일명, 민감정보는 공개하지 않는 정책입니다.')`,
+    "header.safetyButton",
+    config.timeoutMs,
+  );
+  record(config.checks, "header.safetyButton", "pass", "헤더 안전 정책 버튼이 실제 클릭 후 정책 토스트를 표시했습니다.");
+
+  await clickHitTestedButton(client, { ariaIncludes: "새 현장 알림 켜기" });
+  await waitForEvaluate(
+    client,
+    `[...document.querySelectorAll('button')].some((button) => button.getAttribute('aria-label') === '새 현장 알림 끄기' && button.getAttribute('aria-pressed') === 'true')`,
+    "header.notificationButton",
+    config.timeoutMs,
+  );
+  record(config.checks, "header.notificationButton", "pass", "헤더 알림 버튼 클릭 후 pressed 상태와 라벨이 바뀌었습니다.");
+
   await clickHitTestedTextButton(client, "홈", { exact: true });
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '실시간'`, "bottomNav.home", config.timeoutMs);
   record(config.checks, "bottomNav.home", "pass", "하단 홈 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
   if (await dismissOnboardingIfPresent(client, config.timeoutMs)) {
     record(config.checks, "onboarding.dismiss", "pass", "첫 방문 안내가 뜬 상태에서 안내 버튼을 실제 클릭해 닫았습니다.");
   }
+
+  await clickHitTestedTextButton(client, "마이", { exact: true });
+  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '마이'`, "bottomNav.my", config.timeoutMs);
+  record(config.checks, "bottomNav.my", "pass", "하단 마이 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
+
+  await clickHitTestedTextButton(client, "안전 정책 및 이용 안내", { exact: true });
+  await waitForEvaluate(
+    client,
+    `[...document.querySelectorAll('button')].some((button) => button.textContent?.trim() === '안전 정책 및 이용 안내' && button.getAttribute('aria-pressed') === 'true') && document.body.innerText.includes('안전 정책으로 이동했습니다.')`,
+    "my.safetyMenu",
+    config.timeoutMs,
+  );
+  record(config.checks, "my.safetyMenu", "pass", "마이 안전 정책 메뉴가 실제 클릭 후 활성 상태와 토스트를 표시했습니다.");
 
   await clickHitTestedTextButton(client, "지도", { exact: true });
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "bottomNav.map", config.timeoutMs);
