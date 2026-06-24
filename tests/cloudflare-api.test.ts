@@ -2172,6 +2172,21 @@ test("D1 field reports store coarse realtime status without client coordinates",
     const gwangalli = ranking.data.find((item) => item.placeId === "busan-gwangalli");
     assert.equal(gwangalli?.score, 104);
 
+    const list = await d1Get<SuccessPayload<Array<{ id: string; placeId: string; weatherFeel?: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=5",
+      anonymousId,
+    );
+    const serializedList = JSON.stringify(list);
+    assert.equal(list.meta?.storage, "d1");
+    assert.equal(list.data[0]?.id, payload.data.report.id);
+    assert.equal(list.data[0]?.placeId, "busan-gwangalli");
+    assert.equal("weatherFeel" in (list.data[0] ?? {}), false);
+    assert.equal(serializedList.includes("35.1532"), false);
+    assert.equal(serializedList.includes("129.1186"), false);
+    assert.equal(serializedList.includes("images.example.test"), false);
+    assert.equal(serializedList.includes(anonymousId), false);
+
     const rejected = await rawD1Post(db, "https://api.test/api/reports", "anon_d1_field_far", {
       placeId: "busan-gwangalli",
       category: "tourism",
@@ -2197,6 +2212,36 @@ test("D1 field reports store coarse realtime status without client coordinates",
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("memory fallback field reports can be listed without raw location data", async () => {
+  const anonymousId = "anon_memory_field_report";
+  const created = await post<SuccessPayload<FieldReportData>>("https://api.test/api/reports", anonymousId, {
+    placeId: "ulsan-taehwagang",
+    category: "tourism",
+    crowdLevel: "normal",
+    lineStatus: "short",
+    parkingStatus: "limited",
+    weatherFeel: "windy",
+    photoUrl: "https://images.example.test/taehwa-status.webp",
+    clientLocation: {
+      latitude: 35.5486,
+      longitude: 129.3005,
+    },
+  });
+  const list = await get<SuccessPayload<Array<{ id: string; placeId: string; weatherFeel?: string }>>>(
+    "https://api.test/api/reports?placeId=ulsan-taehwagang&limit=5",
+    anonymousId,
+  );
+  const serializedList = JSON.stringify(list);
+
+  assert.equal(list.meta?.storage, "memory-fallback");
+  assert.equal(list.data.some((report) => report.id === created.data.report.id), true);
+  assert.equal(list.data.find((report) => report.id === created.data.report.id)?.weatherFeel, "windy");
+  assert.equal(serializedList.includes("35.5486"), false);
+  assert.equal(serializedList.includes("129.3005"), false);
+  assert.equal(serializedList.includes("images.example.test"), false);
+  assert.equal(serializedList.includes(anonymousId), false);
 });
 
 test("D1 public live surfaces ignore expired three-hour place signals", { skip: !sqlite3Available() }, async () => {

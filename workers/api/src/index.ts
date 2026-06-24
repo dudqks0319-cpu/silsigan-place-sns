@@ -366,6 +366,22 @@ type FieldReportCredit = {
   amount: 1;
 };
 
+type D1FieldReportRow = {
+  id: string;
+  placeId: string;
+  category: FieldReportRecord["category"];
+  crowdLevel: FieldReportRecord["crowdLevel"];
+  lineStatus: FieldReportRecord["lineStatus"];
+  parkingStatus: FieldReportRecord["parkingStatus"];
+  verifiedRadiusM: FieldReportRecord["verifiedRadiusM"];
+  createdAt: string;
+  expiresAt: string;
+};
+
+type PublicFieldReportRecord = Omit<FieldReportRecord, "anonymousUserId" | "weatherFeel" | "hasPhoto"> & {
+  weatherFeel?: FieldReportRecord["weatherFeel"];
+};
+
 type D1PlaceEventOptions = {
   id?: string;
   source?: "worker_api" | "field_report";
@@ -584,6 +600,11 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
     const photoDeleteMatch = path.match(/^\/api\/photos\/([^/]+)$/);
     if (photoDeleteMatch && request.method === "DELETE") {
       return withHeaders(await deletePhoto(photoDeleteMatch[1], session, env), sessionHeaders);
+    }
+
+    if (path === "/api/reports" && request.method === "GET") {
+      const response = await listFieldReports(url, env);
+      return withHeaders(response, sessionHeaders);
     }
 
     if (path === "/api/reports" && request.method === "POST") {
@@ -2289,6 +2310,20 @@ function publicFieldReport(report: FieldReportRecord) {
   };
 }
 
+function publicD1FieldReport(report: D1FieldReportRow): PublicFieldReportRecord {
+  return {
+    id: report.id,
+    placeId: report.placeId,
+    category: report.category,
+    crowdLevel: report.crowdLevel,
+    lineStatus: report.lineStatus,
+    parkingStatus: report.parkingStatus,
+    verifiedRadiusM: report.verifiedRadiusM,
+    createdAt: report.createdAt,
+    expiresAt: report.expiresAt,
+  };
+}
+
 function fieldReportCredits(report: FieldReportRecord): FieldReportCredit[] {
   const credits: FieldReportCredit[] = [];
   if (report.verifiedRadiusM) {
@@ -2336,6 +2371,74 @@ function broadcastFieldReportCreated(env: Env, place: PlaceRecord, report: Field
     weatherFeel: report.weatherFeel,
     verifiedRadiusM: report.verifiedRadiusM,
     expiresAt: report.expiresAt,
+  });
+}
+
+async function listFieldReports(url: URL, env: Env): Promise<Response> {
+  const placeId = url.searchParams.get("placeId");
+  const regionId = url.searchParams.get("regionId") ?? url.searchParams.get("region");
+  const limit = clampLimit(url.searchParams.get("limit"), 200, 100);
+  const includeExpired = booleanFromSearch(url, "includeExpired", false);
+
+  if (env.DB) {
+    const where = ["event_type = 'report'", "source = 'field_report'"];
+    const values: D1Value[] = [];
+    if (placeId) {
+      where.push("place_id = ?");
+      values.push(placeId);
+    }
+
+    if (regionId) {
+      where.push("region_code = ?");
+      values.push(regionId);
+    }
+
+    if (!includeExpired) {
+      where.push(`expires_at > ${D1_NOW_SQL}`);
+    }
+
+    values.push(limit);
+    const { results = [] } = await env.DB
+      .prepare(
+        `SELECT
+          id,
+          place_id AS placeId,
+          category,
+          crowd_level AS crowdLevel,
+          line_status AS lineStatus,
+          parking_status AS parkingStatus,
+          verified_radius_m AS verifiedRadiusM,
+          created_at AS createdAt,
+          expires_at AS expiresAt
+        FROM place_events
+        WHERE ${where.join(" AND ")}
+        ORDER BY created_at DESC
+        LIMIT ?`,
+      )
+      .bind(...values)
+      .all<D1FieldReportRow>();
+
+    return json(results.map(publicD1FieldReport), {
+      limit,
+      includeExpired,
+      storage: "d1",
+      privacy: "clientLocation and photoUrl are not persisted in place_events or returned",
+    });
+  }
+
+  const now = new Date();
+  const data = fieldReports
+    .filter((report) => !placeId || report.placeId === placeId)
+    .filter((report) => !regionId || findPlaceRecord(report.placeId).regionId === regionId)
+    .filter((report) => includeExpired || new Date(report.expiresAt).getTime() > now.getTime())
+    .slice(0, limit)
+    .map(publicFieldReport);
+
+  return json(data, {
+    limit,
+    includeExpired,
+    storage: "memory-fallback",
+    privacy: "clientLocation and photoUrl are not persisted in field report responses",
   });
 }
 
@@ -3713,6 +3816,23 @@ function enumFromSearch<TValue extends string>(url: URL, field: string, values: 
   }
 
   return value as TValue;
+}
+
+function booleanFromSearch(url: URL, field: string, fallback: boolean): boolean {
+  const value = url.searchParams.get(field);
+  if (value === null || value === "") {
+    return fallback;
+  }
+
+  if (value === "true" || value === "1") {
+    return true;
+  }
+
+  if (value === "false" || value === "0") {
+    return false;
+  }
+
+  throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
 }
 
 function isRecord(value: unknown): value is JsonObject {

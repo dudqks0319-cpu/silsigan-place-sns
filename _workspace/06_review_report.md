@@ -90,7 +90,7 @@
 | 검증 항목 | 상태 | 비고 |
 | --- | --- | --- |
 | 아키텍처 문서 | 통과 | Cloudflare 전국 MVP 기준으로 갱신 |
-| API 명세 | 통과 | Worker route alias, 사진/댓글/랭킹, `/api/reports` 현장 제보와 `/api/moderation/reports` 운영 신고 분리 포함 |
+| API 명세 | 통과 | Worker route alias, 사진/댓글/랭킹, `GET/POST /api/reports` 현장 제보와 `/api/moderation/reports` 운영 신고 분리 포함 |
 | DB 스키마 | 통과 | 원좌표 컬럼 없음, D1 `place_events.source = field_report` 상태/검증 반경/TTL 저장, seed 2회 적용 멱등성 테스트 |
 | Wrangler 환경 분리 | 통과 | development/staging/production에 D1/R2/Images/KV/Durable Object binding 명시. 기본 development dry-run은 root D1/KV placeholder를 사용하는 local config sanity check이고 release evidence는 staging/production dry-run으로 제한 |
 | Cloudflare resource/external preflight | 부분 통과 | fixture 테스트는 concrete ID와 deployment URL 통과, placeholder ID와 missing/unsafe/duplicate URL 실패를 검증. 실제 config/env는 D1/KV resource binding이 통과하고, `cf:external-state`와 `cf:preflight`가 미설정 deployment URL 및 R2 미활성화를 출시 차단으로 분리 보고 |
@@ -151,7 +151,7 @@
 - [x] 좌표 미검증 seed의 공개 지도/랭킹 제외 테스트 구현.
 - [x] 좌표 미검증 seed의 operator 검증/반려 API와 공개 지도/랭킹 노출 제어 테스트 구현.
 - [x] 댓글/사진/좋아요/신고 negative-path 테스트 구현.
-- [x] `/api/reports` 현장 제보의 D1 source/status/TTL/coarse radius 저장과 원좌표/사진 URL 비저장 테스트 구현.
+- [x] `/api/reports` 현장 제보의 D1 source/status/TTL/coarse radius 저장, 공개 목록 조회, 원좌표/사진 URL 비저장 테스트 구현.
 - [x] 민감 카테고리 경고와 신고 정책 문서화.
 - [x] 관공서 장소 지도 상세/현장 제보 작성 화면의 민감정보 경고 브라우저 smoke 확인.
 - [x] 지역/area 활성화 기준 운영 대시보드 표시와 도메인/store 테스트 구현.

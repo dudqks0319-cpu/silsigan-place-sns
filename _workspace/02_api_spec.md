@@ -33,6 +33,7 @@
 | GET | `/api/photos/:photoId/file` | Worker/R2 사진 미리보기 파일 | 공개 | 없음 |
 | POST | `/api/photos/upload-url` | R2 업로드 경로 발급 | 익명 식별자 | `PhotoUploadRequest` |
 | POST | `/api/photos/complete` | 사진 업로드 완료 등록 | 익명 식별자 | `PhotoCompleteInput` |
+| GET | `/api/reports?placeId=&regionId=&includeExpired=` | 현장 제보 목록 | 공개 | 없음 |
 | POST | `/api/moderation/reports` | 댓글/사진/장소 신고 | 익명 식별자 | `ModerationReportInput` |
 | GET | `/api/moderation/reports?status=` | 운영자 신고 큐 조회 | 관리자 토큰 | 없음 |
 | POST | `/api/moderation/reports/:reportId/action` | 운영자 신고 승인/반려 | 관리자 토큰 | `{ "status": "accepted" | "rejected", "reason"?: string }` |
@@ -134,6 +135,21 @@
   }
 }
 ```
+
+## GET /api/reports
+
+쿼리 파라미터:
+
+- `placeId`: 장소별 현장 제보 목록.
+- `regionId` 또는 `region`: 지역별 현장 제보 목록.
+- `limit`: 반환 개수. 기본 100, 최대 200.
+- `includeExpired`: `true`이면 3시간 TTL이 지난 field report도 포함한다. 기본값은 `false`다.
+
+처리 규칙:
+
+- D1은 `place_events`에서 `event_type = "report"` 및 `source = "field_report"` 이벤트만 반환한다. 운영 신고 큐의 `reports` 테이블은 이 공개 목록에 섞지 않는다.
+- D1 public 목록 응답은 `id`, `placeId`, `category`, `crowdLevel`, `lineStatus`, `parkingStatus`, `verifiedRadiusM`, `createdAt`, `expiresAt`만 포함한다. 현재 D1 schema에는 `weather_feel` 컬럼이 없으므로 D1 목록에는 `weatherFeel`을 포함하지 않는다.
+- 메모리 fallback 목록은 생성 시 메모리에 남아 있는 `weatherFeel`까지 포함할 수 있지만, 원좌표, `photoUrl`, 익명 사용자 ID는 반환하지 않는다.
 
 ## POST /api/comments
 
