@@ -157,37 +157,13 @@ export function NaverMap<TPlace extends MapPlace>({
     const mapElement = mapRef.current;
     const placesForMap = visiblePlacesRef.current;
     const currentLocationForMap = currentLocationRef.current;
-    setMapHealthy(false);
-    const map = new maps.Map(mapElement, {
-      center: new maps.LatLng(center.latitude, center.longitude),
-      zoom: compact ? 7 : 8,
-      minZoom: 6,
-      maxZoom: 18,
-      scaleControl: false,
-      logoControl: true,
-      mapDataControl: false,
-      zoomControl: !compact,
-    });
-    mapInstanceRef.current = map;
-
-    if (placesForMap.length > 1 && map.fitBounds) {
-      const bounds = boundsForPlaces(maps, placesForMap);
-      map.fitBounds(bounds);
-    }
-
-    const trafficLayer = maps.TrafficLayer ? new maps.TrafficLayer() : null;
-    trafficLayer?.setMap(showTraffic ? map : null);
-    const emitBounds = () => {
-      if (!map.getBounds) {
-        return;
-      }
-
-      onBoundsChangeRef.current?.(normalizeBounds(map.getBounds()));
-    };
-    const debouncedInteraction = debounce(() => {
-      onMapInteractionRef.current?.();
-      emitBounds();
-    }, 350);
+    let renderCheckTimer = 0;
+    let mapElementClickAttached = false;
+    let trafficLayer: { setMap?: (map: unknown | null) => void } | null = null;
+    let userMarker: { setMap?: (map: unknown | null) => void } | null = null;
+    let markers: Array<{ setMap?: (map: unknown | null) => void }> = [];
+    const listeners: Array<{ remove?: () => void } | void> = [];
+    const markerListeners: Array<{ remove?: () => void } | void> = [];
     const selectPlaceFromMarkerEvent = (event: MouseEvent) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       const markerButton = target?.closest<HTMLElement>("[data-silsigan-place-id]");
@@ -202,79 +178,11 @@ export function NaverMap<TPlace extends MapPlace>({
       event.stopPropagation();
       onSelectPlaceRef.current(place);
     };
-
-    const listeners = [
-      maps.Event.addListener(map, "idle", debouncedInteraction),
-      maps.Event.addListener(map, "dragend", debouncedInteraction),
-      maps.Event.addListener(map, "zoom_changed", debouncedInteraction),
-    ];
-    mapElement.addEventListener("click", selectPlaceFromMarkerEvent);
-    window.setTimeout(emitBounds, 0);
-    let renderCheckTimer = 0;
-    const renderCheckStartedAt = Date.now();
-    const verifyMapRender = () => {
-      if (!mapRef.current) {
-        return;
-      }
-
-      if (hasKnownNaverMapFailure(mapRef.current)) {
-        setFailureReason("resource");
-        return;
-      }
-
-      if (hasLoadedNaverMapVisual(mapRef.current)) {
-        setMapHealthy(true);
-        return;
-      }
-
-      if (Date.now() - renderCheckStartedAt >= naverMapRenderCheckTimeoutMs) {
-        setFailureReason("resource");
-        return;
-      }
-
-      renderCheckTimer = window.setTimeout(verifyMapRender, naverMapRenderCheckIntervalMs);
-    };
-    renderCheckTimer = window.setTimeout(verifyMapRender, naverMapRenderCheckIntervalMs);
-
-    const markerListeners: Array<{ remove?: () => void } | void> = [];
-    const markers = placesForMap.map((place) => {
-      const markerLabel = markerLabelForPlace(place);
-      const markerOffset = markerVisualOffsetForPlace(place, placesForMap);
-      const marker = new maps.Marker({
-        position: new maps.LatLng(place.latitude, place.longitude),
-        map,
-        title: place.name,
-        zIndex: 100 + Math.max(0, visiblePlacesRef.current.findIndex((candidate) => candidate.id === place.id)),
-        icon: {
-          content: `<button class="naver-marker naver-marker--${markerToneForPlace(place)}" type="button" data-silsigan-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(place.name)} ${escapeHtml(place.signal)}">${escapeHtml(markerLabel)}</button>`,
-          size: new maps.Size(96, 38),
-          anchor: new maps.Point(48 - markerOffset.x, 19 - markerOffset.y),
-        },
-      });
-      markerListeners.push(maps.Event.addListener(marker, "click", () => {
-        onSelectPlaceRef.current(place);
-      }));
-
-      return marker;
-    });
-
-    const userMarker = currentLocationForMap
-      ? new maps.Marker({
-          position: new maps.LatLng(currentLocationForMap.latitude, currentLocationForMap.longitude),
-          map,
-          title: "현재 위치",
-          zIndex: 1000,
-          icon: {
-            content: `<span class="naver-user-marker" aria-label="현재 위치"></span>`,
-            size: new maps.Size(28, 28),
-            anchor: new maps.Point(14, 14),
-          },
-        })
-      : null;
-
-    return () => {
+    const cleanupMapResources = () => {
       window.clearTimeout(renderCheckTimer);
-      mapElement.removeEventListener("click", selectPlaceFromMarkerEvent);
+      if (mapElementClickAttached) {
+        mapElement.removeEventListener("click", selectPlaceFromMarkerEvent);
+      }
       listeners.forEach((listener) => {
         safeRemoveListener(listener);
       });
@@ -286,6 +194,115 @@ export function NaverMap<TPlace extends MapPlace>({
       markers.forEach((marker) => safeSetMap(marker, null));
       mapInstanceRef.current = null;
     };
+
+    setMapHealthy(false);
+
+    try {
+      const map = new maps.Map(mapElement, {
+        center: new maps.LatLng(center.latitude, center.longitude),
+        zoom: compact ? 7 : 8,
+        minZoom: 6,
+        maxZoom: 18,
+        scaleControl: false,
+        logoControl: true,
+        mapDataControl: false,
+        zoomControl: !compact,
+      });
+      mapInstanceRef.current = map;
+
+      if (placesForMap.length > 1 && map.fitBounds) {
+        const bounds = boundsForPlaces(maps, placesForMap);
+        map.fitBounds(bounds);
+      }
+
+      trafficLayer = maps.TrafficLayer ? new maps.TrafficLayer() : null;
+      trafficLayer?.setMap?.(showTraffic ? map : null);
+      const emitBounds = () => {
+        if (!map.getBounds) {
+          return;
+        }
+
+        onBoundsChangeRef.current?.(normalizeBounds(map.getBounds()));
+      };
+      const debouncedInteraction = debounce(() => {
+        onMapInteractionRef.current?.();
+        emitBounds();
+      }, 350);
+
+      listeners.push(
+        maps.Event.addListener(map, "idle", debouncedInteraction),
+        maps.Event.addListener(map, "dragend", debouncedInteraction),
+        maps.Event.addListener(map, "zoom_changed", debouncedInteraction),
+      );
+      mapElement.addEventListener("click", selectPlaceFromMarkerEvent);
+      mapElementClickAttached = true;
+      window.setTimeout(emitBounds, 0);
+
+      const renderCheckStartedAt = Date.now();
+      const verifyMapRender = () => {
+        if (!mapRef.current) {
+          return;
+        }
+
+        if (hasKnownNaverMapFailure(mapRef.current)) {
+          setFailureReason("resource");
+          return;
+        }
+
+        if (hasLoadedNaverMapVisual(mapRef.current)) {
+          setMapHealthy(true);
+          return;
+        }
+
+        if (Date.now() - renderCheckStartedAt >= naverMapRenderCheckTimeoutMs) {
+          setFailureReason("resource");
+          return;
+        }
+
+        renderCheckTimer = window.setTimeout(verifyMapRender, naverMapRenderCheckIntervalMs);
+      };
+      renderCheckTimer = window.setTimeout(verifyMapRender, naverMapRenderCheckIntervalMs);
+
+      markers = placesForMap.map((place) => {
+        const markerLabel = markerLabelForPlace(place);
+        const markerOffset = markerVisualOffsetForPlace(place, placesForMap);
+        const marker = new maps.Marker({
+          position: new maps.LatLng(place.latitude, place.longitude),
+          map,
+          title: place.name,
+          zIndex: 100 + Math.max(0, visiblePlacesRef.current.findIndex((candidate) => candidate.id === place.id)),
+          icon: {
+            content: `<button class="naver-marker naver-marker--${markerToneForPlace(place)}" type="button" data-silsigan-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(place.name)} ${escapeHtml(place.signal)}">${escapeHtml(markerLabel)}</button>`,
+            size: new maps.Size(96, 38),
+            anchor: new maps.Point(48 - markerOffset.x, 19 - markerOffset.y),
+          },
+        });
+        markerListeners.push(maps.Event.addListener(marker, "click", () => {
+          onSelectPlaceRef.current(place);
+        }));
+
+        return marker;
+      });
+
+      userMarker = currentLocationForMap
+        ? new maps.Marker({
+            position: new maps.LatLng(currentLocationForMap.latitude, currentLocationForMap.longitude),
+            map,
+            title: "현재 위치",
+            zIndex: 1000,
+            icon: {
+              content: `<span class="naver-user-marker" aria-label="현재 위치"></span>`,
+              size: new maps.Size(28, 28),
+              anchor: new maps.Point(14, 14),
+            },
+          })
+        : null;
+
+      return cleanupMapResources;
+    } catch {
+      cleanupMapResources();
+      window.setTimeout(() => setFailureReason("sdk"), 0);
+    }
   }, [
     center.latitude,
     center.longitude,
