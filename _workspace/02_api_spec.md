@@ -79,7 +79,7 @@
 - 응답 `data[]`는 기존 `placeId`, `regionId`, `score`, `rank`, `windowHours`에 더해 `name`, `regionCode`, `areaCode`, `category`, `clickCount`, `likeCount`, `commentCount`, `photoCount`, `reportCount`, `uniqueUserCount`, `trend`, `summary`를 포함한다.
 - D1 랭킹 점수는 `place_rankings` seed score에 최근 3시간 이내 `place_events` live score만 더하고, 정렬도 같은 계산 `score` 기준으로 수행한다.
 - 만료된 `place_events`는 장소 live click count와 랭킹 live score에서 제외한다.
-- 신고 이벤트는 랭킹 가산점이 아니라 감점 신호로 처리한다.
+- `source = "field_report"` 현장 제보 이벤트는 최근 현장 신호로 가산하고, 운영 신고 이벤트는 감점 신호로 처리한다.
 - `CACHE` KV binding이 있으면 랭킹 응답을 normalized route/scope/bbox/limit key로 60초 read-through cache에 저장한다. 운영 숨김/복구/삭제/좌표 상태 변경은 `rankings:version`을 갱신해 기존 cache key 재사용을 막는다.
 
 ## POST /api/reports
@@ -102,10 +102,13 @@
 
 처리 규칙:
 
+- `category`는 장소 카테고리와 일치해야 하며 다르면 `CATEGORY_MISMATCH`로 거부한다.
 - `clientLocation`은 거리 계산에만 사용하고 저장하지 않는다.
 - 장소 300m 밖이면 `LOCATION_NOT_VERIFIED`로 거부한다.
 - `expiresAt`은 서버에서 `createdAt + 3 hours`로 계산한다.
 - 사진 포함 보상과 위치 인증 보상은 서버에서 계산한다.
+- D1 저장은 `place_events.source = "field_report"`로 구분하고 `crowd_level`, `line_status`, `parking_status`, `verified_radius_m`, `expires_at`만 저장한다. `comment`, `photoUrl`, 원좌표, 익명 세션 원문은 `place_events`에 저장하지 않는다.
+- 같은 `/api/reports` 경로라도 `targetType`이 있는 요청은 기존 운영 신고 호환 경로로 분기한다. 신규 운영 신고 클라이언트는 `/api/moderation/reports`를 사용한다.
 
 응답:
 
@@ -114,10 +117,20 @@
   "success": true,
   "data": {
     "report": {
+      "id": "field_report_...",
+      "placeId": "ulsan-taehwagang",
+      "category": "tourism",
+      "crowdLevel": "normal",
+      "lineStatus": "short",
+      "parkingStatus": "limited",
+      "weatherFeel": "windy",
       "verifiedRadiusM": 50,
+      "createdAt": "2026-05-08T00:00:00.000Z",
       "expiresAt": "2026-05-08T03:00:00.000Z"
     },
-    "credits": [{ "type": "verified_report", "amount": 1 }]
+    "credits": [{ "type": "verified_report", "amount": 1 }],
+    "safetyWarning": null,
+    "privacyNotice": "클라이언트 좌표는 반경 검증에만 사용되며 D1과 응답 본문에 저장하지 않습니다."
   }
 }
 ```

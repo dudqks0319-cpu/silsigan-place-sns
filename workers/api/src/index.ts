@@ -12,6 +12,7 @@ import {
   filterPlacesByBBox,
   filterPlacesByRadius,
   intersectBBoxes,
+  distanceMeters,
   parseBBox,
   parseRadiusSearch,
   rankRegionPlaces,
@@ -340,6 +341,42 @@ type ReportRecord = {
   createdAt: string;
 };
 
+type FieldReportRecord = {
+  id: string;
+  placeId: string;
+  category: "tourism" | "festival" | "restaurant_cafe" | "hospital" | "public_office" | "parking";
+  crowdLevel: "quiet" | "normal" | "busy" | "packed";
+  lineStatus: "none" | "short" | "medium" | "long";
+  parkingStatus: "available" | "limited" | "full" | "unknown";
+  weatherFeel: "good" | "rainy" | "windy" | "hot" | "cold";
+  anonymousUserId: string;
+  verifiedRadiusM: 50 | 150 | 300 | null;
+  createdAt: string;
+  expiresAt: string;
+  hasPhoto: boolean;
+};
+
+type ClientLocation = {
+  latitude: number;
+  longitude: number;
+};
+
+type FieldReportCredit = {
+  type: "verified_report" | "photo_report";
+  amount: 1;
+};
+
+type D1PlaceEventOptions = {
+  id?: string;
+  source?: "worker_api" | "field_report";
+  crowdLevel?: FieldReportRecord["crowdLevel"] | null;
+  lineStatus?: FieldReportRecord["lineStatus"] | null;
+  parkingStatus?: FieldReportRecord["parkingStatus"] | null;
+  verifiedRadiusM?: FieldReportRecord["verifiedRadiusM"];
+  createdAt?: string;
+  expiresAt?: string;
+};
+
 type RoomBroadcast = {
   type: "place.liked" | "comment.created" | "photo.ready" | "report.created" | "heartbeat";
   scope: "place" | "region" | "global";
@@ -402,6 +439,7 @@ const seedPlaces: PlaceRecord[] = [
 const comments: CommentRecord[] = [];
 const photos: PhotoRecord[] = [];
 const reports: ReportRecord[] = [];
+const fieldReports: FieldReportRecord[] = [];
 const rateBuckets = new Map<string, RateLimitState>();
 const likeStateByAnon = new Map<string, LikePolicyState>();
 const placeLikeCounts = new Map<string, number>();
@@ -427,6 +465,11 @@ const RANKING_CACHE_VERSION_KEY = "rankings:version";
 const DEFAULT_RANKING_CACHE_VERSION = "initial";
 const D1_NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 const D1_ACTIVE_CONTENT_CUTOFF_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3 hours')";
+const fieldReportCategories = ["tourism", "festival", "restaurant_cafe", "hospital", "public_office", "parking"] as const;
+const fieldReportCrowdLevels = ["quiet", "normal", "busy", "packed"] as const;
+const fieldReportLineStatuses = ["none", "short", "medium", "long"] as const;
+const fieldReportParkingStatuses = ["available", "limited", "full", "unknown"] as const;
+const fieldReportWeatherFeels = ["good", "rainy", "windy", "hot", "cold"] as const;
 
 const workerApi = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -545,13 +588,13 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
 
     if (path === "/api/reports" && request.method === "POST") {
       await enforceRateLimit("report:create", request, session.id, 5, 60_000);
-      const response = await createReport(request, session, env, ctx);
+      const response = await createPublicReport(request, session, env, ctx);
       return withHeaders(response, sessionHeaders);
     }
 
     if (path === "/api/moderation/reports" && request.method === "POST") {
       await enforceRateLimit("report:create", request, session.id, 5, 60_000);
-      const response = await createReport(request, session, env, ctx);
+      const response = await createModerationReport(request, session, env, ctx);
       return withHeaders(response, sessionHeaders);
     }
 
@@ -1182,6 +1225,7 @@ async function createComment(request: Request, session: AnonymousSession, env: E
   const placeId = stringField(body, "placeId", 80);
   const commentBody = commentBodyField(body);
   const place = await resolvePlaceRecord(placeId, env);
+
   const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
   if (env.DB) {
     await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
@@ -1880,7 +1924,9 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
 }
 
 function arrayBufferForBytes(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
 }
 
 async function clickPhoto(photoId: string, session: AnonymousSession, env: Env): Promise<Response> {
@@ -1970,8 +2016,20 @@ async function deletePhoto(photoId: string, session: AnonymousSession, env: Env)
   return json({ photoId, deleted: true });
 }
 
-async function createReport(request: Request, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function createPublicReport(request: Request, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
   const body = await readJson(request);
+  if (isModerationReportBody(body)) {
+    return createModerationReportFromBody(body, session, env, ctx);
+  }
+
+  return createFieldReportFromBody(body, session, env, ctx);
+}
+
+async function createModerationReport(request: Request, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
+  return createModerationReportFromBody(await readJson(request), session, env, ctx);
+}
+
+async function createModerationReportFromBody(body: JsonObject, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
   const targetType = enumField(body, "targetType", ["place", "comment", "photo"] as const);
   const targetId = stringField(body, "targetId", 100);
   const reason = enumField(body, "reason", ["false_content", "spam", "privacy_face", "privacy_plate", "sensitive_info", "other"] as const);
@@ -2069,6 +2127,216 @@ async function createReport(request: Request, session: AnonymousSession, env: En
   const alertChannel = enqueueModerationAlert(ctx, env, report, d1ModerationPriority(reason));
 
   return json(report, { moderationPolicy: "open-reports-require-admin-token", alertChannel }, 201);
+}
+
+async function createFieldReportFromBody(body: JsonObject, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const placeId = stringField(body, "placeId", 80);
+  const category = enumField(body, "category", fieldReportCategories);
+  const crowdLevel = enumField(body, "crowdLevel", fieldReportCrowdLevels);
+  const lineStatus = enumField(body, "lineStatus", fieldReportLineStatuses);
+  const parkingStatus = enumField(body, "parkingStatus", fieldReportParkingStatuses);
+  const weatherFeel = enumField(body, "weatherFeel", fieldReportWeatherFeels);
+  const comment = optionalStringField(body, "comment", 120);
+  const photoUrl = optionalHttpUrlField(body, "photoUrl", 2_048);
+  const clientLocation = optionalClientLocationField(body);
+  if (comment) {
+    const rejectionReason = commentBodyRejectionReason(comment);
+    if (rejectionReason) {
+      throw new HttpError(400, "COMMENT_BODY_REJECTED", "제보 코멘트에 공개할 수 없는 정보나 스팸 패턴이 포함되어 있습니다.", { reason: rejectionReason });
+    }
+  }
+
+  const place = await resolvePlaceRecord(placeId, env);
+  if (category !== place.categoryId) {
+    throw new HttpError(400, "CATEGORY_MISMATCH", "제보 카테고리가 장소 카테고리와 일치하지 않습니다.");
+  }
+
+  const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
+  if (env.DB) {
+    await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
+  }
+
+  const verifiedRadiusM = verifiedRadiusForFieldReport(place, clientLocation);
+  const createdAt = new Date().toISOString();
+  const expiresAt = new Date(new Date(createdAt).getTime() + REPORT_TTL_MS).toISOString();
+  const report: FieldReportRecord = {
+    id: `field_report_${crypto.randomUUID()}`,
+    placeId: place.id,
+    category,
+    crowdLevel,
+    lineStatus,
+    parkingStatus,
+    weatherFeel,
+    anonymousUserId,
+    verifiedRadiusM,
+    createdAt,
+    expiresAt,
+    hasPhoto: Boolean(photoUrl),
+  };
+
+  if (env.DB) {
+    await recordD1PlaceEvent(env.DB, place, anonymousUserId, "report", {
+      id: report.id,
+      source: "field_report",
+      crowdLevel,
+      lineStatus,
+      parkingStatus,
+      verifiedRadiusM,
+      createdAt,
+      expiresAt,
+    });
+    ctx.waitUntil(broadcastFieldReportCreated(env, place, report));
+
+    return json(fieldReportResponse(report), fieldReportMeta("d1", report), 201);
+  }
+
+  fieldReports.unshift(report);
+  ctx.waitUntil(broadcastFieldReportCreated(env, place, report));
+
+  return json(fieldReportResponse(report), fieldReportMeta("memory-fallback", report), 201);
+}
+
+function isModerationReportBody(body: JsonObject): boolean {
+  return typeof body["targetType"] === "string";
+}
+
+function optionalHttpUrlField(body: JsonObject, field: string, maxLength: number): string | undefined {
+  const value = optionalStringField(body, field, maxLength);
+  if (!value) {
+    return undefined;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
+  }
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
+  }
+
+  return url.toString();
+}
+
+function optionalClientLocationField(body: JsonObject): ClientLocation | null {
+  const value = body["clientLocation"];
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (!isRecord(value)) {
+    throw new HttpError(400, "VALIDATION_ERROR", "clientLocation 값이 올바르지 않습니다.");
+  }
+
+  return {
+    latitude: coordinateField(value, "latitude", 33, 39),
+    longitude: coordinateField(value, "longitude", 124, 132),
+  };
+}
+
+function verifiedRadiusForFieldReport(place: PlaceRecord, clientLocation: ClientLocation | null): FieldReportRecord["verifiedRadiusM"] {
+  if (!clientLocation) {
+    return null;
+  }
+
+  const distanceM = distanceMeters(clientLocation, {
+    latitude: place.latitude,
+    longitude: place.longitude,
+  });
+  if (distanceM <= 50) {
+    return 50;
+  }
+
+  if (distanceM <= 150) {
+    return 150;
+  }
+
+  if (distanceM <= 300) {
+    return 300;
+  }
+
+  throw new HttpError(400, "LOCATION_NOT_VERIFIED", "장소 300m 밖에서는 현장 인증 제보를 만들 수 없습니다.");
+}
+
+function fieldReportResponse(report: FieldReportRecord): {
+  report: ReturnType<typeof publicFieldReport>;
+  credits: FieldReportCredit[];
+  safetyWarning: string | null;
+  privacyNotice: string;
+} {
+  return {
+    report: publicFieldReport(report),
+    credits: fieldReportCredits(report),
+    safetyWarning: fieldReportSafetyWarning(report.category),
+    privacyNotice: "클라이언트 좌표는 반경 검증에만 사용되며 D1과 응답 본문에 저장하지 않습니다.",
+  };
+}
+
+function publicFieldReport(report: FieldReportRecord) {
+  return {
+    id: report.id,
+    placeId: report.placeId,
+    category: report.category,
+    crowdLevel: report.crowdLevel,
+    lineStatus: report.lineStatus,
+    parkingStatus: report.parkingStatus,
+    weatherFeel: report.weatherFeel,
+    verifiedRadiusM: report.verifiedRadiusM,
+    createdAt: report.createdAt,
+    expiresAt: report.expiresAt,
+  };
+}
+
+function fieldReportCredits(report: FieldReportRecord): FieldReportCredit[] {
+  const credits: FieldReportCredit[] = [];
+  if (report.verifiedRadiusM) {
+    credits.push({ type: "verified_report", amount: 1 });
+  }
+
+  if (report.hasPhoto) {
+    credits.push({ type: "photo_report", amount: 1 });
+  }
+
+  return credits;
+}
+
+function fieldReportSafetyWarning(category: FieldReportRecord["category"]): string | null {
+  if (category === "hospital") {
+    return "병원 제보에는 환자 얼굴, 접수번호, 진료 정보, 의료진 개인정보가 보이지 않게 촬영해 주세요.";
+  }
+
+  if (category === "public_office") {
+    return "관공서 제보에는 민원인 얼굴, 서류, 차량번호, 창구 개인정보가 보이지 않게 촬영해 주세요.";
+  }
+
+  return null;
+}
+
+function fieldReportMeta(storage: "d1" | "memory-fallback", report: FieldReportRecord): Record<string, unknown> {
+  return {
+    storage,
+    ttlHours: 3,
+    locationPolicy: "clientLocation-used-only-for-distance-and-not-stored",
+    verifiedLocation: Boolean(report.verifiedRadiusM),
+  };
+}
+
+function broadcastFieldReportCreated(env: Env, place: PlaceRecord, report: FieldReportRecord): Promise<void> {
+  return broadcastPlaceActivity(env, "report.created", place, {
+    id: report.id,
+    placeId: place.id,
+    regionId: place.regionId,
+    areaId: place.areaId,
+    category: report.category,
+    crowdLevel: report.crowdLevel,
+    lineStatus: report.lineStatus,
+    parkingStatus: report.parkingStatus,
+    weatherFeel: report.weatherFeel,
+    verifiedRadiusM: report.verifiedRadiusM,
+    expiresAt: report.expiresAt,
+  });
 }
 
 async function listModerationReports(url: URL, env: Env): Promise<Response> {
@@ -3089,18 +3357,50 @@ async function recordD1PlaceEvent(
   place: PlaceRecord,
   anonymousUserId: string,
   eventType: "click" | "like" | "comment" | "photo" | "report",
+  options: D1PlaceEventOptions = {},
 ): Promise<void> {
   const now = new Date();
-  const createdAt = now.toISOString();
-  const expiresAt = new Date(now.getTime() + REPORT_TTL_MS).toISOString();
-  const eventId = `event_${crypto.randomUUID()}`;
+  const createdAt = options.createdAt ?? now.toISOString();
+  const expiresAt = options.expiresAt ?? new Date(now.getTime() + REPORT_TTL_MS).toISOString();
+  const eventId = options.id ?? `event_${crypto.randomUUID()}`;
+  const source = options.source ?? "worker_api";
   await db
     .prepare(
       `INSERT INTO place_events
-        (id, place_id, anonymous_user_id, event_type, source, region_code, area_code, category, created_at, expires_at)
-       VALUES (?, ?, ?, ?, 'worker_api', ?, ?, ?, ?, ?)`,
+        (
+          id,
+          place_id,
+          anonymous_user_id,
+          event_type,
+          source,
+          region_code,
+          area_code,
+          category,
+          crowd_level,
+          line_status,
+          parking_status,
+          verified_radius_m,
+          created_at,
+          expires_at
+        )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(eventId, place.id, anonymousUserId, eventType, place.regionId, place.areaId, place.categoryId, createdAt, expiresAt)
+    .bind(
+      eventId,
+      place.id,
+      anonymousUserId,
+      eventType,
+      source,
+      place.regionId,
+      place.areaId,
+      place.categoryId,
+      options.crowdLevel ?? null,
+      options.lineStatus ?? null,
+      options.parkingStatus ?? null,
+      options.verifiedRadiusM ?? null,
+      createdAt,
+      expiresAt,
+    )
     .run();
   await incrementD1HourlyAggregate(db, place, eventType, createdAt);
 }
@@ -3582,12 +3882,13 @@ function d1PlaceSelectSql(): string {
       SELECT
         place_id,
         SUM(
-          CASE event_type
-            WHEN 'photo' THEN 8
-            WHEN 'comment' THEN 4
-            WHEN 'like' THEN 2
-            WHEN 'click' THEN 1
-            WHEN 'report' THEN -15
+          CASE
+            WHEN event_type = 'photo' THEN 8
+            WHEN event_type = 'report' AND source = 'field_report' THEN 6
+            WHEN event_type = 'comment' THEN 4
+            WHEN event_type = 'like' THEN 2
+            WHEN event_type = 'click' THEN 1
+            WHEN event_type = 'report' THEN -15
             ELSE 0
           END
         ) AS live_score

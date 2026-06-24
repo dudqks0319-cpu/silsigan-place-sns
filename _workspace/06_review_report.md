@@ -90,8 +90,8 @@
 | 검증 항목 | 상태 | 비고 |
 | --- | --- | --- |
 | 아키텍처 문서 | 통과 | Cloudflare 전국 MVP 기준으로 갱신 |
-| API 명세 | 통과 | Worker route alias와 사진/댓글/랭킹 포함 |
-| DB 스키마 | 통과 | 원좌표 컬럼 없음, D1 migration/seed 작성, seed 2회 적용 멱등성 테스트 |
+| API 명세 | 통과 | Worker route alias, 사진/댓글/랭킹, `/api/reports` 현장 제보와 `/api/moderation/reports` 운영 신고 분리 포함 |
+| DB 스키마 | 통과 | 원좌표 컬럼 없음, D1 `place_events.source = field_report` 상태/검증 반경/TTL 저장, seed 2회 적용 멱등성 테스트 |
 | Wrangler 환경 분리 | 통과 | development/staging/production에 D1/R2/Images/KV/Durable Object binding 명시. 기본 development dry-run은 root D1/KV placeholder를 사용하는 local config sanity check이고 release evidence는 staging/production dry-run으로 제한 |
 | Cloudflare resource/external preflight | 부분 통과 | fixture 테스트는 concrete ID와 deployment URL 통과, placeholder ID와 missing/unsafe/duplicate URL 실패를 검증. 실제 config/env는 D1/KV resource binding이 통과하고, `cf:external-state`와 `cf:preflight`가 미설정 deployment URL 및 R2 미활성화를 출시 차단으로 분리 보고 |
 | Release state ledger | 부분 통과 | `docs/current-release-state.md`와 `pnpm release:status`가 로컬 상태와 외부 blocker를 분리. strict mode는 실제 외부 blocker 때문에 실패 |
@@ -100,7 +100,7 @@
 | Operator coordinate status | 통과 | `operator` 권한으로 좌표 미검증 seed를 검증/반려하고 공개 장소/랭킹 노출을 제어하는 D1 테스트 통과 |
 | Durable Object realtime | 통과 | place/region/global room deterministic routing, fanout polling, WebSocket broadcast, 프론트 place room 소비 경로, Pages browser place/region/global realtime room 요청 smoke 통과 |
 | 프론트 화면 | 통과 | 지도 fallback, bounds 기반 `/api/places?bbox=...` 재조회, Worker base 설정 시 장소 목록 `/api/places` Worker read path, 전국/지역/지도 화면 안 TOP 10 랭킹 패널과 랭킹 항목 상세 열기, 마커 클릭의 Worker click 이벤트 동기화, 상세 댓글 작성의 Worker comment 이벤트 동기화, 상세 버튼 클릭, 사진 업로드/미리보기/클릭 UI, realtime event strip smoke, 선택 지역 scoped fetch, 홈 피드 탭/알림 토글 smoke, `마이` 메뉴 섹션 이동 smoke, 관리자 신고 필터 탭/action smoke 확인 |
-| 도메인 테스트 | 통과 | 만료/신고/거리 구간/Cloudflare 정책 |
+| 도메인 테스트 | 통과 | 만료/신고/거리 구간/Cloudflare 정책, D1 현장 제보 coarse radius와 300m 밖 거부 |
 | 보안 게이트 | 부분 통과 | R2 EXIF 제거, Images binding 재인코딩, 로컬 로그/응답 redaction guard와 captured-log validator는 통과. Workers 플랫폼 tail 증적은 배포 전 재검증 |
 | Staging smoke harness | 통과 | `pnpm smoke:staging`은 Worker API base URL 없이는 실패하고, 읽기 API/공개 좌표/place-region-global realtime room/랭킹/댓글/사진/admin deny를 확인한다. mutation flag로 R2/Images 사진 완료/삭제/공개 목록 제외, 댓글 생성/작성자 삭제/공개 목록 제외, 장소 좋아요/취소를 수행한다. admin token이 있으면 장소 신고 생성, 운영자 open 큐 조회, rejected 처리, open 큐 정리, 전용 익명 사용자 임시 제한/차단 확인/해제/댓글 정리까지 수행한다. release evidence는 `--require-admin`으로 운영자 토큰 누락을 fail-fast 처리한다. 좌표 상태 smoke는 명시 opt-in 대상 장소/좌표가 있을 때만 수행한다 |
 | Release blocker collection | 통과 | `pnpm release:gate -- --collect-blockers`는 non-mutating 전용으로 첫 external failure 뒤에도 release status, URL preflight, external-state, read-only smoke를 계속 실행하고, missing deployment URL 4개, `cloudflare.r2.enabled`, staging API base URL, Pages URL blocker를 한 결과에서 확인한다. 최신 실행은 `resultCounts={pass:7,fail:5}`, `failedSteps=[release.status.strict, cloudflare.preflight, cloudflare.externalState, staging.api.smoke, pages.browser.smoke]`, `blockers=[deployment_url.*, staging.*.url, production.*.url, cloudflare.r2.enabled, BASE_URL_REQUIRED, PAGES_URL_REQUIRED]`를 상단 출력으로 요약하며, `--mutating`과 함께 쓰면 실행 전 실패한다 |
@@ -151,6 +151,7 @@
 - [x] 좌표 미검증 seed의 공개 지도/랭킹 제외 테스트 구현.
 - [x] 좌표 미검증 seed의 operator 검증/반려 API와 공개 지도/랭킹 노출 제어 테스트 구현.
 - [x] 댓글/사진/좋아요/신고 negative-path 테스트 구현.
+- [x] `/api/reports` 현장 제보의 D1 source/status/TTL/coarse radius 저장과 원좌표/사진 URL 비저장 테스트 구현.
 - [x] 민감 카테고리 경고와 신고 정책 문서화.
 - [x] 관공서 장소 지도 상세/현장 제보 작성 화면의 민감정보 경고 브라우저 smoke 확인.
 - [x] 지역/area 활성화 기준 운영 대시보드 표시와 도메인/store 테스트 구현.

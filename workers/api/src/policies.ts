@@ -223,7 +223,7 @@ export function rankRegionPlaces<TPlace extends Pick<PlaceRecord, "regionId" | "
     .slice(0, limit);
 }
 
-function distanceMeters(from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }): number {
+export function distanceMeters(from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }): number {
   const earthRadiusMeters = 6_371_000;
   const latitudeDelta = toRadians(to.latitude - from.latitude);
   const longitudeDelta = toRadians(to.longitude - from.longitude);

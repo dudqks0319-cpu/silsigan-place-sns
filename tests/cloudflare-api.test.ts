@@ -75,6 +75,24 @@ type PhotoCompleteData = {
   storageKey: string;
 };
 
+type FieldReportData = {
+  report: {
+    id: string;
+    placeId: string;
+    category: string;
+    crowdLevel: string;
+    lineStatus: string;
+    parkingStatus: string;
+    weatherFeel: string;
+    verifiedRadiusM: number | null;
+    createdAt: string;
+    expiresAt: string;
+  };
+  credits: Array<{ type: "verified_report" | "photo_report"; amount: number }>;
+  safetyWarning: string | null;
+  privacyNotice: string;
+};
+
 type ModerationAlertPayload = {
   type: "moderation.report.created";
   reportId: string;
@@ -2058,6 +2076,129 @@ test("D1 report creation sends a redacted moderation alert webhook", { skip: !sq
   }
 });
 
+test("D1 field reports store coarse realtime status without client coordinates", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const anonymousId = "anon_d1_field_reporter";
+    const response = await rawD1Post(db, "https://api.test/api/reports", anonymousId, {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      lineStatus: "short",
+      parkingStatus: "limited",
+      weatherFeel: "windy",
+      comment: "바람이 강하고 사람이 조금 많습니다.",
+      photoUrl: "https://images.example.test/gwangalli-status.webp",
+      clientLocation: {
+        latitude: 35.1532,
+        longitude: 129.1186,
+      },
+    });
+    const payload = (await response.json()) as SuccessPayload<FieldReportData>;
+    const serializedPayload = JSON.stringify(payload);
+
+    assert.equal(response.status, 201);
+    assert.equal(payload.meta?.storage, "d1");
+    assert.equal(payload.meta?.locationPolicy, "clientLocation-used-only-for-distance-and-not-stored");
+    assert.equal(payload.data.report.placeId, "busan-gwangalli");
+    assert.equal(payload.data.report.verifiedRadiusM, 50);
+    assert.deepEqual(payload.data.credits, [
+      { type: "verified_report", amount: 1 },
+      { type: "photo_report", amount: 1 },
+    ]);
+    assert.equal(serializedPayload.includes("35.1532"), false);
+    assert.equal(serializedPayload.includes("129.1186"), false);
+    assert.equal(serializedPayload.includes("images.example.test"), false);
+    assert.equal("clientLocation" in payload.data.report, false);
+    assert.equal("anonymousUserId" in payload.data.report, false);
+
+    const event = await db
+      .prepare(
+        `SELECT
+          id,
+          event_type AS eventType,
+          source,
+          crowd_level AS crowdLevel,
+          line_status AS lineStatus,
+          parking_status AS parkingStatus,
+          verified_radius_m AS verifiedRadiusM,
+          created_at AS createdAt,
+          expires_at AS expiresAt
+        FROM place_events
+        WHERE id = ?`,
+      )
+      .bind(payload.data.report.id)
+      .first<{
+        id: string;
+        eventType: string;
+        source: string;
+        crowdLevel: string;
+        lineStatus: string;
+        parkingStatus: string;
+        verifiedRadiusM: number;
+        createdAt: string;
+        expiresAt: string;
+      }>();
+    assert.ok(event);
+    assert.deepEqual(event, {
+      id: payload.data.report.id,
+      eventType: "report",
+      source: "field_report",
+      crowdLevel: "busy",
+      lineStatus: "short",
+      parkingStatus: "limited",
+      verifiedRadiusM: 50,
+      createdAt: event.createdAt,
+      expiresAt: event.expiresAt,
+    });
+    assert.equal(new Date(event.expiresAt).getTime() - new Date(event.createdAt).getTime(), 3 * 60 * 60 * 1000);
+
+    const hourlyAggregate = await db
+      .prepare(
+        `SELECT
+          report_count AS reportCount,
+          unique_user_count AS uniqueUserCount
+        FROM place_event_hourly
+        WHERE place_id = ?
+        ORDER BY hour_bucket DESC
+        LIMIT 1`,
+      )
+      .bind("busan-gwangalli")
+      .first<{ reportCount: number; uniqueUserCount: number }>();
+    assert.deepEqual(hourlyAggregate, { reportCount: 1, uniqueUserCount: 1 });
+
+    const ranking = await d1Get<SuccessPayload<Ranking[]>>(db, "https://api.test/api/rankings/regions/busan?limit=10", anonymousId);
+    const gwangalli = ranking.data.find((item) => item.placeId === "busan-gwangalli");
+    assert.equal(gwangalli?.score, 104);
+
+    const rejected = await rawD1Post(db, "https://api.test/api/reports", "anon_d1_field_far", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "normal",
+      lineStatus: "none",
+      parkingStatus: "available",
+      weatherFeel: "good",
+      clientLocation: {
+        latitude: 37.5665,
+        longitude: 126.978,
+      },
+    });
+    const rejectedPayload = (await rejected.json()) as FailurePayload;
+    const rejectedSerialized = JSON.stringify(rejectedPayload);
+
+    assert.equal(rejected.status, 400);
+    assert.equal(rejectedPayload.error.code, "LOCATION_NOT_VERIFIED");
+    assert.equal(rejectedSerialized.includes("37.5665"), false);
+    assert.equal(rejectedSerialized.includes("126.978"), false);
+
+    const eventCount = await db.prepare("SELECT COUNT(*) AS count FROM place_events WHERE place_id = ?").bind("busan-gwangalli").first<{ count: number }>();
+    assert.equal(eventCount?.count, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("D1 public live surfaces ignore expired three-hour place signals", { skip: !sqlite3Available() }, async () => {
   const { db, tempDir } = createSeededSqliteD1();
 
@@ -3650,7 +3791,9 @@ class ThrowingImagesBinding {
 }
 
 function arrayBufferForTestBytes(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
 }
 
 function jpegWithGpsExifSample(): Uint8Array {

@@ -3,11 +3,11 @@
 기준일: 2026-06-18
 범위: 무료 출시 기준의 Cloudflare Pages/Workers, D1, R2, KV 또는 Cache API 전환.
 
-출시 전 P0 항목은 모두 통과해야 한다. 2026-06-24 로컬 구현 기준선은 `node --check` for Worker and smoke scripts, `pnpm verify`, `pnpm test` 97 passed, `pnpm audit --audit-level critical`, `git diff --check`, 로컬 Pages report smoke, 직접 Worker ranking cache/enriched payload driver가 통과한 상태다.
+출시 전 P0 항목은 모두 통과해야 한다. 2026-06-24 현재 로컬 기준선은 `node --check workers/api/src/index.ts`, `pnpm verify`, `pnpm test` 98 passed, `pnpm audit --audit-level critical`, `git diff --check`가 통과한 상태다. Cloudflare staging/production URL과 R2 활성화 증적은 외부 blocker로 별도 남아 있다.
 
 ## P0 출시 차단 항목
 
-- [x] 현재 기준선에서 `pnpm test`가 97 passed 상태다.
+- [x] 현재 기준선에서 `pnpm test`가 98 passed 상태다.
 - [x] 현재 기준선에서 `pnpm typecheck`가 통과했다.
 - [x] 현재 기준선에서 `pnpm lint`가 통과했다.
 - [x] 현재 기준선에서 `pnpm build`가 통과했다.
@@ -153,6 +153,7 @@ Cloudflare 전환 추가 증적:
 - Wrangler environment dry-run 결과. 현재 로컬 기준선은 release gate가 `pnpm cf:dry-run:staging`, `pnpm cf:dry-run:production`으로 staging/production bundle과 concrete binding config를 검증한다. `pnpm cf:dry-run` 기본 development dry-run은 root Worker config의 local placeholder D1/KV ID를 보여주는 로컬 config sanity check이며, release evidence로 쓰지 않는다.
 - seed import dry-run과 apply 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `D1 core seed SQL is idempotent`로 seed 2회 적용을 검증한다.
 - D1 write path 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `Cloudflare Worker persists user actions and moderation state to D1`로 댓글/사진/좋아요/중복 신고/3회 자동 숨김/민감정보 1회 숨김/admin action 기록을 검증한다.
+- D1 field report 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `D1 field reports store coarse realtime status without client coordinates`로 `/api/reports` 현장 제보가 `place_events.source = field_report`, 상태 컬럼, `verified_radius_m`, 3시간 TTL, hourly `report_count`, 랭킹 live score를 기록하고, `clientLocation` 원좌표와 `photoUrl` 원문을 응답과 D1 이벤트에 저장하지 않으며, 300m 밖 제보가 `LOCATION_NOT_VERIFIED`로 거부되는지 검증한다.
 - 사용자 제한 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `admin user restrictions block public D1 writes until unrestricted`로 `admin` 권한만 익명 사용자 제한/해제를 수행하고, 제한 상태에서 댓글 작성, 사진 upload-url/complete, 장소 좋아요, 신고 생성이 `USER_RESTRICTED`로 차단되며 raw 세션 ID와 제한 사유가 public 오류 응답에 노출되지 않는지 검증한다.
 - 신고 큐 알림 결과. 현재 로컬 기준선은 `tests/cloudflare-api.test.ts`의 `D1 report creation sends a redacted moderation alert webhook`으로 신규 open 신고가 `MODERATION_ALERT_WEBHOOK_URL`에 비동기 전송되고, alert payload가 신고자 익명 ID, note 원문, 이메일, 전화번호, 원본 파일명을 포함하지 않는지 검증한다.
 - Next 관리자 Worker 운영 proxy 결과. 현재 로컬 기준선은 `tests/domain.test.ts`의 `worker admin moderation helper proxies reports without leaking raw reporter fields`, `worker admin moderation helper prefers dedicated Worker token over staging smoke token`, `worker admin moderation helper posts report actions through server token`, `worker admin moderation helper is deny-by-default without server token`, `admin worker reports route requires Next admin auth before proxying`, `admin worker reports route proxies with server token and returns minimal report payload`, `admin worker operations require Next admin auth before proxying`, `admin worker operations proxy coordinate and user restriction actions with server token`으로 Next server proxy가 `SILSIGAN_WORKER_ADMIN_TOKEN`을 staging smoke token보다 우선 사용하고, Worker 운영 토큰을 서버에서만 쓰며, raw 신고자 ID/note/운영 사유 원문을 UI payload에서 제외하고, 토큰 미설정 또는 Next 관리자 인증 누락 시 deny-by-default인지 검증한다.
