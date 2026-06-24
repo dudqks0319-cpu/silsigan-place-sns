@@ -22,6 +22,7 @@ const requiredSmokeCheckNames = [
   "rankings.visible",
   "rankings.detail",
   "place.detail",
+  "worker.placesSearchRequest",
   "worker.realtimePlaceRoom",
   "worker.realtimeRegionRoom",
   "worker.realtimeGlobalRoom",
@@ -313,7 +314,10 @@ async function startMockWorker(port) {
     }
 
     if (request.method === "GET" && url.pathname === "/api/places") {
-      send(200, success([workerPlace()]));
+      const place = workerPlace();
+      const query = url.searchParams.get("q")?.trim().toLocaleLowerCase("ko-KR") ?? "";
+      const matchesQuery = !query || [place.name, place.address, place.category, place.regionId].join(" ").toLocaleLowerCase("ko-KR").includes(query);
+      send(200, success(matchesQuery ? [place] : []));
       return;
     }
 

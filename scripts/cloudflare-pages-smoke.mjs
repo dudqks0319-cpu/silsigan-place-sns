@@ -284,6 +284,14 @@ async function runBrowserSmoke(client, config) {
   if (config.apiBaseUrl) {
     await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/places"), "worker.placesRequest", config.timeoutMs);
     record(config.checks, "worker.placesRequest", "pass", "프론트 장소 목록이 Worker API base로 요청됐습니다.", { path: "/api/places" });
+    const placeSearchQuery = config.placeName.slice(0, 3);
+    await fillSearchInput(client, "장소 검색", placeSearchQuery);
+    await waitFor(
+      () => hasApiRequestWithSearchParam(networkEvents, config.apiBaseUrl, "/api/places", "GET", "q", placeSearchQuery),
+      "worker.placesSearchRequest",
+      config.timeoutMs,
+    );
+    record(config.checks, "worker.placesSearchRequest", "pass", "지도 검색어가 Worker 장소 목록 q 파라미터로 전달됐습니다.", { q: placeSearchQuery });
     await waitFor(
       () => hasApiRequestWithSearchParam(networkEvents, config.apiBaseUrl, "/api/photos", "GET", "placeId", config.placeId),
       "worker.photosPlaceScope",
@@ -812,6 +820,25 @@ async function fillTextarea(client, label, value) {
   );
   if (result !== true) {
     throw new SmokeError("TEXTAREA_NOT_FOUND", `${label} 입력창을 찾지 못했습니다.`);
+  }
+}
+
+async function fillSearchInput(client, label, value) {
+  const result = await evaluate(
+    client,
+    `
+      (() => {
+        const input = document.querySelector(${JSON.stringify(`input[aria-label="${label}"]`)});
+        if (!(input instanceof HTMLInputElement)) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(input, ${JSON.stringify(value)});
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${JSON.stringify(value)}, inputType: 'insertText' }));
+        return true;
+      })()
+    `,
+  );
+  if (result !== true) {
+    throw new SmokeError("INPUT_NOT_FOUND", `${label} 입력창을 찾지 못했습니다.`);
   }
 }
 

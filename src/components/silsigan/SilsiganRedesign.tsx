@@ -496,8 +496,10 @@ export default function SilsiganRedesign() {
   const [pendingModerationTarget, setPendingModerationTarget] = useState<PendingModerationTarget | null>(null);
   const [activeRegion, setActiveRegion] = useState<RegionTabId>("nationwide");
   const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
+  const [mapSearchQuery, setMapSearchQuery] = useState("");
   const mapBoundsRef = useRef<MapBounds | null>(null);
   const lastMapBoundsFetchKeyRef = useRef("");
+  const previousMapSearchQueryRef = useRef("");
   const [mapPreviewPlaceId, setMapPreviewPlaceId] = useState("");
   const [mapLocationPermission, setMapLocationPermission] = useState<LocationPermissionState>("idle");
   const [mapCurrentLocation, setMapCurrentLocation] = useState<UiLocation | null>(null);
@@ -507,6 +509,7 @@ export default function SilsiganRedesign() {
   const cloudflareApiConfigured = useMemo(() => isCloudflareApiConfigured(), []);
   const activeDataRegionId = useMemo(() => normalizeRegionScope(activeRegion), [activeRegion]);
   const mapBoundsKey = mapBounds ? mapBoundsToBboxParam(mapBounds) : "";
+  const normalizedMapSearchQuery = useMemo(() => normalizePlaceSearchQuery(mapSearchQuery) ?? "", [mapSearchQuery]);
 
   const rankedPosts = useMemo(
     () =>
@@ -590,13 +593,16 @@ export default function SilsiganRedesign() {
     return challengeTag ? [challengeTag, ...baseTags.filter((tag) => tag !== challengeTag)].slice(0, 5) : baseTags;
   }, [pickedCrowd, pickedLine, pickedParking, pickedWeather, selectedHashtagName, selectedPlace]);
 
-  const loadData = useCallback(async (options: { silent?: boolean; bounds?: MapBounds | null } = {}) => {
-    setLoading(true);
+  const loadData = useCallback(async (options: { silent?: boolean; bounds?: MapBounds | null; query?: string | null } = {}) => {
+    if (!options.silent) {
+      setLoading(true);
+    }
     try {
       const listScope = { regionId: activeDataRegionId, limit: 100 };
       const placesScope = {
         ...listScope,
         bbox: options.bounds ? mapBoundsToBboxParam(options.bounds) : undefined,
+        q: normalizePlaceSearchQuery(options.query),
       };
       const placesRequest: Promise<ApiPlaceInput[]> = cloudflareApiConfigured
         ? fetchJson<WorkerPlace[]>(cloudflareApiUrl(buildScopedApiPath("/api/places", placesScope))).then(workerPlacesToAppPlaces)
@@ -632,7 +638,9 @@ export default function SilsiganRedesign() {
         setToast(error instanceof Error ? error.message : "실시간 데이터를 불러오지 못했습니다.");
       }
     } finally {
-      setLoading(false);
+      if (!options.silent) {
+        setLoading(false);
+      }
     }
   }, [activeDataRegionId, cloudflareApiConfigured]);
 
@@ -652,11 +660,15 @@ export default function SilsiganRedesign() {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void loadData({ silent: true, bounds: activeView === "map" ? mapBoundsRef.current : null });
+      void loadData({
+        silent: true,
+        bounds: activeView === "map" ? mapBoundsRef.current : null,
+        query: activeView === "map" ? normalizedMapSearchQuery : null,
+      });
     }, 30_000);
 
     return () => window.clearInterval(timer);
-  }, [activeView, loadData]);
+  }, [activeView, loadData, normalizedMapSearchQuery]);
 
   useEffect(() => {
     mapBoundsRef.current = mapBounds;
@@ -667,18 +679,40 @@ export default function SilsiganRedesign() {
       return;
     }
 
-    const fetchKey = `${activeDataRegionId ?? "nationwide"}:${mapBoundsKey}`;
+    const fetchKey = `${activeDataRegionId ?? "nationwide"}:${mapBoundsKey}:${normalizedMapSearchQuery}`;
     if (lastMapBoundsFetchKeyRef.current === fetchKey) {
       return;
     }
 
     const timer = window.setTimeout(() => {
       lastMapBoundsFetchKeyRef.current = fetchKey;
-      void loadData({ silent: true, bounds: mapBounds });
+      void loadData({ silent: true, bounds: mapBounds, query: normalizedMapSearchQuery });
     }, 450);
 
     return () => window.clearTimeout(timer);
-  }, [activeDataRegionId, activeView, loadData, mapBounds, mapBoundsKey]);
+  }, [activeDataRegionId, activeView, loadData, mapBounds, mapBoundsKey, normalizedMapSearchQuery]);
+
+  useEffect(() => {
+    if (activeView !== "map") {
+      return;
+    }
+
+    if (previousMapSearchQueryRef.current === normalizedMapSearchQuery) {
+      return;
+    }
+
+    previousMapSearchQueryRef.current = normalizedMapSearchQuery;
+    lastMapBoundsFetchKeyRef.current = "";
+    if (mapBoundsRef.current) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void loadData({ silent: true, bounds: mapBoundsRef.current, query: normalizedMapSearchQuery });
+    }, 450);
+
+    return () => window.clearTimeout(timer);
+  }, [activeView, loadData, normalizedMapSearchQuery]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1520,6 +1554,7 @@ export default function SilsiganRedesign() {
                     mapBounds={mapBounds}
                     previewPlace={mapPreviewPlace}
                     realtimeEventsByPlaceId={realtimeEventsByPlaceId}
+                    searchQuery={mapSearchQuery}
                     onFilterChange={setActiveFilter}
                     onPreviewPlace={previewMapPlace}
                     onClosePreview={closeMapPreview}
@@ -1532,6 +1567,7 @@ export default function SilsiganRedesign() {
                     onRegionChange={changeActiveRegion}
                     onReport={startReportForPlace}
                     onReportPlace={reportMapPlace}
+                    onSearchQueryChange={setMapSearchQuery}
                     onPhotoDelete={deletePlacePhoto}
                     onPhotoClick={clickPlacePhoto}
                     onPhotoUpload={uploadPlacePhoto}
@@ -1966,12 +2002,14 @@ function MapScreen({
   onRegionChange,
   onReportPhoto,
   onReportPlace,
+  onSearchQueryChange,
   onToast,
   places,
   posts,
   previewPlace,
   realtimeEventsByPlaceId,
   reports,
+  searchQuery,
   workerCommentsByPlaceId,
   workerPhotos,
 }: {
@@ -1999,18 +2037,19 @@ function MapScreen({
   onRegionChange: (region: RegionTabId) => void;
   onReportPhoto: (place: Place, photo: PlacePhoto) => void;
   onReportPlace: (place: Place) => void;
+  onSearchQueryChange: (query: string) => void;
   onToast: (message: string) => void;
   places: Place[];
   posts: PublicPost[];
   previewPlace: Place | null;
   realtimeEventsByPlaceId: Record<string, CloudflareRealtimeEvent[]>;
   reports: Report[];
+  searchQuery: string;
   workerCommentsByPlaceId: Record<string, PlaceComment[]>;
   workerPhotos: WorkerPhoto[];
 }) {
   const [trafficEnabled, setTrafficEnabled] = useState(false);
   const [requeryHintVisible, setRequeryHintVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const filteredPlaces = searchPlaces(filterPlaces(filterPlacesByRegion(places, activeRegion), activeFilter), searchQuery);
   const mapAreaPlaces = mapBounds ? filteredPlaces.filter((place) => isPlaceInBounds(place, mapBounds)) : filteredPlaces;
   const nationwideTop = rankPlaces(searchPlaces(places, searchQuery));
@@ -2082,7 +2121,7 @@ function MapScreen({
             placeholder="장소명 검색"
             type="search"
             value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            onChange={(event) => onSearchQueryChange(event.target.value)}
           />
         </label>
         <button className={styles.filterButton} type="button" onClick={cycleFilter} aria-label={`지도 필터 순환: ${activeFilter}`}>
@@ -3415,6 +3454,12 @@ function searchPlaces(places: Place[], query: string) {
       .toLocaleLowerCase("ko-KR")
       .includes(normalizedQuery),
   );
+}
+
+function normalizePlaceSearchQuery(query: string | null | undefined) {
+  const normalizedQuery = query?.trim() ?? "";
+
+  return normalizedQuery.length > 0 ? normalizedQuery : undefined;
 }
 
 function filterPlacesByRegion(places: Place[], region: RegionTabId) {

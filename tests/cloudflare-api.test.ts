@@ -485,6 +485,7 @@ test("Cloudflare Pages browser smoke helpers parse args and redact URLs", () => 
 test("Cloudflare Pages browser smoke matches Worker API requests by parsed path and query", () => {
   const events = [
     { type: "request", method: "GET", url: "https://api.example.test/api/places?regionId=busan&limit=100" },
+    { type: "request", method: "GET", url: "https://api.example.test/api/places?q=%EA%B4%91%EC%95%88%EB%A6%AC&limit=100" },
     { type: "request", method: "GET", url: "https://api.example.test/api/photos?placeId=busan-gwangalli&limit=6" },
     { type: "request", method: "GET", url: "https://api.example.test/api/realtime/place/busan-gwangalli" },
     { type: "request", method: "GET", url: "https://api.example.test/api/realtime/region/busan" },
@@ -497,6 +498,7 @@ test("Cloudflare Pages browser smoke matches Worker API requests by parsed path 
   assert.equal(pagesSmoke.hasApiRequest(events, "https://api.example.test", "/api/places"), true);
   assert.equal(pagesSmoke.hasApiRequest(events, "https://api.example.test", "/api/places/busan-gwangalli"), false);
   assert.equal(pagesSmoke.hasApiRequest(events, "https://api.example.test", "/api/places/busan-gwangalli/click", "POST"), true);
+  assert.equal(pagesSmoke.hasApiRequestWithSearchParam(events, "https://api.example.test", "/api/places", "GET", "q", "광안리"), true);
   assert.equal(pagesSmoke.hasApiRequestWithSearchParam(events, "https://api.example.test", "/api/photos", "GET", "placeId", "busan-gwangalli"), true);
   assert.equal(pagesSmoke.hasApiRequestWithSearchParam(events, "https://api.example.test", "/api/photos", "GET", "placeId", "seoul-yeouido"), false);
   assert.equal(pagesSmoke.hasApiRequest(events, "https://api.example.test", "/api/realtime/place/busan-gwangalli"), true);
@@ -1398,6 +1400,18 @@ test("GET /api/places applies bbox and limit query policy", async () => {
   assert.equal(payload.data.length, 1);
   assert.equal(payload.data[0]?.id, "busan-gwangalli");
   assert.equal(payload.meta?.bboxApplied, true);
+});
+
+test("GET /api/places applies search query policy", async () => {
+  const response = await worker.handleRequest(new Request("https://api.test/api/places?q=%EA%B4%91%EC%95%88%EB%A6%AC&limit=10"));
+  const payload = (await response.json()) as SuccessPayload<Place[]>;
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.success, true);
+  assert.deepEqual(
+    payload.data.map((place) => place.id),
+    ["busan-gwangalli"],
+  );
 });
 
 test("GET /api/places applies radius query without echoing client coordinates", async () => {
