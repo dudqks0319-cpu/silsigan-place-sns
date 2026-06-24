@@ -32,6 +32,7 @@ const requiredSmokeCheckNames = [
   "reports.commentCreate",
   "reports.photoCreate",
   "reports.create",
+  "fieldReports.create",
 ];
 const tinyJpegBase64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
@@ -103,6 +104,9 @@ async function main() {
     if (missingTargetTypes.length > 0) {
       throw new LocalSmokeError("REPORT_TARGET_TYPES_MISSING", `Missing report target types: ${missingTargetTypes.join(", ")}`);
     }
+    if (worker.fieldReportCount() < 1) {
+      throw new LocalSmokeError("FIELD_REPORT_MISSING", "No field report was created through /api/reports.");
+    }
     const networkArtifactRedaction = await validateNetworkArtifactRedaction(smoke.artifacts?.network, {
       requiredReportTargetTypes: requiredTargetTypes,
     });
@@ -115,6 +119,7 @@ async function main() {
       pagesUrl,
       apiBaseUrl: worker.url,
       reportTargetTypes,
+      fieldReportCount: worker.fieldReportCount(),
       networkArtifactRedaction,
       smokeCheckIntegrity,
       artifacts: smoke.artifacts,
@@ -271,6 +276,7 @@ async function execNodeScript(scriptPath, args) {
 async function startMockWorker(port) {
   const state = {
     comments: [],
+    fieldReports: [],
     likeCount: 0,
     photoClickCount: 3,
     reportTargetTypes: [],
@@ -304,6 +310,38 @@ async function startMockWorker(port) {
 
     if (request.method === "GET" && url.pathname === "/api/places") {
       send(200, success([workerPlace()]));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/reports") {
+      send(200, success(state.fieldReports));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/reports") {
+      const body = await readJsonBody(request);
+      const now = new Date();
+      const report = {
+        id: `field-report-local-${state.fieldReports.length + 1}`,
+        placeId: String(body.placeId ?? DEFAULT_PLACE_ID),
+        category: fieldReportCategory(body.category),
+        crowdLevel: fieldReportValue(body.crowdLevel, ["quiet", "normal", "busy", "packed"], "busy"),
+        lineStatus: fieldReportValue(body.lineStatus, ["none", "short", "medium", "long"], "short"),
+        parkingStatus: fieldReportValue(body.parkingStatus, ["available", "limited", "full", "unknown"], "limited"),
+        verifiedRadiusM: null,
+        createdAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString(),
+      };
+      state.fieldReports.unshift(report);
+      send(
+        201,
+        success({
+          report,
+          credits: [{ reason: "status_report", amount: 1 }],
+          safetyWarning: null,
+          privacyNotice: "정확 좌표와 원본 파일명은 저장하지 않습니다.",
+        }),
+      );
       return;
     }
 
@@ -436,9 +474,19 @@ async function startMockWorker(port) {
 
   return {
     close: () => new Promise((resolve) => server.close(resolve)),
+    fieldReportCount: () => state.fieldReports.length,
     reportTargetTypes: state.reportTargetTypes,
     url: `http://127.0.0.1:${address.port}`,
   };
+}
+
+function fieldReportCategory(value) {
+  const categories = ["tourism", "festival", "restaurant_cafe", "hospital", "public_office", "parking"];
+  return fieldReportValue(value, categories, "tourism");
+}
+
+function fieldReportValue(value, allowed, fallback) {
+  return allowed.includes(value) ? value : fallback;
 }
 
 function workerPlace() {

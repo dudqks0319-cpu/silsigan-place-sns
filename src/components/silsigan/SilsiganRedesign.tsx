@@ -139,14 +139,21 @@ type PublicReport = {
   lineStatus: LineStatus;
   parkingStatus: ParkingStatus;
   weatherFeel?: WeatherFeel;
-  comment: string | null;
-  photoUrl: string | null;
+  comment?: string | null;
+  photoUrl?: string | null;
   verifiedRadiusM: 50 | 150 | 300 | null;
-  locationVerified: boolean;
+  locationVerified?: boolean;
   createdAt: string;
   expiresAt: string;
-  flagCount: number;
-  hiddenAt: string | null;
+  flagCount?: number;
+  hiddenAt?: string | null;
+};
+
+type FieldReportSubmitResult = {
+  report: PublicReport;
+  credits: { amount: number }[];
+  safetyWarning: string | null;
+  privacyNotice: string;
 };
 
 type PublicQuestion = {
@@ -582,9 +589,12 @@ export default function SilsiganRedesign() {
       const placesRequest: Promise<ApiPlaceInput[]> = cloudflareApiConfigured
         ? fetchJson<WorkerPlace[]>(cloudflareApiUrl(buildScopedApiPath("/api/places", placesScope))).then(workerPlacesToAppPlaces)
         : fetchJson<ApiPlace[]>(buildScopedApiPath("/api/places", placesScope));
+      const reportsRequest = cloudflareApiConfigured
+        ? fetchJson<PublicReport[]>(cloudflareApiUrl(buildScopedApiPath("/api/reports", listScope)))
+        : fetchJson<PublicReport[]>(buildScopedApiPath("/api/reports", listScope));
       const [apiPlaces, apiReports, apiPosts, apiHashtags, apiQuestions, apiMyQuestions] = await Promise.all([
         placesRequest,
-        fetchJson<PublicReport[]>(buildScopedApiPath("/api/reports", listScope)),
+        reportsRequest,
         fetchJson<PublicPost[]>(buildScopedApiPath("/api/posts", listScope)),
         fetchJson<PublicHashtag[]>("/api/hashtags"),
         fetchJson<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope)),
@@ -982,14 +992,36 @@ export default function SilsiganRedesign() {
         hashtagNames: recommendedTags,
         ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
       };
-      const result = await fetchJson<{ post: PublicPost; credits: { amount: number }[] }>("/api/posts", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
-      const badge = result.post.locationVerified ? "현장 인증" : "상태 제보";
-      trackEvent("submit_post", { placeId: selectedPlace.id, locationVerified: result.post.locationVerified });
-      setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}`);
+
+      if (cloudflareApiConfigured) {
+        const result = await fetchJson<FieldReportSubmitResult>(cloudflareApiUrl("/api/reports"), {
+          method: "POST",
+          body: JSON.stringify({
+            placeId: payload.placeId,
+            category: selectedPlace.category,
+            crowdLevel: payload.crowdLevel,
+            lineStatus: payload.lineStatus,
+            parkingStatus: payload.parkingStatus,
+            weatherFeel: payload.weatherFeel,
+            comment: payload.caption,
+            ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
+          }),
+        });
+        const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
+        const badge = result.report.verifiedRadiusM ? "현장 인증" : "상태 제보";
+        const safetyNotice = result.safetyWarning ? ` · ${result.safetyWarning}` : "";
+        trackEvent("submit_report", { placeId: selectedPlace.id, locationVerified: Boolean(result.report.verifiedRadiusM) });
+        setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}${safetyNotice}`);
+      } else {
+        const result = await fetchJson<{ post: PublicPost; credits: { amount: number }[] }>("/api/posts", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
+        const badge = result.post.locationVerified ? "현장 인증" : "상태 제보";
+        trackEvent("submit_post", { placeId: selectedPlace.id, locationVerified: result.post.locationVerified });
+        setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}`);
+      }
       setReportText("");
       setLocationVerificationStatus("idle");
       setVerifiedLocation(null);
@@ -3235,7 +3267,7 @@ function mapReports(reports: PublicReport[], apiPlaces: ApiPlace[]): Report[] {
         verified: Boolean(report.verifiedRadiusM),
         hasPhoto: Boolean(report.photoUrl),
         createdAt: report.createdAt,
-        hiddenAt: report.hiddenAt,
+        hiddenAt: report.hiddenAt ?? null,
         crowdLevel: report.crowdLevel,
         lineStatus: report.lineStatus,
         parkingStatus: report.parkingStatus,

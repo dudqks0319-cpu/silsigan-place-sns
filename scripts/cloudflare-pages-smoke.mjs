@@ -234,6 +234,9 @@ async function runBrowserSmoke(client, config) {
     if (reportTargetType) {
       requestEvent.reportTargetType = reportTargetType;
     }
+    if (isFieldReportRequest(event.request?.url, event.request?.method)) {
+      requestEvent.fieldReport = true;
+    }
     networkEvents.push(requestEvent);
   });
   client.on("Network.responseReceived", (event) => {
@@ -395,6 +398,7 @@ async function runMutatingBrowserChecks(client, config, networkEvents) {
     }
 
     record(config.checks, "reports.create", "pass", "장소/댓글/사진 신고 UI의 Worker API POST 경로를 확인했습니다.");
+    await createFieldReportFromBrowser(client, config, networkEvents);
   } else {
     record(config.checks, "reports.create", "skip", "--report 없이 실제 신고 생성은 실행하지 않습니다.");
   }
@@ -854,6 +858,40 @@ async function clickModalReason(client, text) {
   });
 }
 
+async function createFieldReportFromBrowser(client, config, networkEvents) {
+  const openedFromSheet = await clickHitTestedButton(client, {
+    ariaIncludes: "현장 제보 작성",
+  });
+  if (openedFromSheet !== true) {
+    await clickHitTestedTextButton(client, "제보", { exact: true });
+  }
+
+  await waitForEvaluate(client, `document.body.innerText.includes('현장 제보')`, "fieldReports.form", config.timeoutMs);
+  await fillTextareaById(client, "reportText", `browser field report ${new Date().toISOString()}`);
+  await clickHitTestedTextButton(client, "제보 등록하기");
+  await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/reports", "POST"), "fieldReports.create", config.timeoutMs);
+  record(config.checks, "fieldReports.create", "pass", "상태 제보 작성 UI가 Worker /api/reports로 POST 됐습니다.");
+}
+
+async function fillTextareaById(client, id, value) {
+  const result = await evaluate(
+    client,
+    `
+      (() => {
+        const textarea = document.querySelector(${JSON.stringify(`textarea#${id}`)});
+        if (!(textarea instanceof HTMLTextAreaElement)) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+        setter?.call(textarea, ${JSON.stringify(value)});
+        textarea.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${JSON.stringify(value)}, inputType: 'insertText' }));
+        return true;
+      })()
+    `,
+  );
+  if (result !== true) {
+    throw new SmokeError("TEXTAREA_NOT_FOUND", `${id} 입력창을 찾지 못했습니다.`);
+  }
+}
+
 async function waitForReportDialogOpen(client, timeoutMs) {
   await waitForEvaluate(client, `Boolean(document.querySelector('[role="dialog"][aria-label="신고 이유 선택"]'))`, "report.dialogOpen", timeoutMs);
 }
@@ -968,6 +1006,18 @@ function moderationReportTargetType(rawUrl, method, postData) {
     return targetType === "place" || targetType === "comment" || targetType === "photo" ? targetType : null;
   } catch {
     return null;
+  }
+}
+
+function isFieldReportRequest(rawUrl, method) {
+  if (method !== "POST" || !rawUrl) {
+    return false;
+  }
+
+  try {
+    return new URL(rawUrl).pathname === "/api/reports";
+  } catch {
+    return false;
   }
 }
 
