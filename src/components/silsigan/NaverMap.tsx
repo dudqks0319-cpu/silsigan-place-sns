@@ -236,6 +236,7 @@ export function NaverMap<TPlace extends MapPlace>({
     };
     renderCheckTimer = window.setTimeout(verifyMapRender, naverMapRenderCheckIntervalMs);
 
+    const markerListeners: Array<{ remove?: () => void } | void> = [];
     const markers = placesForMap.map((place) => {
       const markerLabel = markerLabelForPlace(place);
       const markerOffset = markerVisualOffsetForPlace(place, placesForMap);
@@ -250,6 +251,9 @@ export function NaverMap<TPlace extends MapPlace>({
           anchor: new maps.Point(48 - markerOffset.x, 19 - markerOffset.y),
         },
       });
+      markerListeners.push(maps.Event.addListener(marker, "click", () => {
+        onSelectPlaceRef.current(place);
+      }));
 
       return marker;
     });
@@ -272,6 +276,9 @@ export function NaverMap<TPlace extends MapPlace>({
       window.clearTimeout(renderCheckTimer);
       mapElement.removeEventListener("click", selectPlaceFromMarkerEvent);
       listeners.forEach((listener) => {
+        safeRemoveListener(listener);
+      });
+      markerListeners.forEach((listener) => {
         safeRemoveListener(listener);
       });
       safeSetMap(trafficLayer, null);
@@ -316,10 +323,16 @@ export function NaverMap<TPlace extends MapPlace>({
         aria-busy={!mapHealthy}
       />
       {!mapHealthy && (
-        <div className="naver-map__checking-status" aria-live="polite">
-          <strong>{fallbackStatusTitle({ empty: false, failureReason: null, loading: true })}</strong>
-          <span>{fallbackStatusBody({ empty: false, failureReason: null, loading: true })}</span>
-        </div>
+        <FallbackMap
+          currentLocation={currentLocation}
+          empty={false}
+          failureReason={null}
+          loading
+          overlay
+          places={visiblePlaces}
+          onMapInteraction={onMapInteraction}
+          onSelectPlace={onSelectPlace}
+        />
       )}
     </div>
   );
@@ -427,7 +440,7 @@ function hasKnownNaverMapFailure(mapElement: HTMLElement) {
 }
 
 function hasLoadedNaverMapVisual(mapElement: HTMLElement) {
-  const hasHealthyRasterTile = Array.from(mapElement.querySelectorAll("img")).some((image) => {
+  return Array.from(mapElement.querySelectorAll("img")).some((image) => {
     const source = image.currentSrc || image.src;
 
     return (
@@ -436,23 +449,6 @@ function hasLoadedNaverMapVisual(mapElement: HTMLElement) {
       image.complete &&
       image.naturalWidth > 8 &&
       image.naturalHeight > 8
-    );
-  });
-
-  if (hasHealthyRasterTile) {
-    return true;
-  }
-
-  return Array.from(mapElement.children).some((child) => {
-    const element = child as HTMLElement;
-    const box = element.getBoundingClientRect();
-    const className = String(element.className || "");
-
-    return (
-      box.width > 32 &&
-      box.height > 32 &&
-      !className.includes("naver-marker") &&
-      !className.includes("naver-user-marker")
     );
   });
 }

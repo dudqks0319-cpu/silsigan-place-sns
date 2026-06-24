@@ -138,7 +138,7 @@ type PublicReport = {
   crowdLevel: CrowdLevel;
   lineStatus: LineStatus;
   parkingStatus: ParkingStatus;
-  weatherFeel: WeatherFeel;
+  weatherFeel?: WeatherFeel;
   comment: string | null;
   photoUrl: string | null;
   verifiedRadiusM: 50 | 150 | 300 | null;
@@ -3223,6 +3223,7 @@ function mapReports(reports: PublicReport[], apiPlaces: ApiPlace[]): Report[] {
     .map((report) => {
       const place = apiPlaces.find((candidate) => candidate.id === report.placeId);
       const tone = toneFromStatus(report.crowdLevel, report.parkingStatus);
+      const weatherFeel = report.weatherFeel ?? "good";
 
       return {
         id: report.id,
@@ -3238,8 +3239,8 @@ function mapReports(reports: PublicReport[], apiPlaces: ApiPlace[]): Report[] {
         crowdLevel: report.crowdLevel,
         lineStatus: report.lineStatus,
         parkingStatus: report.parkingStatus,
-        weatherFeel: report.weatherFeel,
-      } satisfies Report & Pick<PublicReport, "crowdLevel" | "lineStatus" | "parkingStatus" | "weatherFeel">;
+        weatherFeel,
+      } satisfies Report & Pick<PublicReport, "crowdLevel" | "lineStatus" | "parkingStatus">;
     });
 }
 
