@@ -13,6 +13,7 @@ export type SilsiganEventName =
   | "submit_post"
   | "submit_report"
   | "like_place"
+  | "like_comment"
   | "create_comment"
   | "click_photo"
   | "upload_photo"

@@ -31,6 +31,7 @@ export function PlaceDetailSheet({
   comments,
   liked,
   onClose,
+  onCommentLike,
   onLike,
   onCommentSubmit,
   onPhotoClick,
@@ -49,6 +50,7 @@ export function PlaceDetailSheet({
   comments: PlaceComment[];
   liked: boolean;
   onClose: () => void;
+  onCommentLike: (comment: PlaceComment) => Promise<void>;
   onLike: () => void;
   onCommentSubmit: (body: string) => Promise<void>;
   onPhotoClick: (photo: PlacePhoto) => Promise<void>;
@@ -166,7 +168,7 @@ export function PlaceDetailSheet({
           </div>
           <span>{trimmedComment.length}/300</span>
         </form>
-        <CommentFeed comments={comments} onReportComment={onReportComment} />
+        <CommentFeed comments={comments} onLikeComment={onCommentLike} onReportComment={onReportComment} />
       </section>
 
       <section className={styles.detailSection}>

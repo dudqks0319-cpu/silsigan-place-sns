@@ -360,6 +360,9 @@ async function runMutatingBrowserChecks(client, config, networkEvents) {
   await clickSubmitNearTextarea(client, `${config.placeName} 댓글 작성`);
   await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/comments", "POST"), "comments.create", config.timeoutMs);
   record(config.checks, "comments.create", "pass", "장소 댓글 작성 UI가 Worker API로 POST 됐습니다.");
+  await waitFor(() => clickFirstCommentLike(client), "comments.likeButton", config.timeoutMs);
+  await waitFor(() => hasApiCommentLikeRequest(networkEvents, config.apiBaseUrl), "comments.like", config.timeoutMs);
+  record(config.checks, "comments.like", "pass", "댓글 도움 UI가 Worker API로 POST 됐습니다.");
 
   const clickedPhoto = await clickFirstPhoto(client);
   if (clickedPhoto) {
@@ -845,6 +848,13 @@ async function clickFirstCommentReport(client) {
   return result === true;
 }
 
+async function clickFirstCommentLike(client) {
+  const result = await clickHitTestedButton(client, {
+    ariaIncludes: "댓글 도움돼요",
+  });
+  return result === true;
+}
+
 async function clickFirstPhotoReport(client) {
   const result = await clickHitTestedButton(client, {
     ariaIncludes: "사진 신고",
@@ -989,6 +999,14 @@ export function hasApiReportRequest(events, apiBaseUrl, targetType) {
   return events.some((event) => {
     const url = matchingApiRequestUrl(event, apiBaseUrl, "/api/moderation/reports", "POST");
     return Boolean(url && event.reportTargetType === targetType);
+  });
+}
+
+export function hasApiCommentLikeRequest(events, apiBaseUrl) {
+  const expected = new URL("/api/comments/", apiBaseUrl);
+  return events.some((event) => {
+    const url = matchingApiRequestOrigin(event, expected.origin, "POST");
+    return Boolean(url && /^\/api\/comments\/[^/]+\/like$/.test(url.pathname));
   });
 }
 

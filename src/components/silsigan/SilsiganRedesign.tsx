@@ -251,6 +251,12 @@ type PlaceLikeResult = {
   deleted?: boolean;
 };
 
+type CommentLikeResult = {
+  commentId: string;
+  likeCount: number;
+  created: boolean;
+};
+
 type PlaceClickResult = {
   placeId: string;
   clickCount: number;
@@ -1170,6 +1176,45 @@ export default function SilsiganRedesign() {
     }
   };
 
+  const likePlaceComment = async (place: Place, comment: PlaceComment) => {
+    const workerCommentId = comment.workerCommentId;
+    if (!workerCommentId) {
+      return;
+    }
+
+    trackEvent("like_comment", { placeId: place.id, commentId: workerCommentId });
+
+    if (!cloudflareApiConfigured) {
+      const message = "댓글 도움은 Worker API base 설정 후 반영됩니다.";
+      setToast(message);
+      throw new Error(message);
+    }
+
+    try {
+      const result = await fetchJson<CommentLikeResult>(cloudflareApiUrl(`/api/comments/${encodeURIComponent(workerCommentId)}/like`), {
+        method: "POST",
+      });
+      setWorkerCommentsByPlaceId((current) => ({
+        ...current,
+        [place.id]: (current[place.id] ?? []).map((item) =>
+          item.workerCommentId === workerCommentId
+            ? {
+                ...item,
+                likeCount: result.likeCount,
+                liked: true,
+                meta: updateCommentMetaLikeCount(item.meta, result.likeCount),
+              }
+            : item,
+        ),
+      }));
+      setToast(result.created ? "댓글 도움이 랭킹 신호에 반영됐습니다." : "이미 도움을 누른 댓글입니다.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "댓글 도움 반영에 실패했습니다.";
+      setToast(message);
+      throw error;
+    }
+  };
+
   const submitQuestion = async () => {
     if (!selectedPlace || isSubmitting) {
       return;
@@ -1444,6 +1489,7 @@ export default function SilsiganRedesign() {
                     onPreviewPlace={previewMapPlace}
                     onClosePreview={closeMapPreview}
                     onCommentSubmit={submitPlaceComment}
+                    onLikeComment={likePlaceComment}
                     onLikePlace={togglePlaceLike}
                     onLocation={setMapCurrentLocation}
                     onLocationPermissionChange={setMapLocationPermission}
@@ -1869,6 +1915,7 @@ function MapScreen({
   onFilterChange,
   onClosePreview,
   onCommentSubmit,
+  onLikeComment,
   onLikePlace,
   onLocation,
   onLocationPermissionChange,
@@ -1900,6 +1947,7 @@ function MapScreen({
   onFilterChange: (filter: string) => void;
   onClosePreview: () => void;
   onCommentSubmit: (place: Place, body: string) => Promise<void>;
+  onLikeComment: (place: Place, comment: PlaceComment) => Promise<void>;
   onLikePlace: (place: Place) => void;
   onLocation: (location: UiLocation | null) => void;
   onLocationPermissionChange: (permission: LocationPermissionState) => void;
@@ -2066,6 +2114,7 @@ function MapScreen({
             liked={likedPlaceIds.has(detailPlace.id)}
             onClose={onClosePreview}
             onCommentSubmit={(body) => onCommentSubmit(detailPlace, body)}
+            onCommentLike={(comment) => onLikeComment(detailPlace, comment)}
             onLike={() => onLikePlace(detailPlace)}
             onPhotoClick={onPhotoClick}
             onPhotoUpload={(photo) => onPhotoUpload(detailPlace, photo)}
@@ -3381,8 +3430,19 @@ function workerCommentToPlaceComment(comment: WorkerComment): PlaceComment {
     body: comment.body,
     meta: `${minutesAgo(comment.createdAt)} · 도움 ${comment.likeCount}`,
     verified: false,
+    likeCount: comment.likeCount,
+    liked: false,
     workerCommentId: comment.id,
   };
+}
+
+function updateCommentMetaLikeCount(meta: string, likeCount: number) {
+  const nextLikeMeta = `도움 ${likeCount}`;
+  if (/도움 \d+/.test(meta)) {
+    return meta.replace(/도움 \d+/, nextLikeMeta);
+  }
+
+  return `${meta} · ${nextLikeMeta}`;
 }
 
 function photosForPlace(posts: PublicPost[], reports: Report[], workerPhotos: WorkerPhoto[] = []): PlacePhoto[] {

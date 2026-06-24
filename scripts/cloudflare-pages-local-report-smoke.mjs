@@ -27,6 +27,7 @@ const requiredSmokeCheckNames = [
   "worker.realtimeGlobalRoom",
   "places.like",
   "comments.create",
+  "comments.like",
   "photos.click",
   "reports.placeCreate",
   "reports.commentCreate",
@@ -276,6 +277,7 @@ async function execNodeScript(scriptPath, args) {
 async function startMockWorker(port) {
   const state = {
     comments: [],
+    commentLikes: new Set(),
     fieldReports: [],
     likeCount: 0,
     photoClickCount: 3,
@@ -437,6 +439,24 @@ async function startMockWorker(port) {
       };
       state.comments.unshift(comment);
       send(201, success(comment));
+      return;
+    }
+
+    const commentLikeMatch = url.pathname.match(/^\/api\/comments\/([^/]+)\/like$/);
+    if (request.method === "POST" && commentLikeMatch) {
+      const commentId = decodeURIComponent(commentLikeMatch[1]);
+      const comment = state.comments.find((candidate) => candidate.id === commentId);
+      if (!comment) {
+        send(404, { success: false, error: { code: "COMMENT_NOT_FOUND", message: "댓글을 찾을 수 없습니다." } });
+        return;
+      }
+      const likeKey = `${anonId}:${commentId}`;
+      const created = !state.commentLikes.has(likeKey);
+      if (created) {
+        state.commentLikes.add(likeKey);
+        comment.likeCount += 1;
+      }
+      send(200, success({ commentId, likeCount: comment.likeCount, created }));
       return;
     }
 

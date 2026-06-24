@@ -1,6 +1,7 @@
 "use client";
 
-import { Flag, MessageCircle } from "lucide-react";
+import { Flag, Heart, MessageCircle } from "lucide-react";
+import { useState } from "react";
 import styles from "./SilsiganRedesign.module.css";
 import { EmptyState } from "./EmptyState";
 
@@ -10,16 +11,22 @@ export type PlaceComment = {
   body: string;
   meta: string;
   verified: boolean;
+  likeCount?: number;
+  liked?: boolean;
   workerCommentId?: string;
 };
 
 export function CommentFeed({
   comments,
+  onLikeComment,
   onReportComment,
 }: {
   comments: PlaceComment[];
+  onLikeComment?: (comment: PlaceComment) => Promise<void>;
   onReportComment?: (comment: PlaceComment) => void;
 }) {
+  const [likingCommentId, setLikingCommentId] = useState<string | null>(null);
+
   if (comments.length === 0) {
     return (
       <EmptyState
@@ -28,6 +35,19 @@ export function CommentFeed({
       />
     );
   }
+
+  const likeComment = async (comment: PlaceComment) => {
+    if (!comment.workerCommentId || !onLikeComment || likingCommentId) {
+      return;
+    }
+
+    setLikingCommentId(comment.id);
+    try {
+      await onLikeComment(comment);
+    } finally {
+      setLikingCommentId(null);
+    }
+  };
 
   return (
     <div className={styles.commentFeed}>
@@ -39,11 +59,33 @@ export function CommentFeed({
             <p>{comment.body}</p>
             <span>{comment.meta}{comment.verified ? " · 현장 인증" : ""}</span>
           </div>
-          {comment.workerCommentId && onReportComment && (
-            <button type="button" onClick={() => onReportComment(comment)} aria-label={`${comment.author} 댓글 신고`}>
-              <Flag size={14} />
-              신고
-            </button>
+          {comment.workerCommentId && (onLikeComment || onReportComment) && (
+            <div className={styles.commentActions}>
+              {onLikeComment && (
+                <button
+                  className={`${styles.commentActionButton} ${styles.commentLikeButton} ${comment.liked ? styles.commentLikeActive : ""}`}
+                  type="button"
+                  onClick={() => void likeComment(comment)}
+                  aria-label={`${comment.author} 댓글 도움돼요`}
+                  aria-pressed={Boolean(comment.liked)}
+                  disabled={likingCommentId === comment.id}
+                >
+                  <Heart size={14} />
+                  도움 {comment.likeCount ?? 0}
+                </button>
+              )}
+              {onReportComment && (
+                <button
+                  className={`${styles.commentActionButton} ${styles.commentReportButton}`}
+                  type="button"
+                  onClick={() => onReportComment(comment)}
+                  aria-label={`${comment.author} 댓글 신고`}
+                >
+                  <Flag size={14} />
+                  신고
+                </button>
+              )}
+            </div>
           )}
         </article>
       ))}
