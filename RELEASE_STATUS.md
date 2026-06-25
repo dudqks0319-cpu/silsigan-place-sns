@@ -10,10 +10,10 @@
 
 - Version: `0.1.0`
 - Build: `not_applicable`
-- Git SHA: `a567bc2`
+- Git SHA: `4cdfec5ba2bf0f222f1c1ef67659d0c31e19bfae`
 - Branch: `agent/silsigan-map-click-fix-20260622-1456`
 - Phase: `local_ready_external_blocked`
-- Pushed evidence baseline: `agent/silsigan-map-click-fix-20260622-1456` at `a567bc269710a2a7d01ad20b68e01f391d7ec041`
+- Pushed evidence baseline: `agent/silsigan-map-click-fix-20260622-1456` at `4cdfec5ba2bf0f222f1c1ef67659d0c31e19bfae`
 
 ## 통과한 증거
 
@@ -22,7 +22,7 @@
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
-- `pnpm release:gate -- --skip-verify --skip-dry-run --collect-blockers --tail-file=tests/fixtures/redacted-worker-tail.log --timeout-ms=120000`: expected fail, but staging D1 evidence passes and remaining blockers are external
+- `pnpm release:gate -- --skip-verify --skip-dry-run --collect-blockers --tail-file=tests/fixtures/redacted-worker-tail.log --timeout-ms=120000`: expected fail with `resultCounts.pass=8` / `resultCounts.fail=8`; tail redaction, audit, typegen, build, frontend dry-runs, and staging D1 evidence pass while remaining failures are external blockers
 
 ## 막힌 항목
 

@@ -16,9 +16,9 @@ candidate:
   phase: "local_ready_external_blocked"
   version: "0.1.0"
   build_number: "not_applicable"
-  git_sha: "a567bc2"
+  git_sha: "4cdfec5ba2bf0f222f1c1ef67659d0c31e19bfae"
   branch: "agent/silsigan-map-click-fix-20260622-1456"
-  dirty_state: "main_worktree_dirty_matches_pushed_agent_branch_plus_untracked_evidence"
+  dirty_state: "main_worktree_dirty_on_feature_branch; release files match pushed agent branch plus local verification refresh"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
@@ -34,6 +34,10 @@ local_checks:
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
     evidence: "docs/current-release-state.md; staging.api.smoke and pages.browser.smoke expose required staging URL envKeys"
+  - name: "Release gate collect blockers"
+    command: "pnpm release:gate -- --skip-verify --skip-dry-run --collect-blockers --tail-file=tests/fixtures/redacted-worker-tail.log --timeout-ms=120000"
+    status: "blocked_expected"
+    evidence: "2026-06-25 resultCounts pass=8 fail=8; tail redaction, audit, typegen, build, frontend dry-runs, and staging D1 evidence pass; failures converge on open ledger blockers, missing URLs, R2_NOT_ENABLED, production D1_0002_NOT_APPLIED, BASE_URL_REQUIRED, and PAGES_URL_REQUIRED"
   - name: "Git diff whitespace check"
     command: "git diff --check"
     status: "pass"
