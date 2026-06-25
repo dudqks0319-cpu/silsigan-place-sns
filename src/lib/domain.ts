@@ -1,4 +1,5 @@
 export const REPORT_TTL_HOURS = 3;
+const defaultPublicSiteUrl = "https://silsigan.pages.dev";
 
 export const reportCategories = [
   "tourism",
@@ -84,6 +85,30 @@ export type RegionActivationMetrics = {
   verifiedReportsLast7Days: number;
   photoReportsLast7Days: number;
   moderationFlowReady: boolean;
+};
+
+export const regionActivationThresholds = {
+  seedPlaceCount: 30,
+  reportsLast7Days: 100,
+  verifiedReportsLast7Days: 30,
+  photoReportsLast7Days: 30,
+  moderationFlowReady: true,
+} satisfies RegionActivationMetrics;
+
+export type RegionActivationCheck = {
+  key: keyof RegionActivationMetrics;
+  label: string;
+  current: number | boolean;
+  required: number | boolean;
+  passed: boolean;
+  unit: "places" | "reports" | "photos" | "ready";
+};
+
+export type RegionActivationStatus = {
+  canActivate: boolean;
+  checks: RegionActivationCheck[];
+  passedCount: number;
+  totalCount: number;
 };
 
 export type CreditEventType =
@@ -282,13 +307,60 @@ export function calculateTrustScore(input: {
 }
 
 export function canActivateRegion(metrics: RegionActivationMetrics): boolean {
-  return (
-    metrics.seedPlaceCount >= 30 &&
-    metrics.reportsLast7Days >= 100 &&
-    metrics.verifiedReportsLast7Days >= 30 &&
-    metrics.photoReportsLast7Days >= 30 &&
-    metrics.moderationFlowReady
-  );
+  return evaluateRegionActivation(metrics).canActivate;
+}
+
+export function evaluateRegionActivation(metrics: RegionActivationMetrics): RegionActivationStatus {
+  const checks: RegionActivationCheck[] = [
+    {
+      key: "seedPlaceCount",
+      label: "검증 seed 장소",
+      current: metrics.seedPlaceCount,
+      required: regionActivationThresholds.seedPlaceCount,
+      passed: metrics.seedPlaceCount >= regionActivationThresholds.seedPlaceCount,
+      unit: "places",
+    },
+    {
+      key: "reportsLast7Days",
+      label: "7일 제보",
+      current: metrics.reportsLast7Days,
+      required: regionActivationThresholds.reportsLast7Days,
+      passed: metrics.reportsLast7Days >= regionActivationThresholds.reportsLast7Days,
+      unit: "reports",
+    },
+    {
+      key: "verifiedReportsLast7Days",
+      label: "7일 현장 인증",
+      current: metrics.verifiedReportsLast7Days,
+      required: regionActivationThresholds.verifiedReportsLast7Days,
+      passed: metrics.verifiedReportsLast7Days >= regionActivationThresholds.verifiedReportsLast7Days,
+      unit: "reports",
+    },
+    {
+      key: "photoReportsLast7Days",
+      label: "7일 사진 제보",
+      current: metrics.photoReportsLast7Days,
+      required: regionActivationThresholds.photoReportsLast7Days,
+      passed: metrics.photoReportsLast7Days >= regionActivationThresholds.photoReportsLast7Days,
+      unit: "photos",
+    },
+    {
+      key: "moderationFlowReady",
+      label: "운영/신고 흐름",
+      current: metrics.moderationFlowReady,
+      required: regionActivationThresholds.moderationFlowReady,
+      passed: metrics.moderationFlowReady === regionActivationThresholds.moderationFlowReady,
+      unit: "ready",
+    },
+  ];
+  const passedCount = checks.filter((check) => check.passed).length;
+
+  return {
+    canActivate: passedCount === checks.length,
+    checks,
+    passedCount,
+    totalCount: checks.length,
+  };
 }
 
 export function shouldHideForFlags(flagReasonsToReview: FlagReason[]): boolean {
@@ -387,7 +459,7 @@ export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" |
   return {
     headline: `${place.name} ${judgement}`,
     body: `${statusText}\n${minutesAgoLabel(post.createdAt)} 현장 인증 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
-    url: `https://silsigan.vercel.app/place/${place.id}`,
+    url: `${defaultPublicSiteUrl}/place/${place.id}`,
     hashtags: post.hashtagNames.slice(0, 5),
     variant,
   };

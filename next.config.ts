@@ -1,17 +1,23 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1"],
+  devIndicators: false,
   outputFileTracingRoot: process.cwd(),
   typedRoutes: true,
   images: {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "*.supabase.co"
+        hostname: "images.unsplash.com"
       },
       {
         protocol: "https",
-        hostname: "images.unsplash.com"
+        hostname: "*.r2.dev"
+      },
+      {
+        protocol: "https",
+        hostname: "*.cloudflarestorage.com"
       }
     ]
   }

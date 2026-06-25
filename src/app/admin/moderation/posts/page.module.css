@@ -8,6 +8,9 @@
 
 .hero,
 .metrics div,
+.activationPanel,
+.workerQueuePanel,
+.activationItem,
 .queueItem,
 .empty {
   border: 1px solid rgba(15, 23, 42, 0.08);
@@ -49,7 +52,7 @@
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin: 16px 0;
 }
@@ -69,6 +72,148 @@
   font-weight: 800;
 }
 
+.activationPanel {
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.workerQueuePanel {
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.sectionHeader,
+.activationTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sectionHeader {
+  margin-bottom: 14px;
+}
+
+.sectionHeader p,
+.sectionHeader h2,
+.activationTitleRow strong,
+.activationTitleRow span {
+  display: block;
+  margin: 0;
+}
+
+.sectionHeader p {
+  color: #16a34a;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.sectionHeader h2 {
+  margin-top: 4px;
+  font-size: 20px;
+}
+
+.sectionHeader > span {
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #166534;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.activationGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.activationItem {
+  padding: 16px;
+  box-shadow: none;
+}
+
+.activationTitleRow strong {
+  font-size: 15px;
+}
+
+.activationTitleRow span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.readyBadge,
+.holdBadge {
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.readyBadge {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.holdBadge {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.progressTrack {
+  height: 8px;
+  margin: 14px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.progressTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #16a34a;
+}
+
+.checkList {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.checkList li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  align-items: center;
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.checkList strong {
+  white-space: nowrap;
+}
+
+.checkPassed {
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.checkFailed {
+  background: #f8fafc;
+  color: #475569;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -84,6 +229,67 @@
   color: #334155;
   padding: 9px 12px;
   font-weight: 900;
+}
+
+.tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tabs button strong {
+  min-width: 22px;
+  min-height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.1);
+  font-size: 11px;
+}
+
+.tabActive {
+  background: #14532d !important;
+  color: #ffffff !important;
+}
+
+.tabActive strong {
+  background: rgba(255, 255, 255, 0.22) !important;
+}
+
+.filterSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -4px 0 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 12px 14px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.filterSummary strong,
+.filterSummary span {
+  display: block;
+}
+
+.filterSummary strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.filterSummary span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.actionNotice {
+  margin: -6px 0 16px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .queueList {
@@ -170,6 +376,11 @@
   color: #166534;
 }
 
+.actionRow button:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
+
 .empty {
   padding: 28px;
   text-align: center;
@@ -185,8 +396,21 @@
     padding: 16px;
   }
 
-  .metrics {
+  .metrics,
+  .activationGrid {
     grid-template-columns: 1fr;
+  }
+
+  .sectionHeader,
+  .activationTitleRow {
+    display: block;
+  }
+
+  .sectionHeader > span,
+  .readyBadge,
+  .holdBadge {
+    display: inline-flex;
+    margin-top: 10px;
   }
 
   .queueItem {
@@ -195,5 +419,13 @@
 
   .itemHeader {
     display: block;
+  }
+
+  .filterSummary {
+    display: block;
+  }
+
+  .filterSummary span {
+    margin-top: 4px;
   }
 }
