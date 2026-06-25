@@ -3,11 +3,11 @@
 기준일: 2026-06-18
 범위: 무료 출시 기준의 Cloudflare Pages/Workers, D1, R2, KV 또는 Cache API 전환.
 
-출시 전 P0 항목은 모두 통과해야 한다. 2026-06-25 현재 로컬 기준선은 `node --check workers/api/src/index.ts`, `pnpm verify`, `pnpm test` 108 passed, `pnpm audit --audit-level critical`, `git diff --check`가 통과한 상태다. Staging D1 `0002` migration/seed 증적은 원격 적용까지 완료됐고, Cloudflare staging/production URL, R2 활성화, production D1 `0002` migration 증적은 외부 blocker로 별도 남아 있다.
+출시 전 P0 항목은 모두 통과해야 한다. 2026-06-25 현재 로컬 기준선은 `node --check workers/api/src/index.ts`, `pnpm verify`, `pnpm test` 109 passed, `pnpm audit --audit-level critical`, `git diff --check`가 통과한 상태다. Staging D1 `0002` migration/seed 증적은 원격 적용까지 완료됐고, Cloudflare staging/production URL, R2 활성화, production D1 `0002` migration 증적은 외부 blocker로 별도 남아 있다.
 
 ## P0 출시 차단 항목
 
-- [x] 현재 기준선에서 `pnpm test`가 108 passed 상태다.
+- [x] 현재 기준선에서 `pnpm test`가 109 passed 상태다.
 - [x] 현재 기준선에서 `pnpm typecheck`가 통과했다.
 - [x] 현재 기준선에서 `pnpm lint`가 통과했다.
 - [x] 현재 기준선에서 `pnpm build`가 통과했다.
@@ -15,7 +15,7 @@
 - [x] Cloudflare frontend OpenNext build 경로가 `open-next.config.ts`, pinned `@opennextjs/cloudflare`, pinned `wrangler`, `pnpm cf:build`, frontend dry-run scripts로 반영되어 있다.
 - [x] Wrangler development, staging, production environment가 binding 비상속 규칙에 맞게 D1/R2/Images/KV/Durable Object binding을 각각 명시한다.
 - [x] Cloudflare Pages/Worker API staging/production 공개 URL preflight가 missing, localhost, non-HTTPS, query/fragment/credential, staging/production 중복을 출시 차단으로 실패시킨다.
-- [x] `docs/current-release-state.md`와 `pnpm release:status`가 로컬 통과 상태와 외부 Cloudflare 차단 상태를 분리해 보여준다.
+- [x] `docs/current-release-state.md`, `release-ledger.yaml`, `RELEASE_STATUS.md`, `pnpm release:status`가 로컬 통과 상태와 외부 Cloudflare 차단 상태를 분리해 보여준다.
 - [x] `pnpm release:status`가 Supabase 프로젝트 산출물, Vercel 배포 설정, `@supabase/*` 의존성, Vercel public runtime URL 재유입을 출시 차단으로 감지한다.
 - [x] Durable Object realtime place/region/global fanout 경로가 로컬 테스트로 검증되어 있다.
 - [x] D1 schema와 initial migration이 같은 내용이며 필수 테이블을 포함한다.
@@ -148,7 +148,7 @@ Cloudflare 전환 추가 증적:
 
 - D1 migration 재실행 로그.
 - Cloudflare resource preflight 결과. 현재 로컬 기준선은 fixture 테스트로 concrete ID와 HTTPS Pages/API URL 통과, placeholder ID 실패, missing/unsafe deployment URL 실패, staging/production URL 중복 실패를 검증한다. 실제 `workers/api/wrangler.jsonc`는 staging/production D1/KV concrete ID가 반영되어 resource binding check는 통과하고, 미설정 `SILSIGAN_*_PAGES_URL`/`SILSIGAN_*_API_BASE_URL` 때문에 `pnpm cf:preflight`가 실패하는 상태다.
-- Release state 결과. 현재 로컬 기준선은 `pnpm release:status`가 `blocked-external`을 출력하고, blocker가 deployment URL 4개로 축소된 상태다. Base D1 migration/core seed는 원격 적용됐고 `verified_places=5`, `rankings=6`으로 확인했다. Staging `0002_posts_questions.sql`과 seed는 2026-06-25 원격 적용 후 `posts=4`, `questions=3`과 pending migration 없음으로 확인했으며, production `0002`는 `D1_0002_NOT_APPLIED`로 남아 있다.
+- Release state 결과. 현재 로컬 기준선은 `pnpm release:status`가 `docs/current-release-state.md`, root `release-ledger.yaml`, `RELEASE_STATUS.md`의 필수 구조와 source-of-truth 링크를 통과한 뒤 `blocked-external`을 출력하고, blocker가 deployment URL 4개로 축소된 상태다. Base D1 migration/core seed는 원격 적용됐고 `verified_places=5`, `rankings=6`으로 확인했다. Staging `0002_posts_questions.sql`과 seed는 2026-06-25 원격 적용 후 `posts=4`, `questions=3`과 pending migration 없음으로 확인했으며, production `0002`는 `D1_0002_NOT_APPLIED`로 남아 있다.
 - Legacy artifact/runtime URL 결과. 현재 로컬 기준선은 `supabase/` migrations와 `vercel.json`을 제거했고, runtime share URL 기본값을 Cloudflare Pages로 전환했으며, `pnpm release:status`가 Supabase 프로젝트 산출물, Vercel 배포 설정, `@supabase/*` dependency, Vercel public runtime URL이 없음을 검사한다.
 - OpenNext frontend 결과. 현재 로컬 기준선은 `open-next.config.ts`의 `defineCloudflareConfig`, pinned `@opennextjs/cloudflare@1.19.11`, pinned `wrangler@4.103.0`, `.env.example` 기반 `cf:typegen`, `cf:build`/`cf:preview`/`cf:deploy`/frontend dry-run scripts를 `pnpm release:status`에서 검사한다. `pnpm cf:typegen`은 로컬 개인 `.env.local`이 아니라 `.env.example`의 Cloudflare release key만 읽고, `pnpm cf:build`는 `.open-next/worker.js`와 `.open-next/assets`를 생성했으며, `pnpm cf:web:dry-run`, `pnpm cf:web:dry-run:staging`, `pnpm cf:web:dry-run:production`은 89개 assets와 `ASSETS` binding을 dry-run으로 검증했다.
 - R2/deployment external-state 결과. `pnpm cf:external-state`는 Wrangler OAuth, R2 bucket visibility, staging/production deployment URL shape, staging/production Worker dry-run, staging/production D1 `0002` evidence를 non-mutating JSON check로 분리한다. 현재 기준선은 OAuth pass, staging/production dry-run pass, staging D1 `0002` evidence pass, deployment URL 4개 missing fail, production `D1_0002_NOT_APPLIED`, `cloudflare.r2.enabled` fail with `R2_NOT_ENABLED`이다. 직접 `wrangler r2 bucket list`와 `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000`도 Cloudflare code `10042` / `R2_NOT_ENABLED`로 실패하며 Dashboard에서 R2 활성화가 필요하다고 반환한다. `pnpm cf:r2:evidence` 기본 실행은 non-mutating plan-only이고, `--check`는 bucket list만 읽으며, `--apply`는 누락 bucket 생성 후 visibility를 재확인한다. Production apply는 `--confirm-production` 없이는 실패한다. R2 활성화 전에는 Worker URL과 staging mutation smoke를 완료할 수 없다.

@@ -269,6 +269,8 @@ test("release state check separates ready fixtures from external release blocker
   try {
     const readyConfigPath = join(tempDir, "ready-wrangler.jsonc");
     const blockedConfigPath = join(tempDir, "blocked-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       readyConfigPath,
       JSON.stringify(
@@ -289,9 +291,16 @@ test("release state check separates ready fixtures from external release blocker
       ),
       "utf8",
     );
+    writeReleaseStateLedger(ledgerPath);
 
     const releaseStateScript = new URL("../scripts/release-state-check.mjs", import.meta.url).pathname;
-    const readyOutput = execFileSync(process.execPath, [releaseStateScript, `--config=${readyConfigPath}`], {
+    const readyOutput = execFileSync(process.execPath, [
+      releaseStateScript,
+      `--config=${readyConfigPath}`,
+      `--ledger=${ledgerPath}`,
+      `--release-ledger=${releaseLedgerPath}`,
+      `--release-status=${releaseStatusPath}`,
+    ], {
       encoding: "utf8",
       env: createReadyPreflightProcessEnv(),
     });
@@ -308,9 +317,20 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "legacy.vercel_config" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "legacy.supabase_dependencies" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "legacy.vercel_public_urls" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.ledger" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.status" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.ledger.source_of_truth" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.status.source_of_truth" && check.status === "pass"));
 
     try {
-      execFileSync(process.execPath, [releaseStateScript, `--config=${blockedConfigPath}`, "--strict"], {
+      execFileSync(process.execPath, [
+        releaseStateScript,
+        `--config=${blockedConfigPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        "--strict",
+      ], {
         encoding: "utf8",
         env: createReadyPreflightProcessEnv({
           SILSIGAN_STAGING_API_BASE_URL: "",
@@ -332,11 +352,11 @@ test("release state check separates ready fixtures from external release blocker
   }
 });
 
-test("release state check rejects legacy Supabase and Vercel artifacts", () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-state-legacy-"));
+test("release state check requires release harness ledger and status docs", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-"));
   try {
-    const configPath = join(tempDir, "wrangler.jsonc");
-    const ledgerPath = join(tempDir, "release.md");
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
     writeFileSync(
       configPath,
       JSON.stringify(
@@ -347,11 +367,52 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
       ),
       "utf8",
     );
+    writeReleaseStateLedger(ledgerPath);
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${join(tempDir, "missing-release-ledger.yaml")}`,
+        `--release-status=${join(tempDir, "missing-RELEASE_STATUS.md")}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when release harness docs are missing");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as { ok: boolean; blockers: string[] };
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("release_harness.ledger"));
+      assert.ok(payload.blockers.includes("release_harness.status"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check rejects legacy Supabase and Vercel artifacts", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-state-legacy-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    const ledgerPath = join(tempDir, "release.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
-      ledgerPath,
-      ["## Objective", "## Local Code State", "## Latest Local Verification", "## Cloudflare External State", "## Release Decision", "## Next Actions"].join("\n\n"),
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
       "utf8",
     );
+    writeReleaseStateLedger(ledgerPath);
     writeFileSync(join(tempDir, "package.json"), JSON.stringify({ dependencies: { "@supabase/supabase-js": "2.0.0" } }), "utf8");
     mkdirSync(join(tempDir, "supabase"));
     mkdirSync(join(tempDir, "src/lib"), { recursive: true });
@@ -360,7 +421,14 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
     writeFileSync(join(tempDir, "src/lib/site-url.ts"), "export const site = 'https://silsigan.vercel.app';", "utf8");
 
     try {
-      execFileSync(process.execPath, [new URL("../scripts/release-state-check.mjs", import.meta.url).pathname, `--config=${configPath}`, `--ledger=${ledgerPath}`, "--strict"], {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        "--strict",
+      ], {
         cwd: tempDir,
         encoding: "utf8",
         env: createReadyPreflightProcessEnv(),
@@ -1684,6 +1752,69 @@ function createPreflightConfig(ids: { stagingD1Id: string; stagingKvId: string }
       }),
     },
   };
+}
+
+function writeReleaseStateLedger(path: string) {
+  writeFileSync(
+    path,
+    ["## Objective", "## Local Code State", "## Latest Local Verification", "## Cloudflare External State", "## Release Decision", "## Next Actions"].join("\n\n"),
+    "utf8",
+  );
+}
+
+function writeReleaseHarnessFiles(rootDir: string, sourceLedgerPath: string) {
+  const releaseLedgerPath = join(rootDir, "release-ledger.yaml");
+  const releaseStatusPath = join(rootDir, "RELEASE_STATUS.md");
+  writeFileSync(
+    releaseLedgerPath,
+    [
+      "schema_version: 1",
+      "project:",
+      '  name: "silsigan"',
+      "candidate:",
+      '  version: "0.1.0"',
+      '  git_sha: "test-sha"',
+      '  branch: "test-branch"',
+      `  source_of_truth: "${sourceLedgerPath}"`,
+      "local_checks: []",
+      "runtime_checks: []",
+      "external_checks: []",
+      "security: {}",
+      "blockers: []",
+      "next_action:",
+      '  command: "pnpm release:status"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  writeFileSync(
+    releaseStatusPath,
+    [
+      "# Release Status",
+      "",
+      "## 한 줄 상태",
+      "",
+      `상세 source of truth는 ${sourceLedgerPath} 이다.`,
+      "",
+      "## 현재 후보",
+      "",
+      "- Version: `0.1.0`",
+      "",
+      "## 막힌 항목",
+      "",
+      "- none",
+      "",
+      "## 다음 행동",
+      "",
+      "```bash",
+      "pnpm release:status",
+      "```",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  return { releaseLedgerPath, releaseStatusPath };
 }
 
 function createPreflightEnv(input: { envName: "staging" | "production"; d1Id: string; kvId: string }) {

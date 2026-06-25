@@ -5,6 +5,8 @@ import { access, readFile } from "node:fs/promises";
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
 const DEFAULT_FRONTEND_CONFIG_PATH = "wrangler.jsonc";
 const DEFAULT_LEDGER_PATH = "docs/current-release-state.md";
+const DEFAULT_RELEASE_LEDGER_PATH = "release-ledger.yaml";
+const DEFAULT_RELEASE_STATUS_PATH = "RELEASE_STATUS.md";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
@@ -14,6 +16,17 @@ const REQUIRED_LEDGER_SECTIONS = [
   "## Release Decision",
   "## Next Actions",
 ];
+const REQUIRED_RELEASE_LEDGER_FIELDS = [
+  "project",
+  "candidate",
+  "local_checks",
+  "runtime_checks",
+  "external_checks",
+  "security",
+  "blockers",
+  "next_action",
+];
+const REQUIRED_RELEASE_STATUS_SECTIONS = ["# Release Status", "## 한 줄 상태", "## 현재 후보", "## 막힌 항목", "## 다음 행동"];
 const REQUIRED_ENV_URLS = {
   SILSIGAN_STAGING_PAGES_URL: "staging.pages",
   SILSIGAN_STAGING_API_BASE_URL: "staging.worker_api",
@@ -41,10 +54,13 @@ const { flags, options } = parseArgs(process.argv.slice(2));
 const configPath = options.get("config") ?? DEFAULT_CONFIG_PATH;
 const frontendConfigPath = options.get("frontend-config") ?? DEFAULT_FRONTEND_CONFIG_PATH;
 const ledgerPath = options.get("ledger") ?? DEFAULT_LEDGER_PATH;
+const releaseLedgerPath = options.get("release-ledger") ?? DEFAULT_RELEASE_LEDGER_PATH;
+const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATUS_PATH;
 const strict = flags.has("strict");
 const checks = [];
 
 await checkLedger(ledgerPath);
+await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath);
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
 await checkOpenNextAdapter();
@@ -60,6 +76,8 @@ const summary = {
   configPath,
   frontendConfigPath,
   ledgerPath,
+  releaseLedgerPath,
+  releaseStatusPath,
   checks,
   blockers: blockers.map((check) => check.name),
   warnings: warnings.map((check) => check.name),
@@ -81,6 +99,66 @@ async function checkLedger(path) {
   } catch (error) {
     record("ledger.current_release_state", "fail", publicErrorMessage(error));
   }
+}
+
+async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, sourceLedgerPath) {
+  let releaseLedger = "";
+  let releaseStatus = "";
+
+  try {
+    releaseLedger = await readFile(releaseLedgerPath, "utf8");
+    record("release_harness.ledger", "pass", "release-ledger.yaml is present.");
+  } catch (error) {
+    record("release_harness.ledger", "fail", publicErrorMessage(error));
+  }
+
+  try {
+    releaseStatus = await readFile(releaseStatusPath, "utf8");
+    record("release_harness.status", "pass", "RELEASE_STATUS.md is present.");
+  } catch (error) {
+    record("release_harness.status", "fail", publicErrorMessage(error));
+  }
+
+  if (releaseLedger) {
+    for (const field of REQUIRED_RELEASE_LEDGER_FIELDS) {
+      record(
+        `release_harness.ledger.${field}`,
+        new RegExp(`^${escapeRegExp(field)}:`, "m").test(releaseLedger) ? "pass" : "fail",
+        `release-ledger.yaml must include top-level field ${field}.`,
+      );
+    }
+
+    record(
+      "release_harness.ledger.source_of_truth",
+      releaseLedger.includes(`source_of_truth: "${sourceLedgerPath}"`) || releaseLedger.includes(`source_of_truth: ${sourceLedgerPath}`)
+        ? "pass"
+        : "fail",
+      "release-ledger.yaml must point to docs/current-release-state.md as the detailed source of truth.",
+    );
+    recordNoSecretLikePatterns("release_harness.ledger.redaction", releaseLedger, "release-ledger.yaml");
+  }
+
+  if (releaseStatus) {
+    for (const section of REQUIRED_RELEASE_STATUS_SECTIONS) {
+      record(
+        `release_harness.status.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+        releaseStatus.includes(section) ? "pass" : "fail",
+        `RELEASE_STATUS.md must include ${section}.`,
+      );
+    }
+
+    record(
+      "release_harness.status.source_of_truth",
+      releaseStatus.includes(sourceLedgerPath) ? "pass" : "fail",
+      "RELEASE_STATUS.md must link to docs/current-release-state.md.",
+    );
+    recordNoSecretLikePatterns("release_harness.status.redaction", releaseStatus, "RELEASE_STATUS.md");
+  }
+}
+
+function recordNoSecretLikePatterns(name, content, path) {
+  const secretLikePattern = /(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|BEGIN (RSA |OPENSSH |PRIVATE )?PRIVATE KEY|SUPABASE_SERVICE_ROLE_KEY[=:][^\s]+|JWT_SECRET[=:][^\s]+)/i;
+  record(name, secretLikePattern.test(content) ? "fail" : "pass", `${path} must not contain secret-like values.`);
 }
 
 async function checkLegacyArtifacts() {
@@ -463,6 +541,10 @@ function record(name, status, message, details = {}) {
 
 function hasPlaceholder(value) {
   return /TODO|^<.*>$|REPLACE_ME|CHANGE_ME/i.test(String(value));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isLocalhost(hostname) {

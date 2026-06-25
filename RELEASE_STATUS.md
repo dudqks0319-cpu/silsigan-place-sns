@@ -17,7 +17,7 @@
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 108 passed
+- `pnpm test -- tests/cloudflare-api.test.ts`: 109 passed
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
