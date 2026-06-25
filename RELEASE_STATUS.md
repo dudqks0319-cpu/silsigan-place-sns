@@ -17,7 +17,8 @@
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 109 passed
+- `pnpm test -- tests/cloudflare-api.test.ts`: 110 passed
+- `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`

@@ -135,6 +135,13 @@ async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, so
         : "fail",
       "release-ledger.yaml must point to docs/current-release-state.md as the detailed source of truth.",
     );
+    const openBlockerIds = extractOpenReleaseBlockerIds(releaseLedger);
+    record(
+      "release_harness.ledger.open_blockers",
+      openBlockerIds.length === 0 ? "pass" : "fail",
+      openBlockerIds.length === 0 ? "release-ledger.yaml has no open release blockers." : "release-ledger.yaml has open release blockers that must be resolved before release status can pass.",
+      { blockers: openBlockerIds },
+    );
     recordNoSecretLikePatterns("release_harness.ledger.redaction", releaseLedger, "release-ledger.yaml");
   }
 
@@ -159,6 +166,24 @@ async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, so
 function recordNoSecretLikePatterns(name, content, path) {
   const secretLikePattern = /(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|BEGIN (RSA |OPENSSH |PRIVATE )?PRIVATE KEY|SUPABASE_SERVICE_ROLE_KEY[=:][^\s]+|JWT_SECRET[=:][^\s]+)/i;
   record(name, secretLikePattern.test(content) ? "fail" : "pass", `${path} must not contain secret-like values.`);
+}
+
+function extractOpenReleaseBlockerIds(releaseLedger) {
+  const blockersMatch = releaseLedger.match(/\nblockers:\n(?<body>[\s\S]*?)(?=\n[A-Za-z_]+:\n|\s*$)/);
+  const blockersBody = blockersMatch?.groups?.body ?? "";
+  if (!blockersBody.trim() || /^\s*\[\]\s*$/m.test(blockersBody)) {
+    return [];
+  }
+
+  return blockersBody
+    .split(/\n\s*-\s+/)
+    .map((blocker) => blocker.trim())
+    .filter(Boolean)
+    .filter((blocker) => /^\s*status:\s*"?open"?\s*$/m.test(blocker))
+    .map((blocker, index) => {
+      const idMatch = blocker.match(/^\s*(?:-\s*)?id:\s*"?([^"\n]+)"?\s*$/m);
+      return idMatch?.[1] ?? `open-blocker-${index + 1}`;
+    });
 }
 
 async function checkLegacyArtifacts() {

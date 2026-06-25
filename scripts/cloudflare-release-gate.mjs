@@ -307,14 +307,17 @@ async function runStep(plannedStep, timeoutMs) {
       errorTail: redactOutput(tail(stderr, 2_000)),
     };
   } catch (error) {
+    const stdout = String(error?.stdout ?? "");
+    const stderr = String(error?.stderr ?? error?.message ?? "");
     return {
       name: plannedStep.name,
       status: "fail",
       durationMs: Date.now() - startedAt,
       exitCode: typeof error?.code === "number" ? error.code : null,
       signal: typeof error?.signal === "string" ? error.signal : null,
-      outputTail: redactOutput(tail(String(error?.stdout ?? ""), 4_000)),
-      errorTail: redactOutput(tail(String(error?.stderr ?? error?.message ?? ""), 4_000)),
+      blockers: extractTextBlockers(stdout, stderr),
+      outputTail: redactOutput(tail(stdout, 4_000)),
+      errorTail: redactOutput(tail(stderr, 4_000)),
     };
   }
 }
@@ -352,7 +355,23 @@ export function summarizeResults(results) {
 
 function extractResultBlockers(result) {
   const blockers = [];
+  if (Array.isArray(result.blockers)) {
+    for (const blocker of result.blockers) {
+      collectBlockerCode(blockers, blocker);
+    }
+  }
+
   for (const value of [result.outputTail, result.errorTail]) {
+    for (const payload of parseJsonPayloads(value)) {
+      collectPayloadBlockers(payload, blockers);
+    }
+  }
+  return blockers;
+}
+
+function extractTextBlockers(...values) {
+  const blockers = [];
+  for (const value of values) {
     for (const payload of parseJsonPayloads(value)) {
       collectPayloadBlockers(payload, blockers);
     }
