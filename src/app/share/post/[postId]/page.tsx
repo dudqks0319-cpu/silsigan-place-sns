@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { findSharedPost } from "@/lib/shared-post";
 import { getSiteUrl } from "@/lib/site-url";
-import { store } from "@/lib/store";
 import styles from "./page.module.css";
 
 type SharePostPageProps = {
@@ -9,10 +9,6 @@ type SharePostPageProps = {
     postId: string;
   }>;
 };
-
-async function findSharedPost(postId: string) {
-  return (await store.listPosts({ includeHidden: true })).find((candidate) => candidate.id === postId);
-}
 
 export async function generateMetadata({ params }: SharePostPageProps): Promise<Metadata> {
   const { postId } = await params;
