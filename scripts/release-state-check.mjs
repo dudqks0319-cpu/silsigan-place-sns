@@ -168,6 +168,18 @@ async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, so
     );
     recordNoSecretLikePatterns("release_harness.status.redaction", releaseStatus, "RELEASE_STATUS.md");
   }
+
+  if (releaseLedger && releaseStatus) {
+    const missingEvidence = extractOpenReleaseBlockerEvidenceTokens(releaseLedger).filter((token) => !releaseStatus.includes(token));
+    record(
+      "release_harness.status.open_blocker_evidence",
+      missingEvidence.length === 0 ? "pass" : "fail",
+      missingEvidence.length === 0
+        ? "RELEASE_STATUS.md summarizes every open blocker evidence token from release-ledger.yaml."
+        : "RELEASE_STATUS.md must include every open blocker evidence token from release-ledger.yaml.",
+      { missingEvidence },
+    );
+  }
 }
 
 function recordNoSecretLikePatterns(name, content, path) {
@@ -176,6 +188,28 @@ function recordNoSecretLikePatterns(name, content, path) {
 }
 
 function extractOpenReleaseBlockerIds(releaseLedger) {
+  return extractOpenReleaseBlockerBlocks(releaseLedger).map((blocker, index) => {
+    const idMatch = blocker.match(/^\s*(?:-\s*)?id:\s*"?([^"\n]+)"?\s*$/m);
+    return idMatch?.[1] ?? `open-blocker-${index + 1}`;
+  });
+}
+
+function extractOpenReleaseBlockerEvidenceTokens(releaseLedger) {
+  const evidenceTokens = new Set();
+  const evidenceTokenPattern = /deployment_url\.\*|docs\/current-release-state\.md|[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+/g;
+
+  for (const blocker of extractOpenReleaseBlockerBlocks(releaseLedger)) {
+    const evidenceMatch = blocker.match(/^\s*evidence:\s*"?([^"\n]+)"?\s*$/m);
+    const evidence = evidenceMatch?.[1] ?? "";
+    for (const token of evidence.match(evidenceTokenPattern) ?? []) {
+      evidenceTokens.add(token);
+    }
+  }
+
+  return [...evidenceTokens];
+}
+
+function extractOpenReleaseBlockerBlocks(releaseLedger) {
   const blockersMatch = releaseLedger.match(/\nblockers:\n(?<body>[\s\S]*?)(?=\n[A-Za-z_]+:\n|\s*$)/);
   const blockersBody = blockersMatch?.groups?.body ?? "";
   if (!blockersBody.trim() || /^\s*\[\]\s*$/m.test(blockersBody)) {
@@ -186,11 +220,7 @@ function extractOpenReleaseBlockerIds(releaseLedger) {
     .split(/\n\s*-\s+/)
     .map((blocker) => blocker.trim())
     .filter(Boolean)
-    .filter((blocker) => /^\s*status:\s*"?open"?\s*$/m.test(blocker))
-    .map((blocker, index) => {
-      const idMatch = blocker.match(/^\s*(?:-\s*)?id:\s*"?([^"\n]+)"?\s*$/m);
-      return idMatch?.[1] ?? `open-blocker-${index + 1}`;
-    });
+    .filter((blocker) => /^\s*status:\s*"?open"?\s*$/m.test(blocker));
 }
 
 function extractMarkdownSection(markdown, heading) {

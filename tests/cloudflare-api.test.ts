@@ -447,6 +447,60 @@ test("release state check blocks on open release harness blockers", () => {
   }
 });
 
+test("release state check rejects release status missing open blocker evidence", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-evidence-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath, {
+      omitOpenBlockerEvidenceFromStatus: true,
+      openBlocker: true,
+    });
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when release status omits open blocker evidence");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingEvidence?: string[] }>;
+      };
+      const evidenceCheck = payload.checks.find((check) => check.name === "release_harness.status.open_blocker_evidence");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("release_harness.status.open_blocker_evidence"));
+      assert.equal(evidenceCheck?.status, "fail");
+      assert.deepEqual(evidenceCheck?.missingEvidence, ["R2_NOT_ENABLED"]);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("release state check rejects duplicated next action runbook lines", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-next-actions-"));
   try {
@@ -1874,7 +1928,11 @@ function writeReleaseStateLedger(path: string, options: { duplicateNextActionLin
   );
 }
 
-function writeReleaseHarnessFiles(rootDir: string, sourceLedgerPath: string, options: { openBlocker?: boolean } = {}) {
+function writeReleaseHarnessFiles(
+  rootDir: string,
+  sourceLedgerPath: string,
+  options: { omitOpenBlockerEvidenceFromStatus?: boolean; openBlocker?: boolean } = {},
+) {
   const releaseLedgerPath = join(rootDir, "release-ledger.yaml");
   const releaseStatusPath = join(rootDir, "RELEASE_STATUS.md");
   writeFileSync(
@@ -1899,6 +1957,7 @@ function writeReleaseHarnessFiles(rootDir: string, sourceLedgerPath: string, opt
             "    severity: \"P0\"",
             "    status: \"open\"",
             "    title: \"Cloudflare R2 account is not enabled.\"",
+            "    evidence: \"R2_NOT_ENABLED\"",
           ]
         : ["blockers: []"]),
       "next_action:",
@@ -1922,7 +1981,9 @@ function writeReleaseHarnessFiles(rootDir: string, sourceLedgerPath: string, opt
       "",
       "## 막힌 항목",
       "",
-      "- none",
+      ...(options.openBlocker
+        ? [options.omitOpenBlockerEvidenceFromStatus ? "- P0: Cloudflare R2 account is not enabled." : "- P0: Cloudflare R2 account is not enabled: `R2_NOT_ENABLED`"]
+        : ["- none"]),
       "",
       "## 다음 행동",
       "",

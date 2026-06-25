@@ -17,7 +17,7 @@
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 111 passed
+- `pnpm test -- tests/cloudflare-api.test.ts`: 112 passed
 - `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
@@ -27,7 +27,7 @@
 ## 막힌 항목
 
 - P0: Cloudflare R2 is not enabled: `R2_NOT_ENABLED`
-- P0: Missing staging/production Pages/API URLs
+- P0: Missing staging/production Pages/API URLs: `deployment_url.*`, `URL_REQUIRED`
 - P0: Production D1 `0002_posts_questions.sql` is not applied: `D1_0002_NOT_APPLIED`
 - P0: Real staging Worker/Pages smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
 

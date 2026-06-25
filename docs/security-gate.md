@@ -3,11 +3,11 @@
 기준일: 2026-06-18
 범위: 무료 출시 기준의 Cloudflare Pages/Workers, D1, R2, KV 또는 Cache API 전환.
 
-출시 전 P0 항목은 모두 통과해야 한다. 2026-06-25 현재 로컬 기준선은 `node --check workers/api/src/index.ts`, `pnpm test -- tests/cloudflare-api.test.ts` 111 passed, `pnpm audit --audit-level critical`, `git diff --check`가 통과한 상태다. Staging D1 `0002` migration/seed 증적은 원격 적용까지 완료됐고, Cloudflare staging/production URL, R2 활성화, production D1 `0002` migration 증적은 외부 blocker로 별도 남아 있다.
+출시 전 P0 항목은 모두 통과해야 한다. 2026-06-25 현재 로컬 기준선은 `node --check workers/api/src/index.ts`, `pnpm test -- tests/cloudflare-api.test.ts` 112 passed, `pnpm audit --audit-level critical`, `git diff --check`가 통과한 상태다. Staging D1 `0002` migration/seed 증적은 원격 적용까지 완료됐고, Cloudflare staging/production URL, R2 활성화, production D1 `0002` migration 증적은 외부 blocker로 별도 남아 있다.
 
 ## P0 출시 차단 항목
 
-- [x] 현재 기준선에서 `pnpm test -- tests/cloudflare-api.test.ts`가 111 passed 상태다.
+- [x] 현재 기준선에서 `pnpm test -- tests/cloudflare-api.test.ts`가 112 passed 상태다.
 - [x] 현재 기준선에서 `pnpm typecheck`가 통과했다.
 - [x] 현재 기준선에서 `pnpm lint`가 통과했다.
 - [x] 현재 기준선에서 `pnpm build`가 통과했다.
