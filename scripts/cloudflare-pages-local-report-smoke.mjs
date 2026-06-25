@@ -40,6 +40,8 @@ const requiredSmokeCheckNames = [
   "reports.photoCreate",
   "reports.create",
   "fieldReports.create",
+  "share.postPage",
+  "share.opengraphImage",
 ];
 const tinyJpegBase64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
@@ -114,6 +116,9 @@ async function main() {
     if (worker.fieldReportCount() < 1) {
       throw new LocalSmokeError("FIELD_REPORT_MISSING", "No field report was created through /api/reports.");
     }
+    if (worker.sharedPostRequestCount() < 2) {
+      throw new LocalSmokeError("SHARED_POST_WORKER_LOOKUP_MISSING", "Share page and OG image did not read posts from the mock Worker API.");
+    }
     const networkArtifactRedaction = await validateNetworkArtifactRedaction(smoke.artifacts?.network, {
       requiredReportTargetTypes: requiredTargetTypes,
     });
@@ -127,6 +132,7 @@ async function main() {
       apiBaseUrl: worker.url,
       reportTargetTypes,
       fieldReportCount: worker.fieldReportCount(),
+      sharedPostRequestCount: worker.sharedPostRequestCount(),
       networkArtifactRedaction,
       smokeCheckIntegrity,
       artifacts: smoke.artifacts,
@@ -145,6 +151,7 @@ async function runPagesSmoke({ apiBaseUrl, artifactDir, pagesUrl, timeoutMs }) {
     `--api-base-url=${apiBaseUrl}`,
     `--artifact-dir=${artifactDir}`,
     `--timeout-ms=${timeoutMs}`,
+    "--share-post-id=post-local-report-smoke",
     "--mutating",
     "--report",
     "--require-photo",
@@ -226,6 +233,7 @@ function startNextDev(port, apiBaseUrl) {
     env: {
       ...process.env,
       NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL: apiBaseUrl,
+      SILSIGAN_WORKER_API_BASE_URL: apiBaseUrl,
       NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "",
       npm_config_cache: process.env.npm_config_cache ?? "/tmp/codex-npm-cache",
     },
@@ -288,6 +296,7 @@ async function startMockWorker(port) {
     likeCount: 0,
     photoClickCount: 3,
     photoDeleted: false,
+    sharedPostRequestCount: 0,
     questions: [workerQuestion()],
     reportTargetTypes: [],
   };
@@ -329,6 +338,9 @@ async function startMockWorker(port) {
     if (request.method === "GET" && url.pathname === "/api/posts") {
       const hashtagName = url.searchParams.get("hashtagName")?.trim();
       const post = workerPost();
+      if (url.searchParams.get("includeHidden") === "true") {
+        state.sharedPostRequestCount += 1;
+      }
       send(200, success(!hashtagName || post.hashtagNames.includes(hashtagName) ? [post] : []));
       return;
     }
@@ -552,6 +564,7 @@ async function startMockWorker(port) {
     close: () => new Promise((resolve) => server.close(resolve)),
     fieldReportCount: () => state.fieldReports.length,
     reportTargetTypes: state.reportTargetTypes,
+    sharedPostRequestCount: () => state.sharedPostRequestCount,
     url: `http://127.0.0.1:${address.port}`,
   };
 }
@@ -729,7 +742,7 @@ function printHelp() {
   console.log(`Usage: node scripts/cloudflare-pages-local-report-smoke.mjs [--artifact-dir=artifacts/cloudflare-pages-smoke-worker-report-local]
 
 Starts a local mock Worker API and local Next dev server, then runs:
-  scripts/cloudflare-pages-smoke.mjs --mutating --report --require-photo
+  scripts/cloudflare-pages-smoke.mjs --mutating --report --require-photo --share-post-id=post-local-report-smoke
 
 Options:
   --artifact-dir=<path>
