@@ -1,0 +1,117 @@
+schema_version: 1
+
+project:
+  name: "silsigan"
+  slug: "silsigan"
+  platforms:
+    - "nextjs"
+    - "cloudflare-workers"
+    - "cloudflare-d1"
+    - "cloudflare-r2"
+    - "cloudflare-durable-objects"
+  owner: "me"
+  release_goal: "Supabase/Vercel regional MVP에서 Cloudflare 기반 전국 실시간 장소 앱으로 전환하고 staging/production 운영 증적을 분리 검증한다."
+
+candidate:
+  phase: "local_ready_external_blocked"
+  version: "0.1.0"
+  build_number: "not_applicable"
+  git_sha: "a567bc2"
+  branch: "agent/silsigan-map-click-fix-20260622-1456"
+  dirty_state: "main_worktree_dirty_matches_pushed_agent_branch_plus_untracked_evidence"
+  source_of_truth: "docs/current-release-state.md"
+
+local_checks:
+  - name: "Targeted Cloudflare API tests"
+    command: "pnpm test -- tests/cloudflare-api.test.ts"
+    status: "pass"
+    evidence: "108 tests passed on 2026-06-25"
+  - name: "Release gate plan"
+    command: "pnpm release:gate -- --plan-only"
+    status: "pass"
+    evidence: "docs/current-release-state.md"
+  - name: "Git diff whitespace check"
+    command: "git diff --check"
+    status: "pass"
+    evidence: "No output on 2026-06-25"
+
+runtime_checks:
+  - name: "Local Pages browser report"
+    target: "local"
+    status: "pass"
+    evidence: "docs/current-release-state.md"
+  - name: "Staging Worker smoke"
+    target: "cloudflare-staging"
+    status: "blocked"
+    evidence: "SILSIGAN_STAGING_API_BASE_URL is not configured"
+  - name: "Staging Pages browser smoke"
+    target: "cloudflare-staging"
+    status: "blocked"
+    evidence: "SILSIGAN_STAGING_PAGES_URL is not configured"
+
+external_checks:
+  - name: "Staging D1 posts/questions migration"
+    target: "cloudflare-d1-staging"
+    status: "pass"
+    evidence: "pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000: posts=4, questions=3, no pending migrations"
+  - name: "Production D1 posts/questions migration"
+    target: "cloudflare-d1-production"
+    status: "blocked"
+    evidence: "pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000: D1_0002_NOT_APPLIED"
+  - name: "R2 account and buckets"
+    target: "cloudflare-r2"
+    status: "blocked"
+    evidence: "pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000: R2_NOT_ENABLED"
+  - name: "Deployment URLs"
+    target: "cloudflare-pages-workers"
+    status: "blocked"
+    evidence: "SILSIGAN_STAGING_PAGES_URL, SILSIGAN_STAGING_API_BASE_URL, SILSIGAN_PRODUCTION_PAGES_URL, SILSIGAN_PRODUCTION_API_BASE_URL are missing"
+
+security:
+  secrets:
+    status: "pass_local"
+    evidence: "release gate and smoke artifacts redact token, coordinate, anonymous id, original filename patterns"
+  authz:
+    status: "pass_local"
+    evidence: "tests/cloudflare-api.test.ts covers deny-by-default admin token, role gates, moderation, and user restrictions"
+  privacy:
+    status: "pass_local"
+    evidence: "tests cover coarse radius, no raw coordinates in public responses, EXIF/GPS stripping, and filename minimization"
+  payments_legal:
+    status: "not_applicable"
+    evidence: "No payment flow in current release scope"
+
+blockers:
+  - id: "P0-SILSIGAN-R2-DASHBOARD"
+    severity: "P0"
+    status: "open"
+    title: "Cloudflare R2 account is not enabled, blocking Worker deploy and staging photo smoke."
+    owner: "me"
+    evidence: "R2_NOT_ENABLED"
+    due: "before_staging_release_candidate"
+  - id: "P0-SILSIGAN-DEPLOYMENT-URLS"
+    severity: "P0"
+    status: "open"
+    title: "Staging and production Pages/API deployment URLs are not configured."
+    owner: "me"
+    evidence: "deployment_url.* and *_URL_REQUIRED blockers"
+    due: "before_staging_release_candidate"
+  - id: "P0-SILSIGAN-PRODUCTION-D1-0002"
+    severity: "P0"
+    status: "open"
+    title: "Production D1 is missing 0002_posts_questions.sql and seed evidence."
+    owner: "me"
+    evidence: "D1_0002_NOT_APPLIED"
+    due: "before_production_candidate"
+  - id: "P0-SILSIGAN-STAGING-SMOKE"
+    severity: "P0"
+    status: "open"
+    title: "Real staging Worker, Pages, R2/Images mutation, admin moderation, and tail redaction smoke are not captured yet."
+    owner: "me"
+    evidence: "docs/current-release-state.md"
+    due: "before_public_release"
+
+next_action:
+  owner: "me"
+  command: "pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000"
+  description: "After enabling R2 in Cloudflare Dashboard, verify bucket visibility and continue to staging Worker/Pages URL evidence."
