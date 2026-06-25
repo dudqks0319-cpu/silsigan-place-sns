@@ -270,6 +270,7 @@ test("release state check separates ready fixtures from external release blocker
     const readyConfigPath = join(tempDir, "ready-wrangler.jsonc");
     const blockedConfigPath = join(tempDir, "blocked-wrangler.jsonc");
     const ledgerPath = join(tempDir, "current-release-state.md");
+    const externalStateReportPath = join(tempDir, "cloudflare-external-state.json");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       readyConfigPath,
@@ -292,6 +293,41 @@ test("release state check separates ready fixtures from external release blocker
       "utf8",
     );
     writeReleaseStateLedger(ledgerPath);
+    writeFileSync(
+      externalStateReportPath,
+      [
+        JSON.stringify(
+          {
+            ok: false,
+            checks: [
+              {
+                name: "cloudflare.r2.enabled",
+                status: "fail",
+                code: "R2_NOT_ENABLED",
+                message: "Cloudflare account R2 is not enabled. Enable R2 in the Cloudflare Dashboard before Worker deploy and staging photo smoke.",
+              },
+              {
+                name: "deployment_url.production.pages",
+                status: "fail",
+                code: "DEPLOYMENT_URL_REQUIRED",
+                message: "SILSIGAN_PRODUCTION_PAGES_URL is required.",
+              },
+              {
+                name: "cloudflare.d1.production.migration_0002",
+                status: "fail",
+                code: "D1_0002_NOT_APPLIED",
+                message: "Remote production D1 is missing the posts/questions migration.",
+              },
+            ],
+            blockers: ["R2_NOT_ENABLED", "deployment_url.production.pages", "D1_0002_NOT_APPLIED"],
+          },
+          null,
+          2,
+        ),
+        "pnpm failure footer should be ignored after JSON",
+      ].join("\n"),
+      "utf8",
+    );
 
     const releaseStateScript = new URL("../scripts/release-state-check.mjs", import.meta.url).pathname;
     const readyOutput = execFileSync(process.execPath, [
@@ -329,6 +365,7 @@ test("release state check separates ready fixtures from external release blocker
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
         `--release-status=${releaseStatusPath}`,
+        `--cloudflare-external-state-report=${externalStateReportPath}`,
         "--strict",
       ], {
         encoding: "utf8",
@@ -346,6 +383,9 @@ test("release state check separates ready fixtures from external release blocker
       assert.ok(blockedPayload.blockers.includes("staging.d1.DB.database_id"));
       assert.ok(blockedPayload.blockers.includes("staging.kv.CACHE.id"));
       assert.ok(blockedPayload.blockers.includes("deployment_url.staging.worker_api"));
+      assert.ok(blockedPayload.blockers.includes("R2_NOT_ENABLED"));
+      assert.ok(blockedPayload.blockers.includes("deployment_url.production.pages"));
+      assert.ok(blockedPayload.blockers.includes("D1_0002_NOT_APPLIED"));
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

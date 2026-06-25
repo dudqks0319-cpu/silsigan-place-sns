@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { access, readFile } from "node:fs/promises";
+import { summarizeExternalStateBlockers } from "./cloudflare-external-state-check.mjs";
 
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
 const DEFAULT_FRONTEND_CONFIG_PATH = "wrangler.jsonc";
@@ -56,6 +57,7 @@ const frontendConfigPath = options.get("frontend-config") ?? DEFAULT_FRONTEND_CO
 const ledgerPath = options.get("ledger") ?? DEFAULT_LEDGER_PATH;
 const releaseLedgerPath = options.get("release-ledger") ?? DEFAULT_RELEASE_LEDGER_PATH;
 const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATUS_PATH;
+const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
 
@@ -67,6 +69,7 @@ await checkOpenNextAdapter();
 await checkFrontendWranglerConfig(frontendConfigPath);
 await checkWranglerConfig(configPath);
 checkDeploymentUrls();
+await checkCloudflareExternalStateReport(cloudflareExternalStateReportPath);
 
 const blockers = checks.filter((check) => check.status === "fail");
 const warnings = checks.filter((check) => check.status === "warn");
@@ -79,7 +82,7 @@ const summary = {
   releaseLedgerPath,
   releaseStatusPath,
   checks,
-  blockers: blockers.map((check) => check.name),
+  blockers: summarizeReleaseBlockers(blockers),
   warnings: warnings.map((check) => check.name),
 };
 
@@ -185,6 +188,77 @@ async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, so
 function recordNoSecretLikePatterns(name, content, path) {
   const secretLikePattern = /(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|BEGIN (RSA |OPENSSH |PRIVATE )?PRIVATE KEY|SUPABASE_SERVICE_ROLE_KEY[=:][^\s]+|JWT_SECRET[=:][^\s]+)/i;
   record(name, secretLikePattern.test(content) ? "fail" : "pass", `${path} must not contain secret-like values.`);
+}
+
+async function checkCloudflareExternalStateReport(path) {
+  if (!path) {
+    return;
+  }
+
+  let report;
+  try {
+    report = parseJsonObjectFromText(await readFile(path, "utf8"));
+  } catch (error) {
+    record("cloudflare_external_state.report", "fail", `Cloudflare external-state report could not be read: ${publicErrorMessage(error)}`);
+    return;
+  }
+
+  if (!isRecord(report) || !Array.isArray(report.checks)) {
+    record("cloudflare_external_state.report", "fail", "Cloudflare external-state report must contain a checks array.");
+    return;
+  }
+
+  record("cloudflare_external_state.report", "pass", "Cloudflare external-state report was included in release status.", {
+    source: "cloudflare-external-state",
+    checkCount: report.checks.length,
+  });
+
+  for (const check of report.checks) {
+    if (!isRecord(check) || check.status !== "fail") {
+      continue;
+    }
+
+    const name = typeof check.name === "string" && check.name.length > 0 ? check.name : "cloudflare_external_state.unknown";
+    const message = typeof check.message === "string" && check.message.length > 0 ? check.message : "Cloudflare external-state check failed.";
+    record(name, "fail", message, {
+      ...safeExternalStateDetails(check),
+      source: "cloudflare-external-state",
+    });
+  }
+}
+
+function safeExternalStateDetails(check) {
+  const details = {};
+  if (typeof check.code === "string" && check.code.length > 0) {
+    details.code = check.code;
+  }
+  for (const key of ["missingBuckets", "missingSchema", "missingSeed"]) {
+    if (Array.isArray(check[key]) && check[key].every((value) => typeof value === "string")) {
+      details[key] = check[key];
+    }
+  }
+  if (isRecord(check.counts)) {
+    details.counts = Object.fromEntries(
+      Object.entries(check.counts).filter(([, value]) => typeof value === "number" && Number.isFinite(value)),
+    );
+  }
+  return details;
+}
+
+function summarizeReleaseBlockers(failedChecks) {
+  const blockerNames = [];
+  const seen = new Set();
+
+  for (const check of failedChecks) {
+    const [blockerName] = check.source === "cloudflare-external-state" ? summarizeExternalStateBlockers([check]) : [];
+    const name = blockerName ?? check.name;
+    if (typeof name === "string" && name.length > 0 && !seen.has(name)) {
+      seen.add(name);
+      blockerNames.push(name);
+    }
+  }
+
+  return blockerNames;
 }
 
 function extractOpenReleaseBlockerIds(releaseLedger) {
@@ -600,6 +674,51 @@ function stripJsonComments(source) {
   }
 
   return output;
+}
+
+function parseJsonObjectFromText(text) {
+  const start = text.indexOf("{");
+  if (start === -1) {
+    throw new Error("No JSON object found.");
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const current = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (current === "\\") {
+        escaped = true;
+      } else if (current === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (current === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (current === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return JSON.parse(text.slice(start, index + 1));
+      }
+    }
+  }
+
+  throw new Error("No complete JSON object found.");
 }
 
 function parseArgs(rawArgs) {
