@@ -17,6 +17,7 @@ const pagesLocalReportSmoke = await import(new URL("../scripts/cloudflare-pages-
 const releaseGate = await import(new URL("../scripts/cloudflare-release-gate.mjs", import.meta.url).href);
 const externalState = await import(new URL("../scripts/cloudflare-external-state-check.mjs", import.meta.url).href);
 const d1ReleaseEvidence = await import(new URL("../scripts/cloudflare-d1-release-evidence.mjs", import.meta.url).href);
+const r2ReleaseEvidence = await import(new URL("../scripts/cloudflare-r2-release-evidence.mjs", import.meta.url).href);
 
 type SuccessPayload<TData> = {
   success: true;
@@ -1029,6 +1030,74 @@ test("Cloudflare D1 release evidence planner gates mutating production apply", a
         ["d1.migrations.apply", true],
         ["d1.seed.apply", true],
         ["d1.posts_questions.evidence", false],
+      ],
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare R2 release evidence planner defaults to non-mutating steps", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-r2-release-plan-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const parsed = r2ReleaseEvidence.parseArgs(["--env=staging", "--config", configPath]);
+    const plan = (await r2ReleaseEvidence.resolveR2ReleaseEvidencePlan({
+      flags: parsed.flags,
+      options: parsed.options,
+      env: {},
+    })) as {
+      ok: boolean;
+      mode: string;
+      targets: Array<{ envName: string; bucketNames: string[]; steps: Array<{ name: string; applyOnly?: boolean }> }>;
+    };
+
+    assert.equal(plan.ok, true);
+    assert.equal(plan.mode, "plan-only");
+    assert.equal(plan.targets[0]?.envName, "staging");
+    assert.deepEqual(plan.targets[0]?.bucketNames, ["silsigan-photos-staging"]);
+    assert.deepEqual(
+      plan.targets[0]?.steps.map((step) => step.name),
+      ["r2.buckets.list"],
+    );
+    assert.equal(plan.targets[0]?.steps.some((step) => step.applyOnly), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare R2 release evidence planner gates mutating production apply", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-r2-release-production-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const blockedArgs = r2ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply"]);
+    const blocked = (await r2ReleaseEvidence.resolveR2ReleaseEvidencePlan({
+      flags: blockedArgs.flags,
+      options: blockedArgs.options,
+      env: {},
+    })) as { ok: boolean; errors: Array<{ code: string }> };
+    assert.equal(blocked.ok, false);
+    assert.ok(blocked.errors.some((error) => error.code === "PRODUCTION_CONFIRMATION_REQUIRED"));
+
+    const confirmedArgs = r2ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply", "--confirm-production"]);
+    const confirmed = (await r2ReleaseEvidence.resolveR2ReleaseEvidencePlan({
+      flags: confirmedArgs.flags,
+      options: confirmedArgs.options,
+      env: {},
+    })) as {
+      ok: boolean;
+      mode: string;
+      targets: Array<{ steps: Array<{ name: string; bucketName?: string; applyOnly?: boolean }> }>;
+    };
+    assert.equal(confirmed.ok, true);
+    assert.equal(confirmed.mode, "apply");
+    assert.deepEqual(
+      confirmed.targets[0]?.steps.map((step) => [step.name, step.bucketName ?? null, Boolean(step.applyOnly)]),
+      [
+        ["r2.buckets.list", null, false],
+        ["r2.bucket.create", "silsigan-photos-production", true],
       ],
     );
   } finally {
