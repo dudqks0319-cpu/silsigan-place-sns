@@ -447,6 +447,57 @@ test("release state check blocks on open release harness blockers", () => {
   }
 });
 
+test("release state check rejects duplicated next action runbook lines", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-next-actions-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath, { duplicateNextActionLine: true });
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when next actions repeat an operator instruction");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; duplicates?: string[] }>;
+      };
+      const duplicateCheck = payload.checks.find((check) => check.name === "ledger.next_actions.duplicate_lines");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("ledger.next_actions.duplicate_lines"));
+      assert.equal(duplicateCheck?.status, "fail");
+      assert.deepEqual(duplicateCheck?.duplicates, ["R2 check passes before staging Worker/Pages URL smoke can begin."]);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("release state check rejects legacy Supabase and Vercel artifacts", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-state-legacy-"));
   try {
@@ -1807,10 +1858,18 @@ function createPreflightConfig(ids: { stagingD1Id: string; stagingKvId: string }
   };
 }
 
-function writeReleaseStateLedger(path: string) {
+function writeReleaseStateLedger(path: string, options: { duplicateNextActionLine?: boolean } = {}) {
+  const nextActions = ["## Next Actions"];
+  if (options.duplicateNextActionLine) {
+    nextActions.push(
+      "R2 check passes before staging Worker/Pages URL smoke can begin.",
+      "R2 check passes before staging Worker/Pages URL smoke can begin.",
+    );
+  }
+
   writeFileSync(
     path,
-    ["## Objective", "## Local Code State", "## Latest Local Verification", "## Cloudflare External State", "## Release Decision", "## Next Actions"].join("\n\n"),
+    ["## Objective", "## Local Code State", "## Latest Local Verification", "## Cloudflare External State", "## Release Decision", ...nextActions].join("\n\n"),
     "utf8",
   );
 }

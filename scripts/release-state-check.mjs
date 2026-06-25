@@ -95,6 +95,13 @@ async function checkLedger(path) {
     for (const section of REQUIRED_LEDGER_SECTIONS) {
       record(`ledger.${section.replace(/^##\s+/, "").toLowerCase().replaceAll(" ", "_")}`, ledger.includes(section) ? "pass" : "fail", `${section} section is required.`);
     }
+    const duplicateNextActionLines = findDuplicateSignificantLines(extractMarkdownSection(ledger, "## Next Actions"));
+    record(
+      "ledger.next_actions.duplicate_lines",
+      duplicateNextActionLines.length === 0 ? "pass" : "fail",
+      duplicateNextActionLines.length === 0 ? "## Next Actions has no duplicated operator instructions." : "## Next Actions must not repeat the same operator instruction.",
+      { duplicates: duplicateNextActionLines },
+    );
     record("ledger.current_release_state", "pass", "current release state ledger is present.");
   } catch (error) {
     record("ledger.current_release_state", "fail", publicErrorMessage(error));
@@ -184,6 +191,38 @@ function extractOpenReleaseBlockerIds(releaseLedger) {
       const idMatch = blocker.match(/^\s*(?:-\s*)?id:\s*"?([^"\n]+)"?\s*$/m);
       return idMatch?.[1] ?? `open-blocker-${index + 1}`;
     });
+}
+
+function extractMarkdownSection(markdown, heading) {
+  const sectionStart = markdown.indexOf(heading);
+  if (sectionStart === -1) {
+    return "";
+  }
+
+  const bodyStart = sectionStart + heading.length;
+  const nextSectionStart = markdown.indexOf("\n## ", bodyStart);
+  return markdown.slice(bodyStart, nextSectionStart === -1 ? markdown.length : nextSectionStart);
+}
+
+function findDuplicateSignificantLines(text) {
+  const seenLines = new Set();
+  const duplicates = [];
+  const seenDuplicates = new Set();
+
+  for (const rawLine of text.split("\n")) {
+    const normalizedLine = rawLine.trim().replace(/\s+/g, " ");
+    if (normalizedLine.length < 30 || normalizedLine === "```bash" || normalizedLine === "```") {
+      continue;
+    }
+
+    if (seenLines.has(normalizedLine) && !seenDuplicates.has(normalizedLine)) {
+      duplicates.push(normalizedLine);
+      seenDuplicates.add(normalizedLine);
+    }
+    seenLines.add(normalizedLine);
+  }
+
+  return duplicates;
 }
 
 async function checkLegacyArtifacts() {
