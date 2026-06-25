@@ -16,6 +16,7 @@ const pagesSmoke = await import(new URL("../scripts/cloudflare-pages-smoke.mjs",
 const pagesLocalReportSmoke = await import(new URL("../scripts/cloudflare-pages-local-report-smoke.mjs", import.meta.url).href);
 const releaseGate = await import(new URL("../scripts/cloudflare-release-gate.mjs", import.meta.url).href);
 const externalState = await import(new URL("../scripts/cloudflare-external-state-check.mjs", import.meta.url).href);
+const d1ReleaseEvidence = await import(new URL("../scripts/cloudflare-d1-release-evidence.mjs", import.meta.url).href);
 
 type SuccessPayload<TData> = {
   success: true;
@@ -963,6 +964,76 @@ test("Cloudflare external state check classifies remote D1 migration and seed ev
   assert.equal(ready.name, "cloudflare.d1.staging.migration_0002");
   assert.equal(ready.status, "pass");
   assert.deepEqual(ready.counts, { posts: 4, questions: 3 });
+});
+
+test("Cloudflare D1 release evidence planner defaults to non-mutating steps", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-release-plan-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const parsed = d1ReleaseEvidence.parseArgs(["--env=staging", "--config", configPath]);
+    const plan = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: parsed.flags,
+      options: parsed.options,
+      env: {},
+    })) as {
+      ok: boolean;
+      mode: string;
+      targets: Array<{ envName: string; databaseName: string; steps: Array<{ name: string; applyOnly?: boolean }> }>;
+    };
+
+    assert.equal(plan.ok, true);
+    assert.equal(plan.mode, "plan-only");
+    assert.equal(plan.targets[0]?.envName, "staging");
+    assert.equal(plan.targets[0]?.databaseName, "silsigan-staging");
+    assert.deepEqual(
+      plan.targets[0]?.steps.map((step) => step.name),
+      ["d1.migrations.list", "d1.posts_questions.evidence"],
+    );
+    assert.equal(plan.targets[0]?.steps.some((step) => step.applyOnly), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare D1 release evidence planner gates mutating production apply", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-release-production-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const blockedArgs = d1ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply"]);
+    const blocked = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: blockedArgs.flags,
+      options: blockedArgs.options,
+      env: {},
+    })) as { ok: boolean; errors: Array<{ code: string }> };
+    assert.equal(blocked.ok, false);
+    assert.ok(blocked.errors.some((error) => error.code === "PRODUCTION_CONFIRMATION_REQUIRED"));
+
+    const confirmedArgs = d1ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply", "--confirm-production"]);
+    const confirmed = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: confirmedArgs.flags,
+      options: confirmedArgs.options,
+      env: {},
+    })) as {
+      ok: boolean;
+      mode: string;
+      targets: Array<{ steps: Array<{ name: string; applyOnly?: boolean }> }>;
+    };
+    assert.equal(confirmed.ok, true);
+    assert.equal(confirmed.mode, "apply");
+    assert.deepEqual(
+      confirmed.targets[0]?.steps.map((step) => [step.name, Boolean(step.applyOnly)]),
+      [
+        ["d1.migrations.list", false],
+        ["d1.migrations.apply", true],
+        ["d1.seed.apply", true],
+        ["d1.posts_questions.evidence", false],
+      ],
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("Cloudflare external state check classifies deployment URL blockers without leaking raw URL values", () => {
