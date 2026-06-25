@@ -13,6 +13,7 @@ const DEFAULT_REGION_ID = "busan";
 const DEFAULT_ARTIFACT_DIR = "artifacts/cloudflare-pages-smoke-worker-report-local";
 const requiredSmokeCheckNames = [
   "map.controlsUncovered",
+  "layout.bottomNavOpaque",
   "map.trafficButton",
   "map.filterButton",
   "map.requeryButton",

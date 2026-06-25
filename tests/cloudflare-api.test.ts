@@ -812,9 +812,10 @@ test("local Pages report smoke validates redacted network artifacts and required
       /missing report target types: video/,
     );
 
-    const requiredCheckNames = ["map.controlsUncovered", "map.trafficButton", "onboarding.dismiss", "reports.photoCreate"];
+    const requiredCheckNames = ["map.controlsUncovered", "layout.bottomNavOpaque", "map.trafficButton", "onboarding.dismiss", "reports.photoCreate"];
     const safeChecks = [
       { name: "map.controlsUncovered", status: "pass" },
+      { name: "layout.bottomNavOpaque", status: "pass" },
       { name: "map.trafficButton", status: "pass" },
       { name: "onboarding.dismiss", status: "pass" },
       { name: "reports.photoCreate", status: "pass" },

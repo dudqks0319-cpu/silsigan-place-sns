@@ -527,6 +527,8 @@ async function runMapControlChecks(client, config) {
   await assertTextButtonAboveBottomNav(client, "이 지역 다시 검색");
   await assertTextButtonAboveBottomNav(client, "현재 위치");
   record(config.checks, "map.controlsUncovered", "pass", "초기 지도 도구와 현재 위치 버튼이 하단 내비게이션에 가려지지 않습니다.");
+  await assertBottomNavOpaque(client, config.timeoutMs);
+  record(config.checks, "layout.bottomNavOpaque", "pass", "하단 내비게이션이 뒤쪽 버튼을 비쳐 보이게 하지 않습니다.");
 
   await clickHitTestedTextButton(client, "교통 켜기");
   await waitForEvaluate(
@@ -606,6 +608,22 @@ async function runMapControlChecks(client, config) {
   await clickHitTestedTextButton(client, "지도", { exact: true });
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "bottomNav.map", config.timeoutMs);
   record(config.checks, "bottomNav.map", "pass", "하단 지도 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
+}
+
+async function assertBottomNavOpaque(client, timeoutMs) {
+  await waitForEvaluate(
+    client,
+    `
+      (() => {
+        const nav = document.querySelector('[class*="bottomNav"]');
+        if (!(nav instanceof HTMLElement)) return false;
+        const color = getComputedStyle(nav).backgroundColor.replaceAll(' ', '');
+        return color === 'rgb(255,255,255)' || color === 'rgba(255,255,255,1)';
+      })()
+    `,
+    "layout.bottomNavOpaque",
+    timeoutMs,
+  );
 }
 
 async function dismissOnboardingIfPresent(client, timeoutMs) {

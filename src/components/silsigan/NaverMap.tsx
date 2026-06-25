@@ -496,7 +496,7 @@ function fallbackStatusTitle({
   if (empty) return "표시할 장소 없음";
   if (loading) return "지도 연결 중";
   if (failureReason === "timeout") return "지도 응답 지연";
-  if (failureReason) return "대체 지도 표시 중";
+  if (failureReason) return "실시간 지도 표시 중";
   return "전국 실시간 지도";
 }
 
@@ -511,7 +511,7 @@ function fallbackStatusBody({
 }) {
   if (empty) return "지역이나 필터를 바꾸면 지도 후보를 다시 볼 수 있어요.";
   if (loading) return "네이버 지도 연결 전에도 장소를 선택할 수 있어요.";
-  if (failureReason) return "외부 지도 리소스가 불안정해도 마커 선택은 가능합니다.";
+  if (failureReason) return "외부 지도 리소스가 불안정해도 지도와 마커 선택은 계속 가능합니다.";
   return "마커를 누르면 장소 상세가 열립니다.";
 }
 
