@@ -645,6 +645,10 @@ test("Cloudflare release gate plan orders strict staging and browser evidence wi
       "frontend.wranglerDryRun.staging",
       "frontend.wranglerDryRun.production",
       "cloudflare.preflight",
+      "cloudflare.r2Evidence.staging",
+      "cloudflare.d1Evidence.staging",
+      "cloudflare.r2Evidence.production",
+      "cloudflare.d1Evidence.production",
       "cloudflare.externalState",
       "wrangler.dryRun.staging",
       "wrangler.dryRun.production",
@@ -652,6 +656,18 @@ test("Cloudflare release gate plan orders strict staging and browser evidence wi
       "pages.browser.smoke",
     ],
   );
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "cloudflare.r2Evidence.staging")?.args, [
+    "cf:r2:evidence",
+    "--",
+    "--env=staging",
+    "--check",
+  ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "cloudflare.d1Evidence.production")?.args, [
+    "cf:d1:evidence",
+    "--",
+    "--env=production",
+    "--check",
+  ]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.args, ["smoke:staging", "--", "--mutating", "--require-admin"]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.args, [
     "smoke:pages",

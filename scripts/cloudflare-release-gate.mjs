@@ -157,6 +157,10 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
   steps.push(step("frontend.wranglerDryRun.staging", ["cf:web:dry-run:staging"]));
   steps.push(step("frontend.wranglerDryRun.production", ["cf:web:dry-run:production"]));
   steps.push(step("cloudflare.preflight", ["cf:preflight"]));
+  steps.push(step("cloudflare.r2Evidence.staging", ["cf:r2:evidence", "--", "--env=staging", "--check"]));
+  steps.push(step("cloudflare.d1Evidence.staging", ["cf:d1:evidence", "--", "--env=staging", "--check"]));
+  steps.push(step("cloudflare.r2Evidence.production", ["cf:r2:evidence", "--", "--env=production", "--check"]));
+  steps.push(step("cloudflare.d1Evidence.production", ["cf:d1:evidence", "--", "--env=production", "--check"]));
   steps.push(step("cloudflare.externalState", ["cf:external-state"]));
 
   if (!flags.has("skip-dry-run")) {
@@ -572,6 +576,10 @@ Runs the release evidence chain:
   pnpm release:status -- --strict
   pnpm audit --audit-level critical
   pnpm cf:preflight
+  pnpm cf:r2:evidence -- --env=staging --check
+  pnpm cf:d1:evidence -- --env=staging --check
+  pnpm cf:r2:evidence -- --env=production --check
+  pnpm cf:d1:evidence -- --env=production --check
   pnpm cf:dry-run:staging / cf:dry-run:production
   pnpm smoke:staging
   pnpm smoke:pages
