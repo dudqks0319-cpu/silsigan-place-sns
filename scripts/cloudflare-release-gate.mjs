@@ -13,6 +13,17 @@ const COORDINATE_STATUS_REQUIRED_ENV_KEYS = [
   "SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE",
   "SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE",
 ];
+const CANONICAL_BLOCKER_ALIASES = new Map([
+  ["PAGES_URL_REQUIRED", "deployment_url.staging.pages"],
+  ["BASE_URL_REQUIRED", "deployment_url.staging.worker_api"],
+  ["staging.pages.url", "deployment_url.staging.pages"],
+  ["staging.worker_api.url", "deployment_url.staging.worker_api"],
+  ["production.pages.url", "deployment_url.production.pages"],
+  ["production.worker_api.url", "deployment_url.production.worker_api"],
+  ["cloudflare.r2.enabled", "R2_NOT_ENABLED"],
+  ["cloudflare.d1.production.migration_0002", "D1_0002_NOT_APPLIED"],
+  ["DEPLOYMENT_URL_REQUIRED", null],
+]);
 
 if (isCliEntryPoint()) {
   await main();
@@ -442,7 +453,10 @@ function collectBlockerCode(blockers, value) {
 
   const blocker = value.trim();
   if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(blocker)) {
-    blockers.push(blocker);
+    const canonicalBlocker = CANONICAL_BLOCKER_ALIASES.has(blocker) ? CANONICAL_BLOCKER_ALIASES.get(blocker) : blocker;
+    if (canonicalBlocker) {
+      blockers.push(canonicalBlocker);
+    }
   }
 }
 

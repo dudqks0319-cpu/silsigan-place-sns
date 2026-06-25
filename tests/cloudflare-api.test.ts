@@ -1147,9 +1147,8 @@ test("Cloudflare release gate summarizes failed collect-blockers steps without s
       "release_harness.ledger.open_blockers",
       "deployment_url.staging.pages",
       "deployment_url.staging.worker_api",
-      "PAGES_URL_REQUIRED",
       "deployment_url.production.worker_api",
-      "cloudflare.r2.enabled",
+      "R2_NOT_ENABLED",
     ],
   });
   assert.equal(JSON.stringify(summary).includes("super-secret"), false);
