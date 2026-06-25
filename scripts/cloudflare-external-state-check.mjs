@@ -25,6 +25,13 @@ const DEPLOYMENT_URL_ENV_BY_ENV = {
     worker_api: "SILSIGAN_PRODUCTION_API_BASE_URL",
   },
 };
+const FIELD_SPECIFIC_BLOCKER_CODES = new Set([
+  "DEPLOYMENT_URL_REQUIRED",
+  "DEPLOYMENT_URL_PLACEHOLDER",
+  "DEPLOYMENT_URL_INVALID",
+  "DEPLOYMENT_URL_UNSAFE",
+  "DEPLOYMENT_URL_DUPLICATE",
+]);
 
 if (isCliEntryPoint()) {
   await main();
@@ -233,6 +240,21 @@ export function classifyDeploymentUrlState(env = process.env, targetEnvs = DEFAU
   return checks;
 }
 
+export function summarizeExternalStateBlockers(failedChecks) {
+  const blockers = [];
+  const seen = new Set();
+
+  for (const check of failedChecks) {
+    const blocker = externalStateBlockerForCheck(check);
+    if (blocker && !seen.has(blocker)) {
+      seen.add(blocker);
+      blockers.push(blocker);
+    }
+  }
+
+  return blockers;
+}
+
 async function main() {
   const { flags, options } = parseArgs(process.argv.slice(2));
   if (flags.has("help")) {
@@ -341,7 +363,7 @@ async function main() {
         configPath,
         envs: targetEnvs,
         checks,
-        blockers: failed.map((check) => check.name),
+        blockers: summarizeExternalStateBlockers(failed),
       },
       null,
       2,
@@ -443,12 +465,32 @@ function classifyUrlSeparation(parsedUrls, leftKey, rightKey, message) {
   };
 }
 
+function externalStateBlockerForCheck(check) {
+  if (!isRecord(check)) {
+    return null;
+  }
+
+  if (FIELD_SPECIFIC_BLOCKER_CODES.has(check.code)) {
+    return typeof check.name === "string" ? check.name : check.code;
+  }
+
+  if (typeof check.code === "string" && check.code.length > 0) {
+    return check.code;
+  }
+
+  return typeof check.name === "string" ? check.name : null;
+}
+
 function hasPlaceholder(value) {
   return /TODO|^<.*>$|REPLACE_ME|CHANGE_ME/i.test(String(value));
 }
 
 function isLocalhost(hostname) {
   return hostname === "localhost" || hostname === "0.0.0.0" || hostname === "::1" || /^127\./.test(hostname) || hostname.endsWith(".local");
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stripJsonComments(source) {

@@ -1401,6 +1401,27 @@ test("Cloudflare external state check classifies deployment URL blockers without
   assert.ok(duplicateChecks.some((check: { name: string; status: string; code?: string }) => check.name === "deployment_urls.staging.worker_api.production.worker_api" && check.status === "fail" && check.code === "DEPLOYMENT_URL_DUPLICATE"));
 });
 
+test("Cloudflare external state check summarizes canonical release blockers", () => {
+  const blockers = externalState.summarizeExternalStateBlockers([
+    { name: "cloudflare.r2.enabled", status: "fail", code: "R2_NOT_ENABLED" },
+    { name: "deployment_url.staging.pages", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
+    { name: "deployment_url.staging.worker_api", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
+    { name: "deployment_url.production.pages", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
+    { name: "deployment_url.production.worker_api", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
+    { name: "cloudflare.d1.production.migration_0002", status: "fail", code: "D1_0002_NOT_APPLIED" },
+    { name: "cloudflare.d1.production.migration_0002", status: "fail", code: "D1_0002_NOT_APPLIED" },
+  ]);
+
+  assert.deepEqual(blockers, [
+    "R2_NOT_ENABLED",
+    "deployment_url.staging.pages",
+    "deployment_url.staging.worker_api",
+    "deployment_url.production.pages",
+    "deployment_url.production.worker_api",
+    "D1_0002_NOT_APPLIED",
+  ]);
+});
+
 test("Cloudflare release gate requires a tail file when tail evidence is mandatory", () => {
   const parsed = releaseGate.parseArgs(["--tail-required"]);
   const plan = releaseGate.resolveReleaseGatePlan({ flags: parsed.flags, options: parsed.options, env: {} });
