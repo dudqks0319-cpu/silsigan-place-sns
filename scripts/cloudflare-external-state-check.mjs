@@ -7,6 +7,14 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
 const DEFAULT_ENVS = ["staging", "production"];
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
+const D1_RELEASE_EVIDENCE_QUERY = [
+  "SELECT 'posts_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'posts'",
+  "SELECT 'questions_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'questions'",
+  "SELECT 'post_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_posts_place_created', 'idx_posts_status_created')",
+  "SELECT 'question_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_questions_place_created', 'idx_questions_anon_created')",
+  "SELECT 'posts=' || COUNT(*) FROM posts",
+  "SELECT 'questions=' || COUNT(*) FROM questions",
+].join("; ");
 const DEPLOYMENT_URL_ENV_BY_ENV = {
   staging: {
     pages: "SILSIGAN_STAGING_PAGES_URL",
@@ -68,6 +76,25 @@ export async function readExpectedR2BucketNames(configPath = DEFAULT_CONFIG_PATH
   return [...new Set(expected)];
 }
 
+export async function readExpectedD1Databases(configPath = DEFAULT_CONFIG_PATH, targetEnvs = DEFAULT_ENVS) {
+  const config = JSON.parse(stripJsonComments(await readFile(configPath, "utf8")));
+  const expected = [];
+
+  for (const envName of targetEnvs) {
+    const envConfig = envName === "" ? config : config.env?.[envName];
+    const databases = Array.isArray(envConfig?.d1_databases) ? envConfig.d1_databases : [];
+    const db = databases.find((database) => database?.binding === "DB") ?? databases[0];
+    if (typeof db?.database_name !== "string" || db.database_name.length === 0) {
+      expected.push({ envName, databaseName: null, binding: typeof db?.binding === "string" ? db.binding : null });
+      continue;
+    }
+
+    expected.push({ envName, databaseName: db.database_name, binding: typeof db?.binding === "string" ? db.binding : null });
+  }
+
+  return expected;
+}
+
 export function classifyR2BucketListResult(result, expectedBucketNames = []) {
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 
@@ -105,6 +132,72 @@ export function classifyR2BucketListResult(result, expectedBucketNames = []) {
     status: "pass",
     message: "Cloudflare R2 is enabled and required project buckets are visible to Wrangler.",
     bucketCount: expectedBucketNames.length,
+  };
+}
+
+export function classifyD1MigrationResult(result, envName) {
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const name = `cloudflare.d1.${envName}.migration_0002`;
+
+  if (result.exitCode !== 0) {
+    if (/no such table:\s*(posts|questions)|SQLITE_ERROR/i.test(output)) {
+      return {
+        name,
+        status: "fail",
+        code: "D1_0002_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the posts/questions migration.`,
+      };
+    }
+
+    return {
+      name,
+      status: "fail",
+      code: "D1_REMOTE_CHECK_FAILED",
+      message: `Could not read remote ${envName} D1 migration state with Wrangler.`,
+      outputTail: sanitizeWranglerOutput(tail(output, 1_500)),
+    };
+  }
+
+  const counters = parseD1Counters(output);
+  const missingSchema = [];
+  if ((counters.posts_table ?? 0) < 1) missingSchema.push("posts");
+  if ((counters.questions_table ?? 0) < 1) missingSchema.push("questions");
+  if ((counters.post_indexes ?? 0) < 2) missingSchema.push("posts indexes");
+  if ((counters.question_indexes ?? 0) < 2) missingSchema.push("questions indexes");
+
+  if (missingSchema.length > 0) {
+    return {
+      name,
+      status: "fail",
+      code: "D1_0002_NOT_APPLIED",
+      message: `Remote ${envName} D1 is missing ${missingSchema.join(", ")} from 0002_posts_questions.sql.`,
+      missingSchema,
+    };
+  }
+
+  const missingSeed = [];
+  if ((counters.posts ?? 0) < 4) missingSeed.push("posts");
+  if ((counters.questions ?? 0) < 3) missingSeed.push("questions");
+
+  if (missingSeed.length > 0) {
+    return {
+      name: `cloudflare.d1.${envName}.seed_posts_questions`,
+      status: "fail",
+      code: "D1_SEED_INCOMPLETE",
+      message: `Remote ${envName} D1 posts/questions seed evidence is incomplete.`,
+      missingSeed,
+      counts: counters,
+    };
+  }
+
+  return {
+    name,
+    status: "pass",
+    message: `Remote ${envName} D1 has posts/questions schema and seed evidence.`,
+    counts: {
+      posts: counters.posts,
+      questions: counters.questions,
+    },
   };
 }
 
@@ -153,6 +246,7 @@ async function main() {
   const checks = [];
 
   let expectedBucketNames = [];
+  let expectedD1Databases = [];
   try {
     expectedBucketNames = await readExpectedR2BucketNames(configPath, targetEnvs);
     record(checks, "wrangler.config.r2Buckets", "pass", "Expected R2 bucket names were read from wrangler config.", {
@@ -160,6 +254,15 @@ async function main() {
     });
   } catch (error) {
     record(checks, "wrangler.config.r2Buckets", "fail", publicErrorMessage(error));
+  }
+
+  try {
+    expectedD1Databases = await readExpectedD1Databases(configPath, targetEnvs);
+    record(checks, "wrangler.config.d1Databases", "pass", "Expected D1 database names were read from wrangler config.", {
+      databaseCount: expectedD1Databases.filter((database) => database.databaseName).length,
+    });
+  } catch (error) {
+    record(checks, "wrangler.config.d1Databases", "fail", publicErrorMessage(error));
   }
 
   if (!flags.has("skip-whoami")) {
@@ -178,6 +281,41 @@ async function main() {
 
   if (!flags.has("skip-deployment-urls")) {
     checks.push(...classifyDeploymentUrlState(process.env, targetEnvs));
+  }
+
+  if (!flags.has("skip-d1")) {
+    for (const database of expectedD1Databases) {
+      if (!database.databaseName) {
+        record(
+          checks,
+          `cloudflare.d1.${database.envName}.database_name`,
+          "fail",
+          `workers/api wrangler config must define a D1 database_name for ${database.envName}.`,
+          { code: "D1_DATABASE_NAME_REQUIRED" },
+        );
+        continue;
+      }
+
+      const d1Result = await runCommand(
+        "npx",
+        [
+          "--yes",
+          "wrangler",
+          "d1",
+          "execute",
+          database.databaseName,
+          "--remote",
+          "--env",
+          database.envName,
+          "--config",
+          configPath,
+          "--command",
+          D1_RELEASE_EVIDENCE_QUERY,
+        ],
+        timeoutMs,
+      );
+      checks.push(classifyD1MigrationResult(d1Result, database.envName));
+    }
   }
 
   if (!flags.has("skip-dry-run")) {
@@ -365,6 +503,17 @@ function stripJsonComments(source) {
   return output;
 }
 
+function parseD1Counters(output) {
+  const counters = {};
+  const matcher = /\b(posts_table|questions_table|post_indexes|question_indexes|posts|questions)=(\d+)\b/g;
+  let match = matcher.exec(output);
+  while (match) {
+    counters[match[1]] = Number(match[2]);
+    match = matcher.exec(output);
+  }
+  return counters;
+}
+
 function record(checks, name, status, message, details = {}) {
   checks.push({ name, status, message, ...details });
 }
@@ -392,12 +541,14 @@ function printHelp() {
 Checks non-mutating Cloudflare account state needed before staging release evidence:
   wrangler whoami
   wrangler r2 bucket list
+  remote D1 posts/questions migration and seed read check
   staging/production deployment URL shape
   wrangler deploy --dry-run --env <env>
 
 Options:
   --skip-whoami           Skip Wrangler OAuth/account read check.
   --skip-r2               Skip R2 account and bucket visibility check.
+  --skip-d1               Skip remote D1 migration and seed evidence check.
   --skip-deployment-urls  Skip staging/production deployment URL shape checks.
   --skip-dry-run          Skip Worker dry-run checks.
   --timeout-ms N          Per-command timeout.

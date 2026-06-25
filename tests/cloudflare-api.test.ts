@@ -925,6 +925,46 @@ test("Cloudflare external state check requires configured R2 buckets when R2 is 
   assert.deepEqual(check.missingBuckets, ["silsigan-photos-production"]);
 });
 
+test("Cloudflare external state check classifies remote D1 migration and seed evidence", () => {
+  const missingMigration = externalState.classifyD1MigrationResult(
+    {
+      exitCode: 1,
+      stdout: "",
+      stderr: "SQLITE_ERROR: no such table: posts",
+    },
+    "staging",
+  );
+  assert.equal(missingMigration.name, "cloudflare.d1.staging.migration_0002");
+  assert.equal(missingMigration.status, "fail");
+  assert.equal(missingMigration.code, "D1_0002_NOT_APPLIED");
+  assert.equal(JSON.stringify(missingMigration).includes("no such table"), false);
+
+  const incompleteSeed = externalState.classifyD1MigrationResult(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nposts=3\nquestions=2\n",
+      stderr: "",
+    },
+    "production",
+  );
+  assert.equal(incompleteSeed.name, "cloudflare.d1.production.seed_posts_questions");
+  assert.equal(incompleteSeed.status, "fail");
+  assert.equal(incompleteSeed.code, "D1_SEED_INCOMPLETE");
+  assert.deepEqual(incompleteSeed.missingSeed, ["posts", "questions"]);
+
+  const ready = externalState.classifyD1MigrationResult(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nposts=4\nquestions=3\n",
+      stderr: "",
+    },
+    "staging",
+  );
+  assert.equal(ready.name, "cloudflare.d1.staging.migration_0002");
+  assert.equal(ready.status, "pass");
+  assert.deepEqual(ready.counts, { posts: 4, questions: 3 });
+});
+
 test("Cloudflare external state check classifies deployment URL blockers without leaking raw URL values", () => {
   const missingChecks = externalState.classifyDeploymentUrlState({}, ["staging"]);
   assert.deepEqual(
