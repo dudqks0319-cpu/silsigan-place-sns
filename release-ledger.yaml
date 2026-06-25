@@ -33,7 +33,7 @@ local_checks:
   - name: "Release gate plan"
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
-    evidence: "docs/current-release-state.md"
+    evidence: "docs/current-release-state.md; staging.api.smoke and pages.browser.smoke expose required staging URL envKeys"
   - name: "Git diff whitespace check"
     command: "git diff --check"
     status: "pass"

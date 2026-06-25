@@ -169,13 +169,16 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
   }
 
   const stagingSmokeArgs = ["smoke:staging"];
+  const stagingSmokeEnvKeys = ["SILSIGAN_STAGING_API_BASE_URL"];
   if (mutating) {
     stagingSmokeArgs.push("--", "--mutating", "--require-admin");
+    stagingSmokeEnvKeys.push(...MUTATING_REQUIRED_ENV_KEYS);
     if (coordinateStatus) {
       stagingSmokeArgs.push("--coordinate-status");
+      stagingSmokeEnvKeys.push(...COORDINATE_STATUS_REQUIRED_ENV_KEYS);
     }
   }
-  steps.push(step("staging.api.smoke", stagingSmokeArgs, mutating ? [...MUTATING_REQUIRED_ENV_KEYS, ...(coordinateStatus ? COORDINATE_STATUS_REQUIRED_ENV_KEYS : [])] : []));
+  steps.push(step("staging.api.smoke", stagingSmokeArgs, stagingSmokeEnvKeys));
 
   const pagesSmokeArgs = ["smoke:pages"];
   const pagesSmokeFlags = [];
@@ -185,7 +188,7 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
   if (pagesSmokeFlags.length > 0) {
     pagesSmokeArgs.push("--", ...pagesSmokeFlags);
   }
-  steps.push(step("pages.browser.smoke", pagesSmokeArgs));
+  steps.push(step("pages.browser.smoke", pagesSmokeArgs, RELEASE_CANDIDATE_REQUIRED_URL_ENV_KEYS));
 
   if (productionCandidate) {
     steps.push(

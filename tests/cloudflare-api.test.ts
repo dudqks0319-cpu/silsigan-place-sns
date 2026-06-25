@@ -940,6 +940,13 @@ test("Cloudflare release gate can collect non-mutating external blockers without
   assert.equal(collectPlan.mutating, false);
   assert.equal(collectPlan.steps.some((step: ReleaseGateStep) => step.name === "staging.api.smoke"), true);
   assert.deepEqual(collectPlan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.args, ["smoke:staging"]);
+  assert.deepEqual(collectPlan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
+  ]);
+  assert.deepEqual(collectPlan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_PAGES_URL",
+    "SILSIGAN_STAGING_API_BASE_URL",
+  ]);
 
   const mutatingCollectPlan = releaseGate.resolveReleaseGatePlan({
     flags: releaseGate.parseArgs(["--collect-blockers", "--mutating"]).flags,
@@ -978,12 +985,20 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
     "--mutating",
     "--require-admin",
   ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
+    "SILSIGAN_STAGING_ADMIN_TOKEN",
+  ]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.args, [
     "smoke:pages",
     "--",
     "--mutating",
     "--report",
     "--require-photo",
+  ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_PAGES_URL",
+    "SILSIGAN_STAGING_API_BASE_URL",
   ]);
   assert.equal(JSON.stringify(plan).includes("super-secret"), false);
 
@@ -1034,7 +1049,14 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
   assert.equal(plan.requirePhoto, false);
   assert.equal(plan.tailRequired, false);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.args, ["smoke:staging"]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
+  ]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.args, ["smoke:pages"]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_PAGES_URL",
+    "SILSIGAN_STAGING_API_BASE_URL",
+  ]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "production.api.smoke")?.args, ["smoke:staging"]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "production.api.smoke")?.envKeys, [
     "SILSIGAN_PRODUCTION_API_BASE_URL",
@@ -1453,6 +1475,7 @@ test("Cloudflare release gate validates coordinate status opt-in before staging 
   assert.equal(plan.ok, true);
   assert.deepEqual(stagingSmoke?.args, ["smoke:staging", "--", "--mutating", "--require-admin", "--coordinate-status"]);
   assert.deepEqual(stagingSmoke?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
     "SILSIGAN_STAGING_ADMIN_TOKEN",
     "SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID",
     "SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE",
