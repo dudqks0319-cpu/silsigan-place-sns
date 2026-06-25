@@ -43,7 +43,7 @@ runtime_checks:
   - name: "Local Pages browser report"
     target: "local"
     status: "pass"
-    evidence: "docs/current-release-state.md"
+    evidence: "pnpm smoke:pages:local-report -- --timeout-ms=60000: map.visible, map.controlsUncovered, click controls, reports, redaction pass; screenshot artifacts/cloudflare-pages-smoke-worker-report-local/pages-smoke-1782360662137.png"
   - name: "Staging Worker smoke"
     target: "cloudflare-staging"
     status: "blocked"
