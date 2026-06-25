@@ -1778,6 +1778,44 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
   }
 });
 
+test("D1 migration chain and core seed are release-order idempotent", { skip: !sqlite3Available() }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-migrations-"));
+  const dbPath = join(tempDir, "migrations.db");
+  const migrations = ["0001_initial.sql", "0002_posts_questions.sql"]
+    .map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8"))
+    .join("\n");
+  const seed = readFileSync(new URL("../workers/api/seeds/001_core_seed.sql", import.meta.url), "utf8");
+
+  try {
+    const output = execFileSync("sqlite3", [dbPath], {
+      encoding: "utf8",
+      input: `
+        ${migrations}
+        ${migrations}
+        ${seed}
+        ${seed}
+        SELECT 'tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('regions', 'areas', 'places', 'place_rankings', 'posts', 'questions');
+        SELECT 'post_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_posts_place_created', 'idx_posts_status_created');
+        SELECT 'question_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_questions_place_created', 'idx_questions_anon_created');
+        SELECT 'places=' || COUNT(*) FROM places;
+        SELECT 'rankings=' || COUNT(*) FROM place_rankings;
+        SELECT 'posts=' || COUNT(*) FROM posts;
+        SELECT 'questions=' || COUNT(*) FROM questions;
+      `,
+    });
+
+    assert.match(output, /tables=6/);
+    assert.match(output, /post_indexes=2/);
+    assert.match(output, /question_indexes=2/);
+    assert.match(output, /places=6/);
+    assert.match(output, /rankings=6/);
+    assert.match(output, /posts=4/);
+    assert.match(output, /questions=3/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("D1 posts hashtags and questions use Cloudflare schema", { skip: !sqlite3Available() }, async () => {
   const { db, tempDir } = createSeededSqliteD1();
 
