@@ -1,6 +1,6 @@
 # #실시간 Cloudflare 전국 MVP 제품/UX 운영 기준
 
-기준일: 2026-06-18  
+기준일: 2026-06-18
 대상 전환: Next.js/Vercel/Supabase 중심 MVP에서 Cloudflare Pages/Workers, D1, R2, KV 또는 Cache API 기반 무료 출시 구조로 재정의한다.
 
 ## 1. 제품 목표

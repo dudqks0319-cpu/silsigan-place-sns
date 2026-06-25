@@ -93,6 +93,33 @@ type FieldReportData = {
   privacyNotice: string;
 };
 
+type FeedPost = {
+  id: string;
+  userId: string;
+  placeId: string;
+  caption: string | null;
+  locationVerified: boolean;
+  verifiedRadiusM: number | null;
+  helpfulCount: number;
+  hashtagNames: string[];
+  hashtags: Array<{ name: string; tagType: string; postCount: number }>;
+  shareCard: { headline: string; body: string; hashtags: string[] };
+  judgement: "가도 좋음" | "주의" | "지금은 비추";
+  safetyWarning: string | null;
+  hiddenAt: string | null;
+};
+
+type QuestionData = {
+  id: string;
+  placeId: string;
+  questionType: string;
+  body: string;
+  creditCost: number;
+  answeredReportId: string | null;
+  createdAt: string;
+  status?: string;
+};
+
 type ModerationAlertPayload = {
   type: "moderation.report.created";
   reportId: string;
@@ -1603,6 +1630,46 @@ test("Cloudflare API supports required place and ranking route aliases", async (
   assert.ok(areaRanking.data.every((ranking) => ranking.regionId === "busan"));
 });
 
+test("Cloudflare Worker serves posts hashtags and questions without Next.js mock APIs", async () => {
+  const anonymousId = "anon_posts_questions_test";
+  const postsPayload = await get<SuccessPayload<FeedPost[]>>("https://api.test/api/posts?regionId=seoul&limit=10", anonymousId);
+  assert.equal(postsPayload.meta?.storage, "memory-fallback");
+  assert.equal(postsPayload.data.length >= 1, true);
+  assert.equal(postsPayload.data.every((postItem) => postItem.placeId === "seoul-yeouido"), true);
+  assert.equal(postsPayload.data.every((postItem) => !postItem.userId.startsWith("anon_")), true);
+  assert.equal(postsPayload.data[0]?.hashtags.some((tag) => tag.name === "서울"), true);
+  assert.match(postsPayload.data[0]?.shareCard.headline ?? "", /여의도 한강공원/);
+
+  const hashtagsPayload = await get<SuccessPayload<Array<{ name: string; postCount: number }>>>("https://api.test/api/hashtags", anonymousId);
+  assert.equal(hashtagsPayload.data.some((tag) => tag.name === "서울" && tag.postCount >= 1), true);
+
+  const filteredPayload = await get<SuccessPayload<FeedPost[]>>(
+    "https://api.test/api/posts?hashtagName=%EC%84%9C%EC%9A%B8&limit=10",
+    anonymousId,
+  );
+  assert.equal(filteredPayload.data.every((postItem) => postItem.hashtagNames.includes("서울")), true);
+
+  const questionsPayload = await get<SuccessPayload<QuestionData[]>>("https://api.test/api/questions?regionId=seoul&limit=10", anonymousId);
+  assert.equal(questionsPayload.data.some((question) => question.placeId === "seoul-yeouido"), true);
+
+  const created = await post<SuccessPayload<{ question: QuestionData; balance: number; creditEvent: { amount: number } }>>(
+    "https://api.test/api/questions",
+    anonymousId,
+    {
+      placeId: "seoul-yeouido",
+      questionType: "crowd",
+      body: "지금 잔디밭 자리 여유 있나요?",
+      availableCredits: 3,
+    },
+  );
+  assert.equal(created.data.question.placeId, "seoul-yeouido");
+  assert.equal(created.data.balance, 2);
+  assert.equal(created.data.creditEvent.amount, -1);
+
+  const mine = await get<SuccessPayload<QuestionData[]>>("https://api.test/api/my-questions", anonymousId);
+  assert.equal(mine.data.some((question) => question.id === created.data.question.id && question.status === "pending"), true);
+});
+
 test("Cloudflare Worker reads places and rankings from D1 when DB binding is present", async () => {
   const db = new FakeD1Database([
     {
@@ -1695,13 +1762,74 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
         ${seed}
         SELECT 'places=' || COUNT(*) FROM places;
         SELECT 'rankings=' || COUNT(*) FROM place_rankings;
+        SELECT 'posts=' || COUNT(*) FROM posts;
+        SELECT 'questions=' || COUNT(*) FROM questions;
         SELECT 'todo=' || COUNT(*) FROM places WHERE coordinate_status = 'TODO_COORDINATE_VERIFY' AND latitude IS NULL AND longitude IS NULL;
       `,
     });
 
     assert.match(output, /places=6/);
     assert.match(output, /rankings=6/);
+    assert.match(output, /posts=4/);
+    assert.match(output, /questions=3/);
     assert.match(output, /todo=1/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 posts hashtags and questions use Cloudflare schema", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const anonymousId = "anon_d1_posts_questions";
+    const postsPayload = await d1Get<SuccessPayload<FeedPost[]>>(db, "https://api.test/api/posts?regionId=seoul&limit=10", anonymousId);
+    assert.equal(postsPayload.meta?.storage, "d1");
+    assert.equal(postsPayload.data.some((postItem) => postItem.placeId === "seoul-yeouido"), true);
+    assert.equal(postsPayload.data.every((postItem) => postItem.hiddenAt === null), true);
+
+    const createdPost = await d1Post<SuccessPayload<{ post: FeedPost; credits: Array<{ amount: number }>; privacyNotice: string }>>(
+      db,
+      "https://api.test/api/posts",
+      anonymousId,
+      {
+        placeId: "seoul-yeouido",
+        crowdLevel: "normal",
+        lineStatus: "short",
+        parkingStatus: "limited",
+        weatherFeel: "good",
+        caption: "편의점 줄은 짧고 잔디밭은 아직 여유 있습니다.",
+        photoCount: 1,
+        hashtagNames: ["서울", "<script>bad</script>", "지금"],
+      },
+    );
+    assert.equal(createdPost.meta?.storage, "d1");
+    assert.equal(createdPost.data.post.placeId, "seoul-yeouido");
+    assert.equal(createdPost.data.post.userId.startsWith("anon_"), false);
+    assert.equal(createdPost.data.post.hashtagNames.includes("scriptbadscript"), true);
+    assert.equal(createdPost.data.privacyNotice.includes("정확한 좌표"), true);
+
+    const hashtagsPayload = await d1Get<SuccessPayload<Array<{ name: string; postCount: number }>>>(db, "https://api.test/api/hashtags", anonymousId);
+    assert.equal(hashtagsPayload.meta?.storage, "d1");
+    assert.equal(hashtagsPayload.data.some((tag) => tag.name === "서울" && tag.postCount >= 2), true);
+
+    const createdQuestion = await d1Post<SuccessPayload<{ question: QuestionData; balance: number }>>(
+      db,
+      "https://api.test/api/questions",
+      anonymousId,
+      {
+        placeId: "seoul-yeouido",
+        questionType: "photo_request",
+        body: "지금 한강 사진 요청 가능할까요?",
+        availableCredits: 3,
+      },
+    );
+    assert.equal(createdQuestion.meta?.storage, "d1");
+    assert.equal(createdQuestion.data.question.creditCost, 2);
+    assert.equal(createdQuestion.data.balance, 1);
+
+    const mine = await d1Get<SuccessPayload<QuestionData[]>>(db, "https://api.test/api/my-questions", anonymousId);
+    assert.equal(mine.data.some((question) => question.id === createdQuestion.data.question.id && question.status === "pending"), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

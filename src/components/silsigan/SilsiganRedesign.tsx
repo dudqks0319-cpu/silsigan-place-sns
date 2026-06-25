@@ -610,13 +610,25 @@ export default function SilsiganRedesign() {
       const reportsRequest = cloudflareApiConfigured
         ? fetchJson<PublicReport[]>(cloudflareApiUrl(buildScopedApiPath("/api/reports", listScope)))
         : fetchJson<PublicReport[]>(buildScopedApiPath("/api/reports", listScope));
+      const postsRequest = cloudflareApiConfigured
+        ? fetchJson<PublicPost[]>(cloudflareApiUrl(buildScopedApiPath("/api/posts", listScope)))
+        : fetchJson<PublicPost[]>(buildScopedApiPath("/api/posts", listScope));
+      const hashtagsRequest = cloudflareApiConfigured
+        ? fetchJson<PublicHashtag[]>(cloudflareApiUrl("/api/hashtags"))
+        : fetchJson<PublicHashtag[]>("/api/hashtags");
+      const questionsRequest = cloudflareApiConfigured
+        ? fetchJson<PublicQuestion[]>(cloudflareApiUrl(buildScopedApiPath("/api/questions", listScope)))
+        : fetchJson<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope));
+      const myQuestionsRequest = cloudflareApiConfigured
+        ? fetchJson<MyQuestion[]>(cloudflareApiUrl("/api/my-questions")).catch(() => [])
+        : fetchJson<MyQuestion[]>("/api/my-questions").catch(() => []);
       const [apiPlaces, apiReports, apiPosts, apiHashtags, apiQuestions, apiMyQuestions] = await Promise.all([
         placesRequest,
         reportsRequest,
-        fetchJson<PublicPost[]>(buildScopedApiPath("/api/posts", listScope)),
-        fetchJson<PublicHashtag[]>("/api/hashtags"),
-        fetchJson<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope)),
-        fetchJson<MyQuestion[]>("/api/my-questions").catch(() => []),
+        postsRequest,
+        hashtagsRequest,
+        questionsRequest,
+        myQuestionsRequest,
       ]);
       const mappedReports = mapReports(apiReports, apiPlaces);
       const mappedQuestions = mapQuestions(apiQuestions);
@@ -1292,15 +1304,19 @@ export default function SilsiganRedesign() {
     setIsSubmitting(true);
     try {
       const questionType = questionTypeFromText(questionText);
-      const result = await fetchJson<{ balance: number }>("/api/questions", {
-        method: "POST",
-        body: JSON.stringify({
-          placeId: selectedPlace.id,
-          questionType,
-          body: questionText.trim(),
-        }),
-      });
-      setToast(`질문이 등록됐습니다. 물어보기권 잔액 ${result.balance}개입니다.`);
+      const result = await fetchJson<{ balance?: number; creditEvent?: { amount: number } }>(
+        cloudflareApiConfigured ? cloudflareApiUrl("/api/questions") : "/api/questions",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            placeId: selectedPlace.id,
+            questionType,
+            body: questionText.trim(),
+          }),
+        },
+      );
+      const balance = typeof result.balance === "number" ? result.balance : Math.max(0, 3 + (result.creditEvent?.amount ?? -1));
+      setToast(`질문이 등록됐습니다. 물어보기권 잔액 ${balance}개입니다.`);
       setQuestionText("");
       setActiveView("place");
       await loadData();
@@ -1313,6 +1329,22 @@ export default function SilsiganRedesign() {
 
   const flagPost = async (post: PublicPost, reason: FlagReason) => {
     try {
+      if (cloudflareApiConfigured) {
+        await fetchJson<ModerationReportResult>(cloudflareApiUrl("/api/moderation/reports"), {
+          method: "POST",
+          body: JSON.stringify({
+            targetType: "place",
+            targetId: post.placeId,
+            reason,
+            note: `게시물 신고: ${post.id}`,
+          }),
+        });
+        trackEvent("flag_post", { postId: post.id, reason });
+        setToast("신고가 접수되어 운영 검토 대기열에 등록했습니다.");
+        setPendingFlagPost(null);
+        return;
+      }
+
       const result = await fetchJson<{ hidden: boolean; flagCount: number }>("/api/post-flags", {
         method: "POST",
         body: JSON.stringify({
@@ -1363,11 +1395,19 @@ export default function SilsiganRedesign() {
   const selectHashtag = async (hashtagName: string) => {
     try {
       const filteredPosts = await fetchJson<PublicPost[]>(
-        buildScopedApiPath("/api/posts", {
-          regionId: activeDataRegionId,
-          hashtagName,
-          limit: 100,
-        }),
+        cloudflareApiConfigured
+          ? cloudflareApiUrl(
+              buildScopedApiPath("/api/posts", {
+                regionId: activeDataRegionId,
+                hashtagName,
+                limit: 100,
+              }),
+            )
+          : buildScopedApiPath("/api/posts", {
+              regionId: activeDataRegionId,
+              hashtagName,
+              limit: 100,
+            }),
       );
       setPosts(filteredPosts);
       setSelectedHashtagName(hashtagName);
@@ -1739,7 +1779,7 @@ function TopHeader({
           {isDetail ? <X size={18} /> : <ShieldCheck size={18} />}
         </button>
         <div>
-          <p className={styles.eyebrow}>울산 · 부산 · 경주 베타</p>
+          <p className={styles.eyebrow}>전국 실시간 베타</p>
           <h1>{titleMap[activeView]}</h1>
         </div>
         <button

@@ -288,6 +288,7 @@ async function startMockWorker(port) {
     likeCount: 0,
     photoClickCount: 3,
     photoDeleted: false,
+    questions: [workerQuestion()],
     reportTargetTypes: [],
   };
   const server = createServer(async (request, response) => {
@@ -322,6 +323,45 @@ async function startMockWorker(port) {
       const query = url.searchParams.get("q")?.trim().toLocaleLowerCase("ko-KR") ?? "";
       const matchesQuery = !query || [place.name, place.address, place.category, place.regionId].join(" ").toLocaleLowerCase("ko-KR").includes(query);
       send(200, success(matchesQuery ? [place] : []));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/posts") {
+      const hashtagName = url.searchParams.get("hashtagName")?.trim();
+      const post = workerPost();
+      send(200, success(!hashtagName || post.hashtagNames.includes(hashtagName) ? [post] : []));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/hashtags") {
+      send(200, success(workerHashtags()));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/questions") {
+      send(200, success(state.questions));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/questions") {
+      const body = await readJsonBody(request);
+      const question = {
+        id: `question-local-report-smoke-${state.questions.length + 1}`,
+        placeId: String(body.placeId ?? DEFAULT_PLACE_ID),
+        questionType: String(body.questionType ?? "crowd"),
+        body: String(body.body ?? "지금 사람 많은가요?"),
+        creditCost: body.questionType === "photo_request" ? 2 : 1,
+        answeredReportId: null,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      };
+      state.questions.unshift(question);
+      send(201, success({ question, creditEvent: { type: "ask_question", amount: -question.creditCost }, balance: Math.max(0, 3 - question.creditCost) }));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/my-questions") {
+      send(200, success(state.questions));
       return;
     }
 
@@ -537,6 +577,61 @@ function workerPlace() {
     score: 94,
     status: "active",
     coordinateStatus: "verified",
+  };
+}
+
+function workerPost() {
+  return {
+    id: "post-local-report-smoke",
+    userId: "anon_local_report_smoke",
+    creatorName: "브라우저 스모크",
+    creatorBadge: "광안리 현장 제보",
+    placeId: DEFAULT_PLACE_ID,
+    caption: "스모크용 광안리 현장 feed입니다.",
+    crowdLevel: "busy",
+    parkingStatus: "limited",
+    lineStatus: "short",
+    weatherFeel: "good",
+    locationVerified: true,
+    verifiedRadiusM: 150,
+    photoCount: 1,
+    photoLabel: "광안리 현장 사진",
+    helpfulCount: 3,
+    commentCount: 1,
+    hashtagNames: ["광안리주차", "부산", "지금"],
+    hashtags: workerHashtags(),
+    shareCard: {
+      headline: `${DEFAULT_PLACE_NAME} 주의`,
+      body: "사람 많음 · 주차 거의 없음 · 줄 짧음\n방금 전 현장 인증 제보\n스모크용 광안리 현장 feed입니다.",
+      url: `https://silsigan.pages.dev/place/${DEFAULT_PLACE_ID}`,
+      hashtags: ["광안리주차", "부산", "지금"],
+      variant: "photo_spot",
+    },
+    judgement: "주의",
+    safetyWarning: null,
+    hiddenAt: null,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function workerHashtags() {
+  return [
+    { id: "hashtag_광안리주차", name: "광안리주차", tagType: "status", postCount: 1, createdAt: new Date().toISOString() },
+    { id: "hashtag_부산", name: "부산", tagType: "region", postCount: 1, createdAt: new Date().toISOString() },
+    { id: "hashtag_지금", name: "지금", tagType: "time", postCount: 1, createdAt: new Date().toISOString() },
+  ];
+}
+
+function workerQuestion() {
+  return {
+    id: "question-local-report-smoke",
+    placeId: DEFAULT_PLACE_ID,
+    questionType: "parking",
+    body: "광안리 주차 지금 가능한가요?",
+    creditCost: 1,
+    answeredReportId: null,
+    status: "pending",
+    createdAt: new Date().toISOString(),
   };
 }
 

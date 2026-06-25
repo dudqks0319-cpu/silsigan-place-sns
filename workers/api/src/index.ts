@@ -357,6 +357,92 @@ type FieldReportRecord = {
   hasPhoto: boolean;
 };
 
+type PostRecord = {
+  id: string;
+  placeId: string;
+  anonymousUserId: string;
+  creatorName: string;
+  creatorBadge: string;
+  caption: string | null;
+  crowdLevel: FieldReportRecord["crowdLevel"];
+  parkingStatus: FieldReportRecord["parkingStatus"];
+  lineStatus: FieldReportRecord["lineStatus"];
+  weatherFeel: FieldReportRecord["weatherFeel"];
+  locationVerified: boolean;
+  verifiedRadiusM: FieldReportRecord["verifiedRadiusM"];
+  photoCount: number;
+  photoLabel: string;
+  helpfulCount: number;
+  commentCount: number;
+  hashtagNames: string[];
+  hiddenAt: string | null;
+  createdAt: string;
+};
+
+type D1PostRow = {
+  id: string;
+  placeId: string;
+  anonymousUserId: string;
+  creatorName: string;
+  creatorBadge: string;
+  caption: string | null;
+  crowdLevel: FieldReportRecord["crowdLevel"];
+  parkingStatus: FieldReportRecord["parkingStatus"];
+  lineStatus: FieldReportRecord["lineStatus"];
+  weatherFeel: FieldReportRecord["weatherFeel"];
+  locationVerified: number;
+  verifiedRadiusM: FieldReportRecord["verifiedRadiusM"];
+  photoCount: number;
+  photoLabel: string;
+  helpfulCount: number;
+  commentCount: number;
+  hashtagNames: string;
+  hiddenAt: string | null;
+  createdAt: string;
+};
+
+type QuestionType = "crowd" | "line" | "parking" | "weather" | "photo_request" | "other";
+
+type QuestionRecord = {
+  id: string;
+  placeId: string;
+  anonymousUserId: string;
+  questionType: QuestionType;
+  body: string;
+  creditCost: 1 | 2;
+  answeredReportId: string | null;
+  status: "pending" | "answered" | "expired";
+  createdAt: string;
+};
+
+type D1QuestionRow = {
+  id: string;
+  placeId: string;
+  anonymousUserId: string;
+  questionType: QuestionType;
+  body: string;
+  creditCost: 1 | 2;
+  answeredReportId: string | null;
+  status: QuestionRecord["status"];
+  createdAt: string;
+};
+
+type HashtagRecord = {
+  id: string;
+  name: string;
+  tagType: "place" | "status" | "purpose" | "time" | "region";
+  postCount: number;
+  createdAt: string;
+};
+
+type ShareCardRecord = {
+  headline: string;
+  body: string;
+  url: string;
+  hashtags: string[];
+  variant: "avoid" | "good" | "parking_full" | "waiting" | "photo_spot";
+};
+
 type ClientLocation = {
   latitude: number;
   longitude: number;
@@ -456,6 +542,101 @@ const seedPlaces: PlaceRecord[] = [
   },
 ];
 
+const posts: PostRecord[] = [
+  seedPost({
+    id: "post_seed_gwangalli_parking",
+    placeId: "busan-gwangalli",
+    creatorName: "부산 해변러",
+    creatorBadge: "광안리 현장 인증 10회",
+    caption: "해변 앞 공영주차장 거의 막혔고 민락 쪽으로 우회하는 게 나아요.",
+    crowdLevel: "packed",
+    parkingStatus: "full",
+    lineStatus: "medium",
+    weatherFeel: "good",
+    photoCount: 2,
+    photoLabel: "광안리 주차장 입구",
+    helpfulCount: 31,
+    commentCount: 8,
+    hashtagNames: ["광안리주차살려줘", "광안리주차", "주차만차", "부산", "지금"],
+    minutesAgo: 12,
+  }),
+  seedPost({
+    id: "post_seed_hwangridan_waiting",
+    placeId: "gyeongju-hwangridan",
+    creatorName: "경주 골목러",
+    creatorBadge: "웨이팅 답변왕",
+    caption: "메인 골목은 붐비지만 인기 카페 줄은 20분 안쪽입니다.",
+    crowdLevel: "busy",
+    parkingStatus: "limited",
+    lineStatus: "medium",
+    weatherFeel: "good",
+    photoCount: 1,
+    photoLabel: "황리단길 카페 대기줄",
+    helpfulCount: 18,
+    commentCount: 5,
+    hashtagNames: ["황리단길웨이팅", "경주", "사람많음", "사진스팟", "지금"],
+    minutesAgo: 24,
+  }),
+  seedPost({
+    id: "post_seed_taehwagang_walk",
+    placeId: "ulsan-taehwagang",
+    creatorName: "울산 현장러",
+    creatorBadge: "태화강 제보왕",
+    caption: "국가정원 산책로는 여유 있고 노을 쪽 사진 찍기 좋습니다.",
+    crowdLevel: "quiet",
+    parkingStatus: "available",
+    lineStatus: "none",
+    weatherFeel: "good",
+    photoCount: 3,
+    photoLabel: "태화강 국가정원 산책로",
+    helpfulCount: 27,
+    commentCount: 4,
+    hashtagNames: ["태화강산책", "울산", "한산함", "사진스팟", "지금"],
+    minutesAgo: 37,
+  }),
+  seedPost({
+    id: "post_seed_yeouido_picnic",
+    placeId: "seoul-yeouido",
+    creatorName: "서울 한강러",
+    creatorBadge: "전국 베타 현장 제보",
+    caption: "잔디 쪽은 여유 있지만 편의점 앞은 줄이 조금 생겼습니다.",
+    crowdLevel: "normal",
+    parkingStatus: "limited",
+    lineStatus: "short",
+    weatherFeel: "good",
+    photoCount: 1,
+    photoLabel: "여의도 한강공원 피크닉 구역",
+    helpfulCount: 16,
+    commentCount: 3,
+    hashtagNames: ["여의도한강공원지금", "서울", "한강피크닉", "줄짧음", "지금"],
+    minutesAgo: 19,
+  }),
+];
+
+const questions: QuestionRecord[] = [
+  seedQuestion({
+    id: "question_seed_gwangalli",
+    placeId: "busan-gwangalli",
+    questionType: "parking",
+    body: "센텀 쪽으로 대면 걸어갈 만한가요?",
+    minutesAgo: 7,
+  }),
+  seedQuestion({
+    id: "question_seed_hwangridan",
+    placeId: "gyeongju-hwangridan",
+    questionType: "line",
+    body: "황리단길 카페 웨이팅 지금도 긴가요?",
+    minutesAgo: 18,
+  }),
+  seedQuestion({
+    id: "question_seed_yeouido",
+    placeId: "seoul-yeouido",
+    questionType: "crowd",
+    body: "여의도 잔디밭 지금 자리 잡을 수 있나요?",
+    minutesAgo: 11,
+  }),
+];
+
 const comments: CommentRecord[] = [];
 const photos: PhotoRecord[] = [];
 const reports: ReportRecord[] = [];
@@ -490,6 +671,8 @@ const fieldReportCrowdLevels = ["quiet", "normal", "busy", "packed"] as const;
 const fieldReportLineStatuses = ["none", "short", "medium", "long"] as const;
 const fieldReportParkingStatuses = ["available", "limited", "full", "unknown"] as const;
 const fieldReportWeatherFeels = ["good", "rainy", "windy", "hot", "cold"] as const;
+const questionTypes = ["crowd", "line", "parking", "weather", "photo_request", "other"] as const;
+const publicSiteUrl = "https://silsigan.pages.dev";
 
 const workerApi = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -549,6 +732,38 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
 
     if (request.method === "GET" && path.startsWith("/api/rankings")) {
       return withHeaders(await listRankings(url, path, env), sessionHeaders);
+    }
+
+    if (path === "/api/posts") {
+      if (request.method === "GET") {
+        return withHeaders(await listPosts(url, env), sessionHeaders);
+      }
+
+      if (request.method === "POST") {
+        await enforceRateLimit("post:create", request, session.id, 12, 60_000);
+        const response = await createPost(request, session, env, ctx);
+        return withHeaders(response, sessionHeaders);
+      }
+    }
+
+    if (request.method === "GET" && path === "/api/hashtags") {
+      return withHeaders(await listHashtags(env), sessionHeaders);
+    }
+
+    if (path === "/api/questions") {
+      if (request.method === "GET") {
+        return withHeaders(await listQuestions(url, env), sessionHeaders);
+      }
+
+      if (request.method === "POST") {
+        await enforceRateLimit("question:create", request, session.id, 10, 60_000);
+        const response = await createQuestion(request, session, env);
+        return withHeaders(response, sessionHeaders);
+      }
+    }
+
+    if (request.method === "GET" && path === "/api/my-questions") {
+      return withHeaders(await listMyQuestions(session, env), sessionHeaders);
     }
 
     if (path === "/api/comments") {
@@ -1218,6 +1433,333 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
   await writeRankingCache(env, cacheKey, rankings, meta);
 
   return json(rankings, { ...meta, cacheStatus: cacheKey ? "miss" : "disabled", cacheTtlSeconds: cacheKey ? RANKING_CACHE_TTL_SECONDS : null });
+}
+
+async function listPosts(url: URL, env: Env): Promise<Response> {
+  const placeId = url.searchParams.get("placeId");
+  const regionId = url.searchParams.get("region") ?? url.searchParams.get("regionId");
+  const hashtagName = normalizeHashtagName(url.searchParams.get("hashtagName") ?? "");
+  const includeHidden = booleanFromSearch(url, "includeHidden", false);
+  const limit = clampLimit(url.searchParams.get("limit"), 200, 100);
+
+  if (env.DB) {
+    const where = ["po.status = 'visible'", "po.hidden_at IS NULL", "pl.is_active = 1", "pl.coordinate_status = 'verified'"];
+    const values: D1Value[] = [];
+    if (includeHidden) {
+      where.splice(0, 2);
+    }
+    if (placeId) {
+      where.push("po.place_id = ?");
+      values.push(placeId);
+    }
+    if (regionId) {
+      where.push("pl.region_id = ?");
+      values.push(regionId);
+    }
+    values.push(limit);
+
+    const { results = [] } = await env.DB
+      .prepare(
+        `SELECT
+          po.id,
+          po.place_id AS placeId,
+          po.anonymous_user_id AS anonymousUserId,
+          po.creator_name AS creatorName,
+          po.creator_badge AS creatorBadge,
+          po.caption,
+          po.crowd_level AS crowdLevel,
+          po.parking_status AS parkingStatus,
+          po.line_status AS lineStatus,
+          po.weather_feel AS weatherFeel,
+          po.location_verified AS locationVerified,
+          po.verified_radius_m AS verifiedRadiusM,
+          po.photo_count AS photoCount,
+          po.photo_label AS photoLabel,
+          po.helpful_count AS helpfulCount,
+          po.comment_count AS commentCount,
+          po.hashtag_names AS hashtagNames,
+          po.hidden_at AS hiddenAt,
+          po.created_at AS createdAt
+        FROM posts po
+        INNER JOIN places pl ON pl.id = po.place_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY po.created_at DESC
+        LIMIT ?`,
+      )
+      .bind(...values)
+      .all<D1PostRow>();
+    const filtered = results.map(d1PostRowToRecord).filter((post) => !hashtagName || post.hashtagNames.includes(hashtagName));
+    const data = await Promise.all(filtered.map((post) => publicPostWithResolvedPlace(post, env)));
+
+    return json(rankPostsForFeed(data).slice(0, limit), { limit, regionId: regionId ?? "all", storage: "d1" });
+  }
+
+  const filtered = posts
+    .filter((post) => includeHidden || !post.hiddenAt)
+    .filter((post) => !placeId || post.placeId === placeId)
+    .filter((post) => !regionId || findPlaceRecord(post.placeId).regionId === regionId)
+    .filter((post) => !hashtagName || post.hashtagNames.includes(hashtagName));
+  const data = filtered.map((post) => publicPost(post, findPlaceRecord(post.placeId)));
+
+  return json(rankPostsForFeed(data).slice(0, limit), { limit, regionId: regionId ?? "all", storage: "memory-fallback" });
+}
+
+async function createPost(request: Request, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const body = await readJson(request);
+  const placeId = stringField(body, "placeId", 80);
+  const crowdLevel = enumField(body, "crowdLevel", fieldReportCrowdLevels);
+  const lineStatus = enumField(body, "lineStatus", fieldReportLineStatuses);
+  const parkingStatus = enumField(body, "parkingStatus", fieldReportParkingStatuses);
+  const weatherFeel = enumField(body, "weatherFeel", fieldReportWeatherFeels);
+  const caption = optionalStringField(body, "caption", 120) ?? null;
+  const photoCount = integerField(body, "photoCount", 0, 4, 0);
+  const requestedHashtags = hashtagNamesField(body, "hashtagNames", 5);
+  const clientLocation = optionalClientLocationField(body);
+  if (caption) {
+    const rejectionReason = commentBodyRejectionReason(caption);
+    if (rejectionReason) {
+      throw new HttpError(400, "POST_CAPTION_REJECTED", "제보 글에 공개할 수 없는 정보나 스팸 패턴이 포함되어 있습니다.", { reason: rejectionReason });
+    }
+  }
+
+  const place = await resolvePlaceRecord(placeId, env);
+  const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
+  if (env.DB) {
+    await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
+  }
+  const verifiedRadiusM = verifiedRadiusForFieldReport(place, clientLocation);
+  const createdAt = new Date().toISOString();
+  const recommendedHashtags = recommendPostHashtags({ place, crowdLevel, parkingStatus, lineStatus, weatherFeel });
+  const hashtagNames = uniqueHashtagNames([...requestedHashtags, ...recommendedHashtags]).slice(0, 5);
+  const post: PostRecord = {
+    id: `post_${crypto.randomUUID()}`,
+    placeId: place.id,
+    anonymousUserId,
+    creatorName: "익명 현장러",
+    creatorBadge: creatorBadgeForPlace(place),
+    caption,
+    crowdLevel,
+    parkingStatus,
+    lineStatus,
+    weatherFeel,
+    locationVerified: Boolean(verifiedRadiusM),
+    verifiedRadiusM,
+    photoCount,
+    photoLabel: photoCount > 0 ? `${place.name} 현장 사진` : "상태 제보",
+    helpfulCount: 0,
+    commentCount: 0,
+    hashtagNames,
+    hiddenAt: null,
+    createdAt,
+  };
+
+  if (env.DB) {
+    await env.DB
+      .prepare(
+        `INSERT INTO posts
+          (id, place_id, anonymous_user_id, creator_name, creator_badge, caption, crowd_level, parking_status, line_status, weather_feel, location_verified, verified_radius_m, photo_count, photo_label, helpful_count, comment_count, hashtag_names, status, hidden_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'visible', NULL, ?, ?)`,
+      )
+      .bind(
+        post.id,
+        post.placeId,
+        post.anonymousUserId,
+        post.creatorName,
+        post.creatorBadge,
+        post.caption,
+        post.crowdLevel,
+        post.parkingStatus,
+        post.lineStatus,
+        post.weatherFeel,
+        post.locationVerified ? 1 : 0,
+        post.verifiedRadiusM,
+        post.photoCount,
+        post.photoLabel,
+        JSON.stringify(post.hashtagNames),
+        post.createdAt,
+        post.createdAt,
+      )
+      .run();
+    await recordD1PlaceEvent(env.DB, place, anonymousUserId, "report", {
+      source: "field_report",
+      crowdLevel,
+      lineStatus,
+      parkingStatus,
+      verifiedRadiusM,
+      createdAt,
+      expiresAt: new Date(new Date(createdAt).getTime() + REPORT_TTL_MS).toISOString(),
+    });
+    ctx.waitUntil(
+      broadcastPlaceActivity(env, "report.created", place, {
+        id: post.id,
+        placeId: place.id,
+        regionId: place.regionId,
+        areaId: place.areaId,
+      }),
+    );
+
+    return json(postSubmitResponse(post, place, recommendedHashtags), { anonymousUserPolicy: "hashed-session-id", storage: "d1" }, 201);
+  }
+
+  posts.unshift(post);
+  ctx.waitUntil(
+    broadcastPlaceActivity(env, "report.created", place, {
+      id: post.id,
+      placeId: place.id,
+      regionId: place.regionId,
+      areaId: place.areaId,
+    }),
+  );
+
+  return json(postSubmitResponse(post, place, recommendedHashtags), { anonymousUserPolicy: "header-or-cookie-session", storage: "memory-fallback" }, 201);
+}
+
+async function listHashtags(env: Env): Promise<Response> {
+  const sourcePosts = env.DB
+    ? await listD1PostsForHashtags(env.DB)
+    : posts.filter((post) => !post.hiddenAt);
+  const data = hashtagRecordsForPosts(sourcePosts);
+
+  return json(data, { limit: data.length, storage: env.DB ? "d1" : "memory-fallback" });
+}
+
+async function listQuestions(url: URL, env: Env): Promise<Response> {
+  const placeId = url.searchParams.get("placeId");
+  const regionId = url.searchParams.get("region") ?? url.searchParams.get("regionId");
+  const limit = clampLimit(url.searchParams.get("limit"), 200, 100);
+
+  if (env.DB) {
+    const where = ["pl.is_active = 1", "pl.coordinate_status = 'verified'"];
+    const values: D1Value[] = [];
+    if (placeId) {
+      where.push("q.place_id = ?");
+      values.push(placeId);
+    }
+    if (regionId) {
+      where.push("pl.region_id = ?");
+      values.push(regionId);
+    }
+    values.push(limit);
+
+    const { results = [] } = await env.DB
+      .prepare(
+        `SELECT
+          q.id,
+          q.place_id AS placeId,
+          q.anonymous_user_id AS anonymousUserId,
+          q.question_type AS questionType,
+          q.body,
+          q.credit_cost AS creditCost,
+          q.answered_report_id AS answeredReportId,
+          q.status,
+          q.created_at AS createdAt
+        FROM questions q
+        INNER JOIN places pl ON pl.id = q.place_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY q.created_at DESC
+        LIMIT ?`,
+      )
+      .bind(...values)
+      .all<D1QuestionRow>();
+
+    return json(results.map(publicQuestion), { limit, regionId: regionId ?? "all", storage: "d1" });
+  }
+
+  const data = questions
+    .filter((question) => !placeId || question.placeId === placeId)
+    .filter((question) => !regionId || findPlaceRecord(question.placeId).regionId === regionId)
+    .slice(0, limit)
+    .map(publicQuestion);
+
+  return json(data, { limit, regionId: regionId ?? "all", storage: "memory-fallback" });
+}
+
+async function createQuestion(request: Request, session: AnonymousSession, env: Env): Promise<Response> {
+  const body = await readJson(request);
+  const placeId = stringField(body, "placeId", 80);
+  const questionType = enumField(body, "questionType", questionTypes);
+  const questionBody = stringField(body, "body", 160);
+  const availableCredits = integerField(body, "availableCredits", 0, 999, 3);
+  if (questionBody.length < 4) {
+    throw new HttpError(400, "VALIDATION_ERROR", "body 값이 올바르지 않습니다.");
+  }
+  const rejectionReason = commentBodyRejectionReason(questionBody);
+  if (rejectionReason) {
+    throw new HttpError(400, "QUESTION_BODY_REJECTED", "질문에 공개할 수 없는 정보나 스팸 패턴이 포함되어 있습니다.", { reason: rejectionReason });
+  }
+
+  const place = await resolvePlaceRecord(placeId, env);
+  const creditCost = questionCreditCost(questionType);
+  if (availableCredits < creditCost) {
+    throw new HttpError(402, "INSUFFICIENT_CREDITS", "질문권이 부족합니다.", {
+      requiredCredits: creditCost,
+      availableCredits,
+    });
+  }
+  const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
+  if (env.DB) {
+    await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
+  }
+
+  const question: QuestionRecord = {
+    id: `question_${crypto.randomUUID()}`,
+    placeId: place.id,
+    anonymousUserId,
+    questionType,
+    body: questionBody,
+    creditCost,
+    answeredReportId: null,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  };
+
+  if (env.DB) {
+    await env.DB
+      .prepare(
+        `INSERT INTO questions
+          (id, place_id, anonymous_user_id, question_type, body, credit_cost, answered_report_id, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', ?)`,
+      )
+      .bind(question.id, question.placeId, question.anonymousUserId, question.questionType, question.body, question.creditCost, question.createdAt)
+      .run();
+
+    return json(questionSubmitResponse(question, availableCredits), { anonymousUserPolicy: "hashed-session-id", storage: "d1" }, 201);
+  }
+
+  questions.unshift(question);
+
+  return json(questionSubmitResponse(question, availableCredits), { anonymousUserPolicy: "header-or-cookie-session", storage: "memory-fallback" }, 201);
+}
+
+async function listMyQuestions(session: AnonymousSession, env: Env): Promise<Response> {
+  if (env.DB) {
+    const anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
+    const { results = [] } = await env.DB
+      .prepare(
+        `SELECT
+          id,
+          place_id AS placeId,
+          anonymous_user_id AS anonymousUserId,
+          question_type AS questionType,
+          body,
+          credit_cost AS creditCost,
+          answered_report_id AS answeredReportId,
+          status,
+          created_at AS createdAt
+        FROM questions
+        WHERE anonymous_user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 100`,
+      )
+      .bind(anonymousUserId)
+      .all<D1QuestionRow>();
+
+    return json(results.map(publicMyQuestion), { limit: results.length, storage: "d1" });
+  }
+
+  const data = questions.filter((question) => question.anonymousUserId === session.id).map(publicMyQuestion);
+
+  return json(data, { limit: data.length, storage: "memory-fallback" });
 }
 
 async function listComments(url: URL, env: Env): Promise<Response> {
@@ -2344,6 +2886,456 @@ function publicD1FieldReport(report: D1FieldReportRow): PublicFieldReportRecord 
     verifiedRadiusM: report.verifiedRadiusM,
     createdAt: report.createdAt,
     expiresAt: report.expiresAt,
+  };
+}
+
+function publicQuestion(question: Pick<QuestionRecord, "id" | "placeId" | "questionType" | "body" | "creditCost" | "answeredReportId" | "createdAt">) {
+  return {
+    id: question.id,
+    placeId: question.placeId,
+    questionType: question.questionType,
+    body: question.body,
+    creditCost: question.creditCost,
+    answeredReportId: question.answeredReportId,
+    createdAt: question.createdAt,
+  };
+}
+
+function publicMyQuestion(question: QuestionRecord | D1QuestionRow) {
+  return {
+    ...publicQuestion(question),
+    status: question.status,
+  };
+}
+
+async function publicPostWithResolvedPlace(post: PostRecord, env: Env) {
+  return publicPost(post, await resolvePlaceRecord(post.placeId, env));
+}
+
+function publicPost(post: PostRecord, place: PlaceRecord) {
+  return {
+    id: post.id,
+    userId: publicPostUserId(post.id),
+    creatorName: post.creatorName,
+    creatorBadge: post.creatorBadge,
+    placeId: post.placeId,
+    caption: post.caption,
+    crowdLevel: post.crowdLevel,
+    parkingStatus: post.parkingStatus,
+    lineStatus: post.lineStatus,
+    weatherFeel: post.weatherFeel,
+    locationVerified: post.locationVerified,
+    verifiedRadiusM: post.verifiedRadiusM,
+    photoCount: post.photoCount,
+    photoLabel: post.photoLabel,
+    helpfulCount: post.helpfulCount,
+    commentCount: post.commentCount,
+    hashtagNames: post.hashtagNames,
+    hashtags: post.hashtagNames.map((name) => publicHashtag(name, 1, post.createdAt)),
+    shareCard: buildPostShareCard(post, place),
+    judgement: judgementFromPostStatus(post.crowdLevel, post.parkingStatus),
+    safetyWarning: placeSafetyWarning(place.categoryId),
+    hiddenAt: post.hiddenAt,
+    createdAt: post.createdAt,
+  };
+}
+
+function postSubmitResponse(post: PostRecord, place: PlaceRecord, recommendedHashtags: string[]) {
+  return {
+    post: publicPost(post, place),
+    credits: postCredits(post),
+    recommendedHashtags,
+    safetyWarning: placeSafetyWarning(place.categoryId),
+    privacyNotice: "정확한 좌표는 저장하지 않고 장소 반경 검증 결과만 남깁니다.",
+  };
+}
+
+function publicPostUserId(postId: string): string {
+  return `public_${postId}`;
+}
+
+function questionSubmitResponse(question: QuestionRecord, availableCredits: number) {
+  return {
+    question: publicQuestion(question),
+    creditEvent: questionCreditEvent(question.questionType),
+    balance: Math.max(0, availableCredits - question.creditCost),
+  };
+}
+
+function d1PostRowToRecord(row: D1PostRow): PostRecord {
+  return {
+    id: row.id,
+    placeId: row.placeId,
+    anonymousUserId: row.anonymousUserId,
+    creatorName: row.creatorName,
+    creatorBadge: row.creatorBadge,
+    caption: row.caption,
+    crowdLevel: row.crowdLevel,
+    parkingStatus: row.parkingStatus,
+    lineStatus: row.lineStatus,
+    weatherFeel: row.weatherFeel,
+    locationVerified: row.locationVerified === 1,
+    verifiedRadiusM: row.verifiedRadiusM,
+    photoCount: row.photoCount,
+    photoLabel: row.photoLabel,
+    helpfulCount: row.helpfulCount,
+    commentCount: row.commentCount,
+    hashtagNames: parseHashtagNames(row.hashtagNames),
+    hiddenAt: row.hiddenAt,
+    createdAt: row.createdAt,
+  };
+}
+
+async function listD1PostsForHashtags(db: D1Database): Promise<PostRecord[]> {
+  const { results = [] } = await db
+    .prepare(
+      `SELECT
+        id,
+        place_id AS placeId,
+        anonymous_user_id AS anonymousUserId,
+        creator_name AS creatorName,
+        creator_badge AS creatorBadge,
+        caption,
+        crowd_level AS crowdLevel,
+        parking_status AS parkingStatus,
+        line_status AS lineStatus,
+        weather_feel AS weatherFeel,
+        location_verified AS locationVerified,
+        verified_radius_m AS verifiedRadiusM,
+        photo_count AS photoCount,
+        photo_label AS photoLabel,
+        helpful_count AS helpfulCount,
+        comment_count AS commentCount,
+        hashtag_names AS hashtagNames,
+        hidden_at AS hiddenAt,
+        created_at AS createdAt
+      FROM posts
+      WHERE status = 'visible' AND hidden_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 500`,
+    )
+    .all<D1PostRow>();
+
+  return results.map(d1PostRowToRecord);
+}
+
+function hashtagRecordsForPosts(sourcePosts: PostRecord[]): HashtagRecord[] {
+  const counts = new Map<string, { postCount: number; createdAt: string }>();
+  for (const post of sourcePosts) {
+    if (post.hiddenAt) {
+      continue;
+    }
+    for (const name of post.hashtagNames) {
+      const current = counts.get(name);
+      counts.set(name, {
+        postCount: (current?.postCount ?? 0) + 1,
+        createdAt: current?.createdAt ?? post.createdAt,
+      });
+    }
+  }
+
+  return [...counts.entries()]
+    .map(([name, value]) => publicHashtag(name, value.postCount, value.createdAt))
+    .sort((left, right) => right.postCount - left.postCount || left.name.localeCompare(right.name, "ko"));
+}
+
+function publicHashtag(name: string, postCount: number, createdAt: string): HashtagRecord {
+  return {
+    id: `hashtag_${name}`,
+    name,
+    tagType: classifyHashtag(name),
+    postCount,
+    createdAt,
+  };
+}
+
+function rankPostsForFeed<TPost extends Pick<PostRecord, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount" | "hiddenAt">>(sourcePosts: TPost[]): TPost[] {
+  return [...sourcePosts]
+    .filter((post) => !post.hiddenAt)
+    .sort((left, right) => postScore(right) - postScore(left));
+}
+
+function postScore(post: Pick<PostRecord, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount">): number {
+  const ageMinutes = Math.max(0, (Date.now() - new Date(post.createdAt).getTime()) / 60_000);
+  const recentScore = Math.max(0, 240 - ageMinutes);
+
+  return recentScore + Number(post.locationVerified) * 80 + Math.min(post.photoCount, 3) * 24 + post.helpfulCount * 3 + post.commentCount * 2;
+}
+
+function buildPostShareCard(post: PostRecord, place: PlaceRecord): ShareCardRecord {
+  const judgement = judgementFromPostStatus(post.crowdLevel, post.parkingStatus);
+  const statusText = [crowdStatusLabel(post.crowdLevel), `주차 ${parkingStatusLabel(post.parkingStatus)}`, `줄 ${lineStatusLabel(post.lineStatus)}`].join(" · ");
+
+  return {
+    headline: `${place.name} ${judgement}`,
+    body: `${statusText}\n${minutesAgoLabel(post.createdAt)} 현장 인증 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
+    url: `${publicSiteUrl}/place/${place.id}`,
+    hashtags: post.hashtagNames.slice(0, 5),
+    variant: shareCardVariant(post, judgement),
+  };
+}
+
+function shareCardVariant(
+  post: Pick<PostRecord, "crowdLevel" | "parkingStatus" | "lineStatus" | "photoCount" | "weatherFeel">,
+  judgement: "가도 좋음" | "주의" | "지금은 비추",
+): ShareCardRecord["variant"] {
+  if (post.parkingStatus === "full") return "parking_full";
+  if (post.lineStatus === "medium" || post.lineStatus === "long") return "waiting";
+  if (judgement === "지금은 비추") return "avoid";
+  if (post.photoCount > 0 && post.weatherFeel === "good") return "photo_spot";
+  return "good";
+}
+
+function postCredits(post: PostRecord): Array<{ type: "verified_report" | "photo_report"; amount: 1 }> {
+  const credits: Array<{ type: "verified_report" | "photo_report"; amount: 1 }> = [];
+  if (post.verifiedRadiusM) {
+    credits.push({ type: "verified_report", amount: 1 });
+  }
+  if (post.photoCount > 0) {
+    credits.push({ type: "photo_report", amount: 1 });
+  }
+
+  return credits;
+}
+
+function questionCreditEvent(questionType: QuestionType): { type: "ask_question" | "ask_photo_request"; amount: -1 | -2 } {
+  return questionType === "photo_request" ? { type: "ask_photo_request", amount: -2 } : { type: "ask_question", amount: -1 };
+}
+
+function questionCreditCost(questionType: QuestionType): 1 | 2 {
+  return questionType === "photo_request" ? 2 : 1;
+}
+
+function normalizeHashtagName(input: string): string {
+  return input
+    .trim()
+    .replace(/^#+/, "")
+    .replace(/[^\p{L}\p{N}_]/gu, "")
+    .slice(0, 24);
+}
+
+function uniqueHashtagNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const name of names) {
+    const normalized = normalizeHashtagName(name);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+function classifyHashtag(name: string): HashtagRecord["tagType"] {
+  if (/주차|웨이팅|사람|한산|만차|줄/.test(name)) {
+    return "status";
+  }
+  if (/아이랑|데이트|산책|사진|노을|혼자|비오는날|피크닉/.test(name)) {
+    return "purpose";
+  }
+  if (/지금|오늘|주말|야경|오후/.test(name)) {
+    return "time";
+  }
+  if (/울산|부산|경주|대구|창원|김해|양산|포항|서울|제주|강릉|전주|여수|속초/.test(name)) {
+    return "region";
+  }
+
+  return "place";
+}
+
+function recommendPostHashtags(input: {
+  place: PlaceRecord;
+  crowdLevel: FieldReportRecord["crowdLevel"];
+  parkingStatus: FieldReportRecord["parkingStatus"];
+  lineStatus: FieldReportRecord["lineStatus"];
+  weatherFeel: FieldReportRecord["weatherFeel"];
+}): string[] {
+  return uniqueHashtagNames([
+    `${input.place.name}지금`,
+    statusHashtag(input.crowdLevel, input.parkingStatus, input.lineStatus),
+    purposeHashtag(input.place.name, input.weatherFeel),
+    regionHashtag(input.place.regionId),
+    "지금",
+  ]).slice(0, 5);
+}
+
+function statusHashtag(
+  crowdLevel: FieldReportRecord["crowdLevel"],
+  parkingStatus: FieldReportRecord["parkingStatus"],
+  lineStatus: FieldReportRecord["lineStatus"],
+): string {
+  if (parkingStatus === "full") return "주차만차";
+  if (parkingStatus === "limited") return "주차거의없음";
+  if (lineStatus === "long" || lineStatus === "medium") return "웨이팅있음";
+  if (crowdLevel === "packed" || crowdLevel === "busy") return "사람많음";
+  return "한산함";
+}
+
+function purposeHashtag(placeName: string, weatherFeel: FieldReportRecord["weatherFeel"]): string {
+  if (weatherFeel === "rainy") return "비오는날";
+  if (placeName.includes("태화강")) return "태화강산책";
+  if (placeName.includes("광안리")) return "광안리노을";
+  if (placeName.includes("황리단길")) return "황리단길웨이팅";
+  if (placeName.includes("한강")) return "한강피크닉";
+  return "사진스팟";
+}
+
+function regionHashtag(regionId: string): string {
+  const labels: Record<string, string> = {
+    busan: "부산",
+    ulsan: "울산",
+    gyeongju: "경주",
+    daegu: "대구",
+    changwon: "창원",
+    gimhae: "김해",
+    yangsan: "양산",
+    pohang: "포항",
+    seoul: "서울",
+    jeju: "제주",
+    gangneung: "강릉",
+    jeonju: "전주",
+    yeosu: "여수",
+    sokcho: "속초",
+  };
+
+  return labels[regionId] ?? regionId;
+}
+
+function judgementFromPostStatus(
+  crowdLevel: FieldReportRecord["crowdLevel"],
+  parkingStatus: FieldReportRecord["parkingStatus"],
+): "가도 좋음" | "주의" | "지금은 비추" {
+  if (crowdLevel === "packed" || parkingStatus === "full") {
+    return "지금은 비추";
+  }
+  if (crowdLevel === "busy" || parkingStatus === "limited") {
+    return "주의";
+  }
+
+  return "가도 좋음";
+}
+
+function crowdStatusLabel(crowdLevel: FieldReportRecord["crowdLevel"]): string {
+  if (crowdLevel === "quiet") return "한산";
+  if (crowdLevel === "busy") return "사람 많음";
+  if (crowdLevel === "packed") return "사람 매우 많음";
+  return "보통";
+}
+
+function parkingStatusLabel(parkingStatus: FieldReportRecord["parkingStatus"]): string {
+  if (parkingStatus === "available") return "여유";
+  if (parkingStatus === "limited") return "거의 없음";
+  if (parkingStatus === "full") return "만차";
+  return "정보 없음";
+}
+
+function lineStatusLabel(lineStatus: FieldReportRecord["lineStatus"]): string {
+  if (lineStatus === "none") return "없음";
+  if (lineStatus === "short") return "짧음";
+  if (lineStatus === "medium") return "보통";
+  return "김";
+}
+
+function minutesAgoLabel(createdAt: string): string {
+  const diffMinutes = Math.max(1, Math.round((Date.now() - new Date(createdAt).getTime()) / 60_000));
+  if (diffMinutes >= 60) {
+    return `${Math.round(diffMinutes / 60)}시간 전`;
+  }
+
+  return `${diffMinutes}분 전`;
+}
+
+function placeSafetyWarning(categoryId: string): string | null {
+  if (categoryId === "hospital") {
+    return "병원 제보에는 환자 얼굴, 접수번호, 진료 정보, 의료진 개인정보가 보이지 않게 촬영해 주세요.";
+  }
+  if (categoryId === "public_office") {
+    return "관공서 제보에는 민원인 얼굴, 서류, 차량번호, 창구 개인정보가 보이지 않게 촬영해 주세요.";
+  }
+
+  return null;
+}
+
+function creatorBadgeForPlace(place: PlaceRecord): string {
+  const region = regionHashtag(place.regionId);
+  return `${region} 현장 제보`;
+}
+
+function parseHashtagNames(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return uniqueHashtagNames(parsed.filter((item): item is string => typeof item === "string"));
+  } catch {
+    return [];
+  }
+}
+
+function seedPost(input: {
+  id: string;
+  placeId: string;
+  creatorName: string;
+  creatorBadge: string;
+  caption: string;
+  crowdLevel: FieldReportRecord["crowdLevel"];
+  parkingStatus: FieldReportRecord["parkingStatus"];
+  lineStatus: FieldReportRecord["lineStatus"];
+  weatherFeel: FieldReportRecord["weatherFeel"];
+  photoCount: number;
+  photoLabel: string;
+  helpfulCount: number;
+  commentCount: number;
+  hashtagNames: string[];
+  minutesAgo: number;
+}): PostRecord {
+  return {
+    id: input.id,
+    placeId: input.placeId,
+    anonymousUserId: "anon_seed_public",
+    creatorName: input.creatorName,
+    creatorBadge: input.creatorBadge,
+    caption: input.caption,
+    crowdLevel: input.crowdLevel,
+    parkingStatus: input.parkingStatus,
+    lineStatus: input.lineStatus,
+    weatherFeel: input.weatherFeel,
+    locationVerified: true,
+    verifiedRadiusM: 150,
+    photoCount: input.photoCount,
+    photoLabel: input.photoLabel,
+    helpfulCount: input.helpfulCount,
+    commentCount: input.commentCount,
+    hashtagNames: uniqueHashtagNames(input.hashtagNames),
+    hiddenAt: null,
+    createdAt: new Date(Date.now() - input.minutesAgo * 60_000).toISOString(),
+  };
+}
+
+function seedQuestion(input: {
+  id: string;
+  placeId: string;
+  questionType: QuestionType;
+  body: string;
+  minutesAgo: number;
+}): QuestionRecord {
+  return {
+    id: input.id,
+    placeId: input.placeId,
+    anonymousUserId: "anon_seed_public",
+    questionType: input.questionType,
+    body: input.body,
+    creditCost: questionCreditCost(input.questionType),
+    answeredReportId: null,
+    status: "pending",
+    createdAt: new Date(Date.now() - input.minutesAgo * 60_000).toISOString(),
   };
 }
 
@@ -3758,6 +4750,36 @@ function optionalStringField(body: JsonObject, field: string, maxLength: number)
   }
 
   return value.trim();
+}
+
+function integerField(body: JsonObject, field: string, min: number, max: number, fallback: number): number {
+  const value = body[field];
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+    throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
+  }
+
+  return value;
+}
+
+function hashtagNamesField(body: JsonObject, field: string, maxItems: number): string[] {
+  const value = body[field];
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
+  }
+
+  return uniqueHashtagNames(value.map((item) => {
+    if (typeof item !== "string") {
+      throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
+    }
+
+    return item;
+  }));
 }
 
 function anonymousUserIdField(body: JsonObject, field: string): string {

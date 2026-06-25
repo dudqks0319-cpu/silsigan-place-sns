@@ -432,15 +432,17 @@ async function assertMapSurfaceVisible(client, timeoutMs) {
     client,
     `
       (() => {
-        const map = document.querySelector('[aria-label="클릭 가능한 전국 실시간 장소 지도"], [aria-label="네이버 지도 기반 전국 실시간 장소 지도"]');
-        if (!(map instanceof HTMLElement)) return false;
-        const rect = map.getBoundingClientRect();
-        const hasInteractiveMarker = [...map.querySelectorAll('button')].some((button) => {
-          const markerRect = button.getBoundingClientRect();
-          const label = button.getAttribute('aria-label') ?? '';
-          return markerRect.width > 0 && markerRect.height > 0 && (button.hasAttribute('data-silsigan-place-id') || label.includes('상세'));
+        const maps = [...document.querySelectorAll('[aria-label="클릭 가능한 전국 실시간 장소 지도"], [aria-label="네이버 지도 기반 전국 실시간 장소 지도"]')]
+          .filter((map) => map instanceof HTMLElement);
+        return maps.some((map) => {
+          const rect = map.getBoundingClientRect();
+          const hasInteractiveMarker = [...map.querySelectorAll('button')].some((button) => {
+            const markerRect = button.getBoundingClientRect();
+            const label = button.getAttribute('aria-label') ?? '';
+            return markerRect.width > 0 && markerRect.height > 0 && (button.hasAttribute('data-silsigan-place-id') || label.includes('상세'));
+          });
+          return rect.width >= 240 && rect.height >= 140 && hasInteractiveMarker;
         });
-        return rect.width >= 240 && rect.height >= 140 && hasInteractiveMarker;
       })()
     `,
     "map.visible",
