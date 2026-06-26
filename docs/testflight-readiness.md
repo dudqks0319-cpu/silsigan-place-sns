@@ -2,6 +2,7 @@
 
 Updated: 2026-06-26
 Source of truth: `docs/current-release-state.md`
+Operator packet: `docs/cloudflare-staging-operator-packet.md`
 
 ## Verdict
 

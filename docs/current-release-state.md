@@ -10,6 +10,8 @@ Local base commit: `babb258`
 
 Current release target: App Store production submission is not the next milestone. The current milestone is a Cloudflare-backed TestFlight MVP with live staging URLs, R2/Images evidence, staging smoke, and real-device QA. See `docs/testflight-readiness.md`.
 
+Next unblocked operator packet: `docs/cloudflare-staging-operator-packet.md`.
+
 ## Local Code State
 
 | Area | State | Evidence |
@@ -91,7 +93,7 @@ Do not claim production readiness until all of the following are true:
 
 ## Next Actions
 
-1. Enable R2 in the Cloudflare Dashboard checkout flow, then run `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000` to confirm bucket visibility. If buckets are missing after R2 is enabled, run `pnpm cf:r2:evidence -- --env=staging --apply`; production bucket creation is `pnpm cf:r2:evidence -- --env=production --apply --confirm-production`. Rerun `pnpm cf:external-state` until `cloudflare.r2.buckets` passes and deployment URL checks are reduced to the URLs not yet deployed.
+1. Follow `docs/cloudflare-staging-operator-packet.md`: enable R2 in the Cloudflare Dashboard checkout flow, then run `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000` to confirm bucket visibility. If buckets are missing after R2 is enabled, run `pnpm cf:r2:evidence -- --env=staging --apply`; production bucket creation is `pnpm cf:r2:evidence -- --env=production --apply --confirm-production`. Rerun `pnpm cf:external-state` until `cloudflare.r2.buckets` passes and deployment URL checks are reduced to the URLs not yet deployed.
 2. Keep staging and production D1 as applied evidence (`pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000` and `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000` should both remain pass). Rerun `pnpm cf:external-state` after R2 or deployment URL changes.
 3. Deploy staging Worker and set `SILSIGAN_STAGING_API_BASE_URL`.
 4. Run `pnpm cf:build` and `pnpm cf:web:dry-run:staging`, deploy Cloudflare Pages/Workers frontend, then set `SILSIGAN_STAGING_PAGES_URL`.

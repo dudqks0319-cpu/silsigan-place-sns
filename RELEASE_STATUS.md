@@ -6,6 +6,8 @@
 
 상세 source of truth는 [docs/current-release-state.md](docs/current-release-state.md)이다. 이 파일은 공통 release harness가 읽는 요약 index다.
 
+R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md](docs/cloudflare-staging-operator-packet.md)에 모았다.
+
 ## 현재 후보
 
 - Version: `0.1.0`
