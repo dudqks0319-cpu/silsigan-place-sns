@@ -272,6 +272,7 @@ test("release state check separates ready fixtures from external release blocker
     const ledgerPath = join(tempDir, "current-release-state.md");
     const externalStateReportPath = join(tempDir, "cloudflare-external-state.json");
     const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       readyConfigPath,
@@ -295,6 +296,7 @@ test("release state check separates ready fixtures from external release blocker
     );
     writeReleaseStateLedger(ledgerPath);
     writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
     writeFileSync(
       externalStateReportPath,
       [
@@ -339,6 +341,7 @@ test("release state check separates ready fixtures from external release blocker
       `--release-ledger=${releaseLedgerPath}`,
       `--release-status=${releaseStatusPath}`,
       `--ugc-runbook=${ugcRunbookPath}`,
+      `--cost-usage-runbook=${costUsageRunbookPath}`,
     ], {
       encoding: "utf8",
       env: createReadyPreflightProcessEnv(),
@@ -362,6 +365,8 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.status.source_of_truth" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "ugc_moderation.runbook" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "ugc_moderation.runbook.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_cost_usage.runbook" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_cost_usage.runbook.required_tokens" && check.status === "pass"));
 
     try {
       execFileSync(process.execPath, [
@@ -371,6 +376,7 @@ test("release state check separates ready fixtures from external release blocker
         `--release-ledger=${releaseLedgerPath}`,
         `--release-status=${releaseStatusPath}`,
         `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
         `--cloudflare-external-state-report=${externalStateReportPath}`,
         "--strict",
       ], {
@@ -405,6 +411,7 @@ test("release state check requires an operable UGC moderation runbook", () => {
     const ledgerPath = join(tempDir, "current-release-state.md");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     const incompleteRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     writeFileSync(
       configPath,
       JSON.stringify(
@@ -416,6 +423,7 @@ test("release state check requires an operable UGC moderation runbook", () => {
       "utf8",
     );
     writeReleaseStateLedger(ledgerPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
     writeFileSync(incompleteRunbookPath, "# #실시간 UGC moderation runbook\n\n## SLA\n\n12h only\n", "utf8");
 
     try {
@@ -426,6 +434,7 @@ test("release state check requires an operable UGC moderation runbook", () => {
         `--release-ledger=${releaseLedgerPath}`,
         `--release-status=${releaseStatusPath}`,
         `--ugc-runbook=${incompleteRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
         "--strict",
       ], {
         encoding: "utf8",
@@ -455,12 +464,14 @@ test("release state check requires an operable UGC moderation runbook", () => {
   }
 });
 
-test("release state check requires release harness ledger and status docs", () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-"));
+test("release state check requires an operable Cloudflare cost and usage runbook", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-cost-usage-runbook-"));
   try {
     const configPath = join(tempDir, "ready-wrangler.jsonc");
     const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const incompleteRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     writeFileSync(
       configPath,
       JSON.stringify(
@@ -473,6 +484,66 @@ test("release state check requires release harness ledger and status docs", () =
     );
     writeReleaseStateLedger(ledgerPath);
     writeUgcModerationRunbook(ugcRunbookPath);
+    writeFileSync(incompleteRunbookPath, "# #실시간 Cloudflare cost and usage runbook\n\n## Dashboard Checks\n\nR2 only\n", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${incompleteRunbookPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when the Cloudflare cost and usage runbook is incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const tokenCheck = payload.checks.find((check) => check.name === "cloudflare_cost_usage.runbook.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("cloudflare_cost_usage.runbook.ownership"));
+      assert.ok(payload.blockers.includes("cloudflare_cost_usage.runbook.required_tokens"));
+      assert.equal(tokenCheck?.status, "fail");
+      assert.ok(tokenCheck?.missingTokens?.includes("Usage & billing"));
+      assert.ok(tokenCheck?.missingTokens?.includes("Billing alerts"));
+      assert.ok(tokenCheck?.missingTokens?.includes("TestFlight"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires release harness ledger and status docs", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
 
     try {
       execFileSync(process.execPath, [
@@ -482,6 +553,7 @@ test("release state check requires release harness ledger and status docs", () =
         `--release-ledger=${join(tempDir, "missing-release-ledger.yaml")}`,
         `--release-status=${join(tempDir, "missing-RELEASE_STATUS.md")}`,
         `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
         "--strict",
       ], {
         encoding: "utf8",
@@ -508,6 +580,7 @@ test("release state check blocks on open release harness blockers", () => {
     const configPath = join(tempDir, "ready-wrangler.jsonc");
     const ledgerPath = join(tempDir, "current-release-state.md");
     const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath, { openBlocker: true });
     writeFileSync(
       configPath,
@@ -521,6 +594,7 @@ test("release state check blocks on open release harness blockers", () => {
     );
     writeReleaseStateLedger(ledgerPath);
     writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
 
     try {
       execFileSync(process.execPath, [
@@ -530,6 +604,7 @@ test("release state check blocks on open release harness blockers", () => {
         `--release-ledger=${releaseLedgerPath}`,
         `--release-status=${releaseStatusPath}`,
         `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
         "--strict",
       ], {
         encoding: "utf8",
@@ -562,6 +637,7 @@ test("release state check rejects release status missing open blocker evidence",
     const configPath = join(tempDir, "ready-wrangler.jsonc");
     const ledgerPath = join(tempDir, "current-release-state.md");
     const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath, {
       omitOpenBlockerEvidenceFromStatus: true,
       openBlocker: true,
@@ -578,6 +654,7 @@ test("release state check rejects release status missing open blocker evidence",
     );
     writeReleaseStateLedger(ledgerPath);
     writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
 
     try {
       execFileSync(process.execPath, [
@@ -587,6 +664,7 @@ test("release state check rejects release status missing open blocker evidence",
         `--release-ledger=${releaseLedgerPath}`,
         `--release-status=${releaseStatusPath}`,
         `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
         "--strict",
       ], {
         encoding: "utf8",
@@ -619,6 +697,7 @@ test("release state check rejects duplicated next action runbook lines", () => {
     const configPath = join(tempDir, "ready-wrangler.jsonc");
     const ledgerPath = join(tempDir, "current-release-state.md");
     const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       configPath,
@@ -632,6 +711,7 @@ test("release state check rejects duplicated next action runbook lines", () => {
     );
     writeReleaseStateLedger(ledgerPath, { duplicateNextActionLine: true });
     writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
 
     try {
       execFileSync(process.execPath, [
@@ -641,6 +721,7 @@ test("release state check rejects duplicated next action runbook lines", () => {
         `--release-ledger=${releaseLedgerPath}`,
         `--release-status=${releaseStatusPath}`,
         `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
         "--strict",
       ], {
         encoding: "utf8",
@@ -673,6 +754,7 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
     const configPath = join(tempDir, "wrangler.jsonc");
     const ledgerPath = join(tempDir, "release.md");
     const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       configPath,
@@ -686,6 +768,7 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
     );
     writeReleaseStateLedger(ledgerPath);
     writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
     writeFileSync(join(tempDir, "package.json"), JSON.stringify({ dependencies: { "@supabase/supabase-js": "2.0.0" } }), "utf8");
     mkdirSync(join(tempDir, "supabase"));
     mkdirSync(join(tempDir, "src/lib"), { recursive: true });
@@ -701,6 +784,7 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
         `--release-ledger=${releaseLedgerPath}`,
         `--release-status=${releaseStatusPath}`,
         `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
         "--strict",
       ], {
         cwd: tempDir,
@@ -2123,6 +2207,41 @@ function writeUgcModerationRunbook(path: string) {
       "## Stop Conditions",
       "",
       "Stop when no operator is available, staging admin token is missing, comment/photo smoke fails, or R2 delete evidence is missing.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writeCloudflareCostUsageRunbook(path: string) {
+  writeFileSync(
+    path,
+    [
+      "# #실시간 Cloudflare cost and usage runbook",
+      "",
+      "## Ownership",
+      "",
+      "Release owner reviews budget decisions and Cloudflare operator reviews product dashboards.",
+      "",
+      "## Dashboard Checks",
+      "",
+      "Use Usage & billing for R2, D1, Workers, Durable Objects, and Cloudflare Images in staging and production.",
+      "",
+      "## Baseline Thresholds",
+      "",
+      "Track requests, storage, egress, transformations, reads, writes, and errors against daily and weekly baselines.",
+      "",
+      "## Alert Rules",
+      "",
+      "Configure Billing alerts at 50% and 80% of the MVP budget before TestFlight expansion.",
+      "",
+      "## Evidence And Cadence",
+      "",
+      "Record daily staging evidence and weekly production evidence with owner decisions.",
+      "",
+      "## Stop Conditions",
+      "",
+      "Stop TestFlight expansion when budget evidence is missing or usage cannot be explained.",
       "",
     ].join("\n"),
     "utf8",

@@ -51,6 +51,7 @@ Only consider App Store production submission after TestFlight evidence is clean
 - [x] UGC moderation owner, response SLA, abuse handling, user restriction, and deletion/restore runbook is documented and guarded by `release:status`.
 - [ ] Staging/production moderation alert webhook secrets and live queue access are configured and verified.
 - [x] Ranking manipulation smoke proves repeated same-user click/like signals do not inflate D1 ranking counts.
+- [x] Cloudflare cost/usage dashboard criteria, budget alerts, evidence cadence, and TestFlight stop conditions are documented and guarded by `release:status`.
 - [ ] Account deletion or anonymous data deletion/retention behavior is verified end-to-end if account-like identity is exposed in the native build.
 - [ ] Store screenshots and metadata use real app surfaces, not placeholder beta/demo claims.
 
@@ -106,7 +107,7 @@ The D1 ranking smoke now covers repeated same-user click and like attempts again
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 118 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence. |
+| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 119 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence. |
 
 ## 2026-06-26 UGC Moderation Runbook Gate
 
@@ -115,3 +116,11 @@ The TestFlight/App Store UGC moderation runbook is now a release-state checked a
 | Probe | Result | Evidence |
 | --- | --- | --- |
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/ugc-moderation-runbook.md` to include ownership, intake queue, SLA, operator actions, evidence/audit, escalation, stop conditions, moderation target types, and action tokens. Current failure remains the known external P0 blockers, not missing UGC runbook documentation. |
+
+## 2026-06-26 Cloudflare Cost/Usage Runbook Gate
+
+The Cloudflare cost/usage MVP criteria are now a release-state checked artifact.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/cloudflare-cost-usage-runbook.md` to cover owner, Usage & billing dashboard checks, baseline thresholds, Billing alerts, daily/weekly evidence cadence, product tokens for R2/D1/Workers/Durable Objects/Cloudflare Images, and TestFlight stop conditions. Current failure remains the known external P0 blockers, not missing cost/usage criteria. |

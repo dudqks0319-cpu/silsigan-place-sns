@@ -25,7 +25,7 @@ local_checks:
   - name: "Targeted Cloudflare API tests"
     command: "pnpm test -- tests/cloudflare-api.test.ts"
     status: "pass"
-    evidence: "118 tests passed on 2026-06-26, including D1 ranking abuse smoke for repeated same-user click/like signals and UGC moderation runbook guard coverage"
+    evidence: "119 tests passed on 2026-06-26, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, and Cloudflare cost/usage runbook guard coverage"
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
@@ -34,6 +34,10 @@ local_checks:
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
     evidence: "docs/ugc-moderation-runbook.md includes ownership, MODERATION_ALERT_WEBHOOK_URL intake, 12h/24h/72h SLA, comment/photo targets, hide/restore/delete/restrict actions, evidence/audit, escalation, and stop conditions"
+  - name: "Cloudflare cost and usage runbook gate"
+    command: "node scripts/release-state-check.mjs --strict"
+    status: "pass_local"
+    evidence: "docs/cloudflare-cost-usage-runbook.md includes Usage & billing dashboard checks, Billing alerts, daily/weekly evidence cadence, R2/D1/Workers/Durable Objects/Cloudflare Images metrics, budget thresholds, and TestFlight stop conditions"
   - name: "Release gate plan"
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
@@ -95,6 +99,9 @@ security:
   ugc_moderation:
     status: "pass_local"
     evidence: "docs/ugc-moderation-runbook.md defines owner, report intake queue, SLA, operator actions, audit evidence, escalation, and stop conditions; live webhook secret verification remains staging-blocked"
+  cloudflare_cost_usage:
+    status: "pass_local"
+    evidence: "docs/cloudflare-cost-usage-runbook.md defines owner, dashboard checks, baseline thresholds, Billing alerts, evidence cadence, and stop conditions; live billing dashboard evidence remains staging-blocked"
   payments_legal:
     status: "not_applicable"
     evidence: "No payment flow in current release scope"

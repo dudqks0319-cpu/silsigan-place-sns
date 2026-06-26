@@ -9,6 +9,7 @@ const DEFAULT_LEDGER_PATH = "docs/current-release-state.md";
 const DEFAULT_RELEASE_LEDGER_PATH = "release-ledger.yaml";
 const DEFAULT_RELEASE_STATUS_PATH = "RELEASE_STATUS.md";
 const DEFAULT_UGC_MODERATION_RUNBOOK_PATH = "docs/ugc-moderation-runbook.md";
+const DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH = "docs/cloudflare-cost-usage-runbook.md";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
@@ -54,6 +55,33 @@ const REQUIRED_UGC_MODERATION_RUNBOOK_TOKENS = [
   "delete",
   "restrict",
 ];
+const REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_SECTIONS = [
+  "# #실시간 Cloudflare cost and usage runbook",
+  "## Ownership",
+  "## Dashboard Checks",
+  "## Baseline Thresholds",
+  "## Alert Rules",
+  "## Evidence And Cadence",
+  "## Stop Conditions",
+];
+const REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_TOKENS = [
+  "R2",
+  "D1",
+  "Workers",
+  "Durable Objects",
+  "Cloudflare Images",
+  "Usage & billing",
+  "Billing alerts",
+  "daily",
+  "weekly",
+  "staging",
+  "production",
+  "egress",
+  "requests",
+  "storage",
+  "budget",
+  "TestFlight",
+];
 const REQUIRED_ENV_URLS = {
   SILSIGAN_STAGING_PAGES_URL: "staging.pages",
   SILSIGAN_STAGING_API_BASE_URL: "staging.worker_api",
@@ -84,6 +112,7 @@ const ledgerPath = options.get("ledger") ?? DEFAULT_LEDGER_PATH;
 const releaseLedgerPath = options.get("release-ledger") ?? DEFAULT_RELEASE_LEDGER_PATH;
 const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATUS_PATH;
 const ugcModerationRunbookPath = options.get("ugc-moderation-runbook") ?? options.get("ugc-runbook") ?? DEFAULT_UGC_MODERATION_RUNBOOK_PATH;
+const cloudflareCostUsageRunbookPath = options.get("cloudflare-cost-usage-runbook") ?? options.get("cost-usage-runbook") ?? DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH;
 const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
@@ -91,6 +120,7 @@ const checks = [];
 await checkLedger(ledgerPath);
 await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath);
 await checkUgcModerationRunbook(ugcModerationRunbookPath);
+await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
 await checkOpenNextAdapter();
@@ -110,6 +140,7 @@ const summary = {
   releaseLedgerPath,
   releaseStatusPath,
   ugcModerationRunbookPath,
+  cloudflareCostUsageRunbookPath,
   checks,
   blockers: summarizeReleaseBlockers(blockers),
   warnings: warnings.map((check) => check.name),
@@ -242,6 +273,36 @@ async function checkUgcModerationRunbook(path) {
     { missingTokens },
   );
   recordNoSecretLikePatterns("ugc_moderation.runbook.redaction", runbook, path);
+}
+
+async function checkCloudflareCostUsageRunbook(path) {
+  let runbook = "";
+  try {
+    runbook = await readFile(path, "utf8");
+    record("cloudflare_cost_usage.runbook", "pass", "Cloudflare cost and usage runbook is present.");
+  } catch (error) {
+    record("cloudflare_cost_usage.runbook", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_SECTIONS) {
+    record(
+      `cloudflare_cost_usage.runbook.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      runbook.includes(section) ? "pass" : "fail",
+      `Cloudflare cost and usage runbook must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_TOKENS.filter((token) => !runbook.includes(token));
+  record(
+    "cloudflare_cost_usage.runbook.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "Cloudflare cost and usage runbook covers products, dashboards, thresholds, alerts, cadence, and TestFlight stop conditions."
+      : "Cloudflare cost and usage runbook is missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("cloudflare_cost_usage.runbook.redaction", runbook, path);
 }
 
 function recordNoSecretLikePatterns(name, content, path) {
