@@ -1,12 +1,14 @@
 # #실시간 current release state
 
-Updated: 2026-06-25
+Updated: 2026-06-26
 Branch: `feature/nationwide-region-staging`
 Local base commit: `babb258`
 
 ## Objective
 
 기존 Supabase 기반 지역 MVP를 Cloudflare Workers/D1/R2/Durable Objects 기반 전국 실시간 장소 앱으로 전환한다. 완료 판정은 로컬 테스트 통과가 아니라 Cloudflare staging/production 리소스와 운영 증적까지 분리 검증된 상태를 기준으로 한다.
+
+Current release target: App Store production submission is not the next milestone. The current milestone is a Cloudflare-backed TestFlight MVP with live staging URLs, R2/Images evidence, staging smoke, and real-device QA. See `docs/testflight-readiness.md`.
 
 ## Local Code State
 
