@@ -16,6 +16,8 @@ const pagesSmoke = await import(new URL("../scripts/cloudflare-pages-smoke.mjs",
 const pagesLocalReportSmoke = await import(new URL("../scripts/cloudflare-pages-local-report-smoke.mjs", import.meta.url).href);
 const releaseGate = await import(new URL("../scripts/cloudflare-release-gate.mjs", import.meta.url).href);
 const externalState = await import(new URL("../scripts/cloudflare-external-state-check.mjs", import.meta.url).href);
+const d1ReleaseEvidence = await import(new URL("../scripts/cloudflare-d1-release-evidence.mjs", import.meta.url).href);
+const r2ReleaseEvidence = await import(new URL("../scripts/cloudflare-r2-release-evidence.mjs", import.meta.url).href);
 
 type SuccessPayload<TData> = {
   success: true;
@@ -267,6 +269,12 @@ test("release state check separates ready fixtures from external release blocker
   try {
     const readyConfigPath = join(tempDir, "ready-wrangler.jsonc");
     const blockedConfigPath = join(tempDir, "blocked-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const externalStateReportPath = join(tempDir, "cloudflare-external-state.json");
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       readyConfigPath,
       JSON.stringify(
@@ -287,9 +295,57 @@ test("release state check separates ready fixtures from external release blocker
       ),
       "utf8",
     );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeFileSync(
+      externalStateReportPath,
+      [
+        JSON.stringify(
+          {
+            ok: false,
+            checks: [
+              {
+                name: "cloudflare.r2.enabled",
+                status: "fail",
+                code: "R2_NOT_ENABLED",
+                message: "Cloudflare account R2 is not enabled. Enable R2 in the Cloudflare Dashboard before Worker deploy and staging photo smoke.",
+              },
+              {
+                name: "deployment_url.production.pages",
+                status: "fail",
+                code: "DEPLOYMENT_URL_REQUIRED",
+                message: "SILSIGAN_PRODUCTION_PAGES_URL is required.",
+              },
+              {
+                name: "cloudflare.d1.production.migration_0002",
+                status: "fail",
+                code: "D1_0002_NOT_APPLIED",
+                message: "Remote production D1 is missing the posts/questions migration.",
+              },
+            ],
+            blockers: ["R2_NOT_ENABLED", "deployment_url.production.pages", "D1_0002_NOT_APPLIED"],
+          },
+          null,
+          2,
+        ),
+        "pnpm failure footer should be ignored after JSON",
+      ].join("\n"),
+      "utf8",
+    );
 
     const releaseStateScript = new URL("../scripts/release-state-check.mjs", import.meta.url).pathname;
-    const readyOutput = execFileSync(process.execPath, [releaseStateScript, `--config=${readyConfigPath}`], {
+    const readyOutput = execFileSync(process.execPath, [
+      releaseStateScript,
+      `--config=${readyConfigPath}`,
+      `--ledger=${ledgerPath}`,
+      `--release-ledger=${releaseLedgerPath}`,
+      `--release-status=${releaseStatusPath}`,
+      `--ugc-runbook=${ugcRunbookPath}`,
+      `--cost-usage-runbook=${costUsageRunbookPath}`,
+      `--review-notes=${testFlightReviewNotesPath}`,
+    ], {
       encoding: "utf8",
       env: createReadyPreflightProcessEnv(),
     });
@@ -306,9 +362,33 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "legacy.vercel_config" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "legacy.supabase_dependencies" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "legacy.vercel_public_urls" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.ledger" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.status" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.ledger.source_of_truth" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "release_harness.status.source_of_truth" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "ugc_moderation.runbook" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "ugc_moderation.runbook.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_cost_usage.runbook" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_cost_usage.runbook.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.support" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy.support" && check.status === "pass"));
 
     try {
-      execFileSync(process.execPath, [releaseStateScript, `--config=${blockedConfigPath}`, "--strict"], {
+      execFileSync(process.execPath, [
+        releaseStateScript,
+        `--config=${blockedConfigPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        `--cloudflare-external-state-report=${externalStateReportPath}`,
+        "--strict",
+      ], {
         encoding: "utf8",
         env: createReadyPreflightProcessEnv({
           SILSIGAN_STAGING_API_BASE_URL: "",
@@ -324,6 +404,500 @@ test("release state check separates ready fixtures from external release blocker
       assert.ok(blockedPayload.blockers.includes("staging.d1.DB.database_id"));
       assert.ok(blockedPayload.blockers.includes("staging.kv.CACHE.id"));
       assert.ok(blockedPayload.blockers.includes("deployment_url.staging.worker_api"));
+      assert.ok(blockedPayload.blockers.includes("R2_NOT_ENABLED"));
+      assert.ok(blockedPayload.blockers.includes("deployment_url.production.pages"));
+      assert.ok(blockedPayload.blockers.includes("D1_0002_NOT_APPLIED"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires an operable UGC moderation runbook", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-ugc-runbook-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const incompleteRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeFileSync(incompleteRunbookPath, "# #실시간 UGC moderation runbook\n\n## SLA\n\n12h only\n", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${incompleteRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when the UGC moderation runbook is incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const tokenCheck = payload.checks.find((check) => check.name === "ugc_moderation.runbook.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("ugc_moderation.runbook.ownership"));
+      assert.ok(payload.blockers.includes("ugc_moderation.runbook.required_tokens"));
+      assert.equal(tokenCheck?.status, "fail");
+      assert.ok(tokenCheck?.missingTokens?.includes("MODERATION_ALERT_WEBHOOK_URL"));
+      assert.ok(tokenCheck?.missingTokens?.includes("photo"));
+      assert.ok(tokenCheck?.missingTokens?.includes("restrict"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires an operable Cloudflare cost and usage runbook", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-cost-usage-runbook-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const incompleteRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeFileSync(incompleteRunbookPath, "# #실시간 Cloudflare cost and usage runbook\n\n## Dashboard Checks\n\nR2 only\n", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${incompleteRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when the Cloudflare cost and usage runbook is incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const tokenCheck = payload.checks.find((check) => check.name === "cloudflare_cost_usage.runbook.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("cloudflare_cost_usage.runbook.ownership"));
+      assert.ok(payload.blockers.includes("cloudflare_cost_usage.runbook.required_tokens"));
+      assert.equal(tokenCheck?.status, "fail");
+      assert.ok(tokenCheck?.missingTokens?.includes("Usage & billing"));
+      assert.ok(tokenCheck?.missingTokens?.includes("Billing alerts"));
+      assert.ok(tokenCheck?.missingTokens?.includes("TestFlight"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires operable TestFlight review notes", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-testflight-review-notes-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const incompleteNotesPath = join(tempDir, "testflight-review-notes.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeFileSync(incompleteNotesPath, "# #실시간 TestFlight review notes\n\n## Permissions\n\nTestFlight only\n", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${incompleteNotesPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when the TestFlight review notes are incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const tokenCheck = payload.checks.find((check) => check.name === "testflight_review_notes.doc.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("testflight_review_notes.doc.beta_app_description"));
+      assert.ok(payload.blockers.includes("testflight_review_notes.doc.required_tokens"));
+      assert.equal(tokenCheck?.status, "fail");
+      assert.ok(tokenCheck?.missingTokens?.includes("SILSIGAN_STAGING_PAGES_URL"));
+      assert.ok(tokenCheck?.missingTokens?.includes("privacy policy URL"));
+      assert.ok(tokenCheck?.missingTokens?.includes("UGC moderation"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires final privacy and support URLs", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-policy-support-urls-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv({
+          SILSIGAN_PRIVACY_POLICY_URL: "",
+          SILSIGAN_SUPPORT_URL: "http://localhost:3000/support?debug=1",
+        }),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when privacy/support URLs are missing or unsafe");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; message: string }>;
+      };
+      const supportChecks = payload.checks.filter((check) => check.name === "policy_url.support");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("policy_url.privacy_policy"));
+      assert.ok(payload.blockers.includes("policy_url.support"));
+      assert.ok(payload.checks.some((check) => check.name === "policy_url.privacy_policy" && check.status === "fail" && check.message.includes("SILSIGAN_PRIVACY_POLICY_URL")));
+      assert.ok(supportChecks.some((check) => check.status === "fail" && check.message.includes("https")));
+      assert.ok(supportChecks.some((check) => check.status === "fail" && check.message.includes("query")));
+      assert.ok(supportChecks.some((check) => check.status === "fail" && check.message.includes("localhost")));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires release harness ledger and status docs", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${join(tempDir, "missing-release-ledger.yaml")}`,
+        `--release-status=${join(tempDir, "missing-RELEASE_STATUS.md")}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when release harness docs are missing");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as { ok: boolean; blockers: string[] };
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("release_harness.ledger"));
+      assert.ok(payload.blockers.includes("release_harness.status"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check blocks on open release harness blockers", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-open-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath, { openBlocker: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail while the release harness has open blockers");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; blockers?: string[] }>;
+      };
+      const openBlockerCheck = payload.checks.find((check) => check.name === "release_harness.ledger.open_blockers");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("release_harness.ledger.open_blockers"));
+      assert.equal(openBlockerCheck?.status, "fail");
+      assert.deepEqual(openBlockerCheck?.blockers, ["P0-SILSIGAN-R2-DASHBOARD"]);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check rejects release status missing open blocker evidence", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-evidence-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath, {
+      omitOpenBlockerEvidenceFromStatus: true,
+      openBlocker: true,
+    });
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when release status omits open blocker evidence");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingEvidence?: string[] }>;
+      };
+      const evidenceCheck = payload.checks.find((check) => check.name === "release_harness.status.open_blocker_evidence");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("release_harness.status.open_blocker_evidence"));
+      assert.equal(evidenceCheck?.status, "fail");
+      assert.deepEqual(evidenceCheck?.missingEvidence, ["R2_NOT_ENABLED"]);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check rejects duplicated next action runbook lines", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-next-actions-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath, { duplicateNextActionLine: true });
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when next actions repeat an operator instruction");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; duplicates?: string[] }>;
+      };
+      const duplicateCheck = payload.checks.find((check) => check.name === "ledger.next_actions.duplicate_lines");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("ledger.next_actions.duplicate_lines"));
+      assert.equal(duplicateCheck?.status, "fail");
+      assert.deepEqual(duplicateCheck?.duplicates, ["R2 check passes before staging Worker/Pages URL smoke can begin."]);
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -335,6 +909,10 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
   try {
     const configPath = join(tempDir, "wrangler.jsonc");
     const ledgerPath = join(tempDir, "release.md");
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       configPath,
       JSON.stringify(
@@ -345,11 +923,10 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
       ),
       "utf8",
     );
-    writeFileSync(
-      ledgerPath,
-      ["## Objective", "## Local Code State", "## Latest Local Verification", "## Cloudflare External State", "## Release Decision", "## Next Actions"].join("\n\n"),
-      "utf8",
-    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
     writeFileSync(join(tempDir, "package.json"), JSON.stringify({ dependencies: { "@supabase/supabase-js": "2.0.0" } }), "utf8");
     mkdirSync(join(tempDir, "supabase"));
     mkdirSync(join(tempDir, "src/lib"), { recursive: true });
@@ -358,7 +935,17 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
     writeFileSync(join(tempDir, "src/lib/site-url.ts"), "export const site = 'https://silsigan.vercel.app';", "utf8");
 
     try {
-      execFileSync(process.execPath, [new URL("../scripts/release-state-check.mjs", import.meta.url).pathname, `--config=${configPath}`, `--ledger=${ledgerPath}`, "--strict"], {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        "--strict",
+      ], {
         cwd: tempDir,
         encoding: "utf8",
         env: createReadyPreflightProcessEnv(),
@@ -586,9 +1173,10 @@ test("local Pages report smoke validates redacted network artifacts and required
       /missing report target types: video/,
     );
 
-    const requiredCheckNames = ["map.controlsUncovered", "map.trafficButton", "onboarding.dismiss", "reports.photoCreate"];
+    const requiredCheckNames = ["map.controlsUncovered", "layout.bottomNavOpaque", "map.trafficButton", "onboarding.dismiss", "reports.photoCreate"];
     const safeChecks = [
       { name: "map.controlsUncovered", status: "pass" },
+      { name: "layout.bottomNavOpaque", status: "pass" },
       { name: "map.trafficButton", status: "pass" },
       { name: "onboarding.dismiss", status: "pass" },
       { name: "reports.photoCreate", status: "pass" },
@@ -643,6 +1231,10 @@ test("Cloudflare release gate plan orders strict staging and browser evidence wi
       "frontend.wranglerDryRun.staging",
       "frontend.wranglerDryRun.production",
       "cloudflare.preflight",
+      "cloudflare.r2Evidence.staging",
+      "cloudflare.d1Evidence.staging",
+      "cloudflare.r2Evidence.production",
+      "cloudflare.d1Evidence.production",
       "cloudflare.externalState",
       "wrangler.dryRun.staging",
       "wrangler.dryRun.production",
@@ -650,6 +1242,18 @@ test("Cloudflare release gate plan orders strict staging and browser evidence wi
       "pages.browser.smoke",
     ],
   );
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "cloudflare.r2Evidence.staging")?.args, [
+    "cf:r2:evidence",
+    "--",
+    "--env=staging",
+    "--check",
+  ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "cloudflare.d1Evidence.production")?.args, [
+    "cf:d1:evidence",
+    "--",
+    "--env=production",
+    "--check",
+  ]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.args, ["smoke:staging", "--", "--mutating", "--require-admin"]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.args, [
     "smoke:pages",
@@ -698,6 +1302,13 @@ test("Cloudflare release gate can collect non-mutating external blockers without
   assert.equal(collectPlan.mutating, false);
   assert.equal(collectPlan.steps.some((step: ReleaseGateStep) => step.name === "staging.api.smoke"), true);
   assert.deepEqual(collectPlan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.args, ["smoke:staging"]);
+  assert.deepEqual(collectPlan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
+  ]);
+  assert.deepEqual(collectPlan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_PAGES_URL",
+    "SILSIGAN_STAGING_API_BASE_URL",
+  ]);
 
   const mutatingCollectPlan = releaseGate.resolveReleaseGatePlan({
     flags: releaseGate.parseArgs(["--collect-blockers", "--mutating"]).flags,
@@ -736,12 +1347,20 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
     "--mutating",
     "--require-admin",
   ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
+    "SILSIGAN_STAGING_ADMIN_TOKEN",
+  ]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.args, [
     "smoke:pages",
     "--",
     "--mutating",
     "--report",
     "--require-photo",
+  ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_PAGES_URL",
+    "SILSIGAN_STAGING_API_BASE_URL",
   ]);
   assert.equal(JSON.stringify(plan).includes("super-secret"), false);
 
@@ -792,7 +1411,14 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
   assert.equal(plan.requirePhoto, false);
   assert.equal(plan.tailRequired, false);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.args, ["smoke:staging"]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
+  ]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.args, ["smoke:pages"]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "pages.browser.smoke")?.envKeys, [
+    "SILSIGAN_STAGING_PAGES_URL",
+    "SILSIGAN_STAGING_API_BASE_URL",
+  ]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "production.api.smoke")?.args, ["smoke:staging"]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "production.api.smoke")?.envKeys, [
     "SILSIGAN_PRODUCTION_API_BASE_URL",
@@ -841,6 +1467,7 @@ test("Cloudflare release gate summarizes failed collect-blockers steps without s
     {
       name: "release.status.strict",
       status: "fail",
+      blockers: ["release_harness.ledger.open_blockers"],
       outputTail: JSON.stringify({
         blockers: ["deployment_url.staging.pages", "deployment_url.staging.worker_api", "https://should-not-be-a-blocker.example"],
       }),
@@ -879,11 +1506,11 @@ test("Cloudflare release gate summarizes failed collect-blockers steps without s
     },
     failedSteps: ["release.status.strict", "cloudflare.preflight", "cloudflare.externalState", "pages.browser.smoke"],
     blockers: [
+      "release_harness.ledger.open_blockers",
       "deployment_url.staging.pages",
       "deployment_url.staging.worker_api",
-      "PAGES_URL_REQUIRED",
       "deployment_url.production.worker_api",
-      "cloudflare.r2.enabled",
+      "R2_NOT_ENABLED",
     ],
   });
   assert.equal(JSON.stringify(summary).includes("super-secret"), false);
@@ -925,6 +1552,184 @@ test("Cloudflare external state check requires configured R2 buckets when R2 is 
   assert.deepEqual(check.missingBuckets, ["silsigan-photos-production"]);
 });
 
+test("Cloudflare external state check classifies remote D1 migration and seed evidence", () => {
+  const missingMigration = externalState.classifyD1MigrationResult(
+    {
+      exitCode: 1,
+      stdout: "",
+      stderr: "SQLITE_ERROR: no such table: posts",
+    },
+    "staging",
+  );
+  assert.equal(missingMigration.name, "cloudflare.d1.staging.migration_0002");
+  assert.equal(missingMigration.status, "fail");
+  assert.equal(missingMigration.code, "D1_0002_NOT_APPLIED");
+  assert.equal(JSON.stringify(missingMigration).includes("no such table"), false);
+
+  const incompleteSeed = externalState.classifyD1MigrationResult(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nposts=3\nquestions=2\n",
+      stderr: "",
+    },
+    "production",
+  );
+  assert.equal(incompleteSeed.name, "cloudflare.d1.production.seed_posts_questions");
+  assert.equal(incompleteSeed.status, "fail");
+  assert.equal(incompleteSeed.code, "D1_SEED_INCOMPLETE");
+  assert.deepEqual(incompleteSeed.missingSeed, ["posts", "questions"]);
+
+  const ready = externalState.classifyD1MigrationResult(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nposts=4\nquestions=3\n",
+      stderr: "",
+    },
+    "staging",
+  );
+  assert.equal(ready.name, "cloudflare.d1.staging.migration_0002");
+  assert.equal(ready.status, "pass");
+  assert.deepEqual(ready.counts, { posts: 4, questions: 3 });
+});
+
+test("Cloudflare D1 release evidence planner defaults to non-mutating steps", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-release-plan-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const parsed = d1ReleaseEvidence.parseArgs(["--env=staging", "--config", configPath]);
+    const plan = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: parsed.flags,
+      options: parsed.options,
+      env: {},
+    })) as {
+      ok: boolean;
+      mode: string;
+      targets: Array<{ envName: string; databaseName: string; steps: Array<{ name: string; applyOnly?: boolean }> }>;
+    };
+
+    assert.equal(plan.ok, true);
+    assert.equal(plan.mode, "plan-only");
+    assert.equal(plan.targets[0]?.envName, "staging");
+    assert.equal(plan.targets[0]?.databaseName, "silsigan-staging");
+    assert.deepEqual(
+      plan.targets[0]?.steps.map((step) => step.name),
+      ["d1.migrations.list", "d1.posts_questions.evidence"],
+    );
+    assert.equal(plan.targets[0]?.steps.some((step) => step.applyOnly), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare D1 release evidence planner gates mutating production apply", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-release-production-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const blockedArgs = d1ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply"]);
+    const blocked = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: blockedArgs.flags,
+      options: blockedArgs.options,
+      env: {},
+    })) as { ok: boolean; errors: Array<{ code: string }> };
+    assert.equal(blocked.ok, false);
+    assert.ok(blocked.errors.some((error) => error.code === "PRODUCTION_CONFIRMATION_REQUIRED"));
+
+    const confirmedArgs = d1ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply", "--confirm-production"]);
+    const confirmed = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: confirmedArgs.flags,
+      options: confirmedArgs.options,
+      env: {},
+    })) as {
+      ok: boolean;
+      mode: string;
+      targets: Array<{ steps: Array<{ name: string; applyOnly?: boolean }> }>;
+    };
+    assert.equal(confirmed.ok, true);
+    assert.equal(confirmed.mode, "apply");
+    assert.deepEqual(
+      confirmed.targets[0]?.steps.map((step) => [step.name, Boolean(step.applyOnly)]),
+      [
+        ["d1.migrations.list", false],
+        ["d1.migrations.apply", true],
+        ["d1.seed.apply", true],
+        ["d1.posts_questions.evidence", false],
+      ],
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare R2 release evidence planner defaults to non-mutating steps", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-r2-release-plan-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const parsed = r2ReleaseEvidence.parseArgs(["--env=staging", "--config", configPath]);
+    const plan = (await r2ReleaseEvidence.resolveR2ReleaseEvidencePlan({
+      flags: parsed.flags,
+      options: parsed.options,
+      env: {},
+    })) as {
+      ok: boolean;
+      mode: string;
+      targets: Array<{ envName: string; bucketNames: string[]; steps: Array<{ name: string; applyOnly?: boolean }> }>;
+    };
+
+    assert.equal(plan.ok, true);
+    assert.equal(plan.mode, "plan-only");
+    assert.equal(plan.targets[0]?.envName, "staging");
+    assert.deepEqual(plan.targets[0]?.bucketNames, ["silsigan-photos-staging"]);
+    assert.deepEqual(
+      plan.targets[0]?.steps.map((step) => step.name),
+      ["r2.buckets.list"],
+    );
+    assert.equal(plan.targets[0]?.steps.some((step) => step.applyOnly), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare R2 release evidence planner gates mutating production apply", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-r2-release-production-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const blockedArgs = r2ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply"]);
+    const blocked = (await r2ReleaseEvidence.resolveR2ReleaseEvidencePlan({
+      flags: blockedArgs.flags,
+      options: blockedArgs.options,
+      env: {},
+    })) as { ok: boolean; errors: Array<{ code: string }> };
+    assert.equal(blocked.ok, false);
+    assert.ok(blocked.errors.some((error) => error.code === "PRODUCTION_CONFIRMATION_REQUIRED"));
+
+    const confirmedArgs = r2ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply", "--confirm-production"]);
+    const confirmed = (await r2ReleaseEvidence.resolveR2ReleaseEvidencePlan({
+      flags: confirmedArgs.flags,
+      options: confirmedArgs.options,
+      env: {},
+    })) as {
+      ok: boolean;
+      mode: string;
+      targets: Array<{ steps: Array<{ name: string; bucketName?: string; applyOnly?: boolean }> }>;
+    };
+    assert.equal(confirmed.ok, true);
+    assert.equal(confirmed.mode, "apply");
+    assert.deepEqual(
+      confirmed.targets[0]?.steps.map((step) => [step.name, step.bucketName ?? null, Boolean(step.applyOnly)]),
+      [
+        ["r2.buckets.list", null, false],
+        ["r2.bucket.create", "silsigan-photos-production", true],
+      ],
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("Cloudflare external state check classifies deployment URL blockers without leaking raw URL values", () => {
   const missingChecks = externalState.classifyDeploymentUrlState({}, ["staging"]);
   assert.deepEqual(
@@ -956,6 +1761,27 @@ test("Cloudflare external state check classifies deployment URL blockers without
   });
   assert.ok(duplicateChecks.some((check: { name: string; status: string; code?: string }) => check.name === "deployment_urls.staging.pages.production.pages" && check.status === "fail" && check.code === "DEPLOYMENT_URL_DUPLICATE"));
   assert.ok(duplicateChecks.some((check: { name: string; status: string; code?: string }) => check.name === "deployment_urls.staging.worker_api.production.worker_api" && check.status === "fail" && check.code === "DEPLOYMENT_URL_DUPLICATE"));
+});
+
+test("Cloudflare external state check summarizes canonical release blockers", () => {
+  const blockers = externalState.summarizeExternalStateBlockers([
+    { name: "cloudflare.r2.enabled", status: "fail", code: "R2_NOT_ENABLED" },
+    { name: "deployment_url.staging.pages", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
+    { name: "deployment_url.staging.worker_api", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
+    { name: "deployment_url.production.pages", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
+    { name: "deployment_url.production.worker_api", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
+    { name: "cloudflare.d1.production.migration_0002", status: "fail", code: "D1_0002_NOT_APPLIED" },
+    { name: "cloudflare.d1.production.migration_0002", status: "fail", code: "D1_0002_NOT_APPLIED" },
+  ]);
+
+  assert.deepEqual(blockers, [
+    "R2_NOT_ENABLED",
+    "deployment_url.staging.pages",
+    "deployment_url.staging.worker_api",
+    "deployment_url.production.pages",
+    "deployment_url.production.worker_api",
+    "D1_0002_NOT_APPLIED",
+  ]);
 });
 
 test("Cloudflare release gate requires a tail file when tail evidence is mandatory", () => {
@@ -1031,6 +1857,7 @@ test("Cloudflare release gate validates coordinate status opt-in before staging 
   assert.equal(plan.ok, true);
   assert.deepEqual(stagingSmoke?.args, ["smoke:staging", "--", "--mutating", "--require-admin", "--coordinate-status"]);
   assert.deepEqual(stagingSmoke?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
     "SILSIGAN_STAGING_ADMIN_TOKEN",
     "SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID",
     "SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE",
@@ -1490,6 +2317,205 @@ function createPreflightConfig(ids: { stagingD1Id: string; stagingKvId: string }
   };
 }
 
+function writeReleaseStateLedger(path: string, options: { duplicateNextActionLine?: boolean } = {}) {
+  const nextActions = ["## Next Actions"];
+  if (options.duplicateNextActionLine) {
+    nextActions.push(
+      "R2 check passes before staging Worker/Pages URL smoke can begin.",
+      "R2 check passes before staging Worker/Pages URL smoke can begin.",
+    );
+  }
+
+  writeFileSync(
+    path,
+    ["## Objective", "## Local Code State", "## Latest Local Verification", "## Cloudflare External State", "## Release Decision", ...nextActions].join("\n\n"),
+    "utf8",
+  );
+}
+
+function writeUgcModerationRunbook(path: string) {
+  writeFileSync(
+    path,
+    [
+      "# #실시간 UGC moderation runbook",
+      "",
+      "## Ownership",
+      "",
+      "Moderation operator owns report triage and release owner owns TestFlight expansion.",
+      "",
+      "## Intake Queue",
+      "",
+      "`MODERATION_ALERT_WEBHOOK_URL` receives redacted report alerts for `privacy_face`, `privacy_plate`, `sensitive_info`, `comment`, and `photo` targets.",
+      "",
+      "## SLA",
+      "",
+      "Sensitive queues use 12h, 24h, and 72h decision windows.",
+      "",
+      "## Operator Actions",
+      "",
+      "Operators can `hide`, `restore`, `delete`, and `restrict` through the admin API.",
+      "",
+      "## Evidence And Audit",
+      "",
+      "Record report ID, action, target type, target ID, operator role, cache result, and R2 result without raw coordinates or tokens.",
+      "",
+      "## Escalation",
+      "",
+      "Pause expansion if webhook, queue access, R2 cleanup, or redaction evidence fails.",
+      "",
+      "## Stop Conditions",
+      "",
+      "Stop when no operator is available, staging admin token is missing, comment/photo smoke fails, or R2 delete evidence is missing.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writeCloudflareCostUsageRunbook(path: string) {
+  writeFileSync(
+    path,
+    [
+      "# #실시간 Cloudflare cost and usage runbook",
+      "",
+      "## Ownership",
+      "",
+      "Release owner reviews budget decisions and Cloudflare operator reviews product dashboards.",
+      "",
+      "## Dashboard Checks",
+      "",
+      "Use Usage & billing for R2, D1, Workers, Durable Objects, and Cloudflare Images in staging and production.",
+      "",
+      "## Baseline Thresholds",
+      "",
+      "Track requests, storage, egress, transformations, reads, writes, and errors against daily and weekly baselines.",
+      "",
+      "## Alert Rules",
+      "",
+      "Configure Billing alerts at 50% and 80% of the MVP budget before TestFlight expansion.",
+      "",
+      "## Evidence And Cadence",
+      "",
+      "Record daily staging evidence and weekly production evidence with owner decisions.",
+      "",
+      "## Stop Conditions",
+      "",
+      "Stop TestFlight expansion when budget evidence is missing or usage cannot be explained.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writeTestFlightReviewNotes(path: string) {
+  writeFileSync(
+    path,
+    [
+      "# #실시간 TestFlight review notes",
+      "",
+      "## Beta App Description",
+      "",
+      "#실시간 is a TestFlight beta that uses Cloudflare staging to verify nearby place comments, photos, likes, rankings, and reports before App Store production submission.",
+      "",
+      "## Reviewer Instructions",
+      "",
+      "Use `SILSIGAN_STAGING_PAGES_URL` for the beta frontend and `SILSIGAN_STAGING_API_BASE_URL` for the Worker API. Production submission stays blocked until staging evidence is clean.",
+      "",
+      "## Permissions",
+      "",
+      "The app asks for location permission to show nearby places, camera permission for a fresh field photo, and photo library permission for selecting an existing field photo.",
+      "",
+      "## UGC Moderation",
+      "",
+      "UGC moderation covers comment and photo report intake, operator hide, restore, delete, and user restriction actions.",
+      "",
+      "## Privacy And Support URLs",
+      "",
+      "The privacy policy URL and support URL must be final HTTPS URLs before external TestFlight review notes are submitted.",
+      "",
+      "## Staging Evidence",
+      "",
+      "Required evidence includes Cloudflare R2 object proof, D1 row proof, Worker API smoke, Pages smoke, UGC moderation report proof, and no raw filename exposure.",
+      "",
+      "## Stop Conditions",
+      "",
+      "Stop TestFlight expansion if R2, D1, Cloudflare staging, report handling, hide/delete moderation, privacy/support URLs, or real-device smoke evidence is missing.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writeReleaseHarnessFiles(
+  rootDir: string,
+  sourceLedgerPath: string,
+  options: { omitOpenBlockerEvidenceFromStatus?: boolean; openBlocker?: boolean } = {},
+) {
+  const releaseLedgerPath = join(rootDir, "release-ledger.yaml");
+  const releaseStatusPath = join(rootDir, "RELEASE_STATUS.md");
+  writeFileSync(
+    releaseLedgerPath,
+    [
+      "schema_version: 1",
+      "project:",
+      '  name: "silsigan"',
+      "candidate:",
+      '  version: "0.1.0"',
+      '  git_sha: "test-sha"',
+      '  branch: "test-branch"',
+      `  source_of_truth: "${sourceLedgerPath}"`,
+      "local_checks: []",
+      "runtime_checks: []",
+      "external_checks: []",
+      "security: {}",
+      ...(options.openBlocker
+        ? [
+            "blockers:",
+            "  - id: \"P0-SILSIGAN-R2-DASHBOARD\"",
+            "    severity: \"P0\"",
+            "    status: \"open\"",
+            "    title: \"Cloudflare R2 account is not enabled.\"",
+            "    evidence: \"R2_NOT_ENABLED\"",
+          ]
+        : ["blockers: []"]),
+      "next_action:",
+      '  command: "pnpm release:status"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  writeFileSync(
+    releaseStatusPath,
+    [
+      "# Release Status",
+      "",
+      "## 한 줄 상태",
+      "",
+      `상세 source of truth는 ${sourceLedgerPath} 이다.`,
+      "",
+      "## 현재 후보",
+      "",
+      "- Version: `0.1.0`",
+      "",
+      "## 막힌 항목",
+      "",
+      ...(options.openBlocker
+        ? [options.omitOpenBlockerEvidenceFromStatus ? "- P0: Cloudflare R2 account is not enabled." : "- P0: Cloudflare R2 account is not enabled: `R2_NOT_ENABLED`"]
+        : ["- none"]),
+      "",
+      "## 다음 행동",
+      "",
+      "```bash",
+      "pnpm release:status",
+      "```",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  return { releaseLedgerPath, releaseStatusPath };
+}
+
 function createPreflightEnv(input: { envName: "staging" | "production"; d1Id: string; kvId: string }) {
   return {
     vars: {
@@ -1534,6 +2560,8 @@ function createReadyPreflightProcessEnv(overrides: Record<string, string> = {}) 
     SILSIGAN_STAGING_API_BASE_URL: "https://silsigan-api-staging.workers.dev",
     SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.kr",
     SILSIGAN_PRODUCTION_API_BASE_URL: "https://api.silsigan.kr",
+    SILSIGAN_PRIVACY_POLICY_URL: "https://silsigan.kr/privacy",
+    SILSIGAN_SUPPORT_URL: "https://silsigan.kr/support",
     ...overrides,
   };
 }
@@ -1773,6 +2801,44 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
     assert.match(output, /posts=4/);
     assert.match(output, /questions=3/);
     assert.match(output, /todo=1/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 migration chain and core seed are release-order idempotent", { skip: !sqlite3Available() }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-migrations-"));
+  const dbPath = join(tempDir, "migrations.db");
+  const migrations = ["0001_initial.sql", "0002_posts_questions.sql"]
+    .map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8"))
+    .join("\n");
+  const seed = readFileSync(new URL("../workers/api/seeds/001_core_seed.sql", import.meta.url), "utf8");
+
+  try {
+    const output = execFileSync("sqlite3", [dbPath], {
+      encoding: "utf8",
+      input: `
+        ${migrations}
+        ${migrations}
+        ${seed}
+        ${seed}
+        SELECT 'tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('regions', 'areas', 'places', 'place_rankings', 'posts', 'questions');
+        SELECT 'post_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_posts_place_created', 'idx_posts_status_created');
+        SELECT 'question_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_questions_place_created', 'idx_questions_anon_created');
+        SELECT 'places=' || COUNT(*) FROM places;
+        SELECT 'rankings=' || COUNT(*) FROM place_rankings;
+        SELECT 'posts=' || COUNT(*) FROM posts;
+        SELECT 'questions=' || COUNT(*) FROM questions;
+      `,
+    });
+
+    assert.match(output, /tables=6/);
+    assert.match(output, /post_indexes=2/);
+    assert.match(output, /question_indexes=2/);
+    assert.match(output, /places=6/);
+    assert.match(output, /rankings=6/);
+    assert.match(output, /posts=4/);
+    assert.match(output, /questions=3/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -2513,6 +3579,71 @@ test("D1 public live surfaces ignore expired three-hour place signals", { skip: 
     );
     assert.equal(expiredRanking.data[0]?.placeId, "busan-live-sort-control");
     assert.equal(expiredRanking.data.find((ranking) => ranking.placeId === "busan-gwangalli")?.score, 98);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 ranking smoke counts repeated click and like signals once per anonymous user", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const anonymousId = "anon_d1_ranking_abuse_smoke";
+    const firstClick = await d1Post<SuccessPayload<{ clickCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/busan-gwangalli/click",
+      anonymousId,
+      { source: "detail" },
+    );
+    const secondClick = await d1Post<SuccessPayload<{ clickCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/busan-gwangalli/click",
+      anonymousId,
+      { source: "detail" },
+    );
+    const firstLike = await d1Post<SuccessPayload<{ likeCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/busan-gwangalli/like",
+      anonymousId,
+      {},
+    );
+    const secondLike = await d1Post<SuccessPayload<{ likeCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/busan-gwangalli/like",
+      anonymousId,
+      {},
+    );
+
+    assert.equal(firstClick.data.created, true);
+    assert.equal(secondClick.data.created, false);
+    assert.equal(secondClick.data.clickCount, 1);
+    assert.equal(firstLike.data.created, true);
+    assert.equal(secondLike.data.created, false);
+    assert.equal(secondLike.data.likeCount, 1);
+
+    const storedSignals = await db
+      .prepare(
+        `SELECT
+          SUM(CASE WHEN event_type = 'click' THEN 1 ELSE 0 END) AS clickEvents,
+          SUM(CASE WHEN event_type = 'like' THEN 1 ELSE 0 END) AS likeEvents,
+          COUNT(DISTINCT anonymous_user_id) AS uniqueUsers
+        FROM place_events
+        WHERE place_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind("busan-gwangalli")
+      .first<{ clickEvents: number; likeEvents: number; uniqueUsers: number }>();
+    assert.deepEqual(storedSignals, {
+      clickEvents: 1,
+      likeEvents: 1,
+      uniqueUsers: 1,
+    });
+
+    const ranking = await d1Get<SuccessPayload<Ranking[]>>(db, "https://api.test/api/rankings/regions/busan?limit=10", anonymousId);
+    const gwangalli = ranking.data.find((item) => item.placeId === "busan-gwangalli");
+    assert.equal(gwangalli?.clickCount, 1);
+    assert.equal(gwangalli?.likeCount, 1);
+    assert.equal(gwangalli?.uniqueUserCount, 1);
+    assert.equal(gwangalli?.score, 101);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

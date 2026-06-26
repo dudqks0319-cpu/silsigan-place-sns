@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 
 import { access, readFile } from "node:fs/promises";
+import { summarizeExternalStateBlockers } from "./cloudflare-external-state-check.mjs";
 
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
 const DEFAULT_FRONTEND_CONFIG_PATH = "wrangler.jsonc";
 const DEFAULT_LEDGER_PATH = "docs/current-release-state.md";
+const DEFAULT_RELEASE_LEDGER_PATH = "release-ledger.yaml";
+const DEFAULT_RELEASE_STATUS_PATH = "RELEASE_STATUS.md";
+const DEFAULT_UGC_MODERATION_RUNBOOK_PATH = "docs/ugc-moderation-runbook.md";
+const DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH = "docs/cloudflare-cost-usage-runbook.md";
+const DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH = "docs/testflight-review-notes.md";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
@@ -14,6 +20,100 @@ const REQUIRED_LEDGER_SECTIONS = [
   "## Release Decision",
   "## Next Actions",
 ];
+const REQUIRED_RELEASE_LEDGER_FIELDS = [
+  "project",
+  "candidate",
+  "local_checks",
+  "runtime_checks",
+  "external_checks",
+  "security",
+  "blockers",
+  "next_action",
+];
+const REQUIRED_RELEASE_STATUS_SECTIONS = ["# Release Status", "## 한 줄 상태", "## 현재 후보", "## 막힌 항목", "## 다음 행동"];
+const REQUIRED_UGC_MODERATION_RUNBOOK_SECTIONS = [
+  "# #실시간 UGC moderation runbook",
+  "## Ownership",
+  "## Intake Queue",
+  "## SLA",
+  "## Operator Actions",
+  "## Evidence And Audit",
+  "## Escalation",
+  "## Stop Conditions",
+];
+const REQUIRED_UGC_MODERATION_RUNBOOK_TOKENS = [
+  "MODERATION_ALERT_WEBHOOK_URL",
+  "privacy_face",
+  "privacy_plate",
+  "sensitive_info",
+  "comment",
+  "photo",
+  "12h",
+  "24h",
+  "72h",
+  "hide",
+  "restore",
+  "delete",
+  "restrict",
+];
+const REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_SECTIONS = [
+  "# #실시간 Cloudflare cost and usage runbook",
+  "## Ownership",
+  "## Dashboard Checks",
+  "## Baseline Thresholds",
+  "## Alert Rules",
+  "## Evidence And Cadence",
+  "## Stop Conditions",
+];
+const REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_TOKENS = [
+  "R2",
+  "D1",
+  "Workers",
+  "Durable Objects",
+  "Cloudflare Images",
+  "Usage & billing",
+  "Billing alerts",
+  "daily",
+  "weekly",
+  "staging",
+  "production",
+  "egress",
+  "requests",
+  "storage",
+  "budget",
+  "TestFlight",
+];
+const REQUIRED_TESTFLIGHT_REVIEW_NOTES_SECTIONS = [
+  "# #실시간 TestFlight review notes",
+  "## Beta App Description",
+  "## Reviewer Instructions",
+  "## Permissions",
+  "## UGC Moderation",
+  "## Privacy And Support URLs",
+  "## Staging Evidence",
+  "## Stop Conditions",
+];
+const REQUIRED_TESTFLIGHT_REVIEW_NOTES_TOKENS = [
+  "TestFlight",
+  "Cloudflare",
+  "SILSIGAN_STAGING_PAGES_URL",
+  "SILSIGAN_STAGING_API_BASE_URL",
+  "privacy policy URL",
+  "support URL",
+  "location permission",
+  "camera",
+  "photo library",
+  "UGC moderation",
+  "R2",
+  "D1",
+  "report",
+  "hide",
+  "delete",
+];
+const REQUIRED_POLICY_SUPPORT_URLS = {
+  SILSIGAN_PRIVACY_POLICY_URL: "privacy_policy",
+  SILSIGAN_SUPPORT_URL: "support",
+};
 const REQUIRED_ENV_URLS = {
   SILSIGAN_STAGING_PAGES_URL: "staging.pages",
   SILSIGAN_STAGING_API_BASE_URL: "staging.worker_api",
@@ -41,16 +141,28 @@ const { flags, options } = parseArgs(process.argv.slice(2));
 const configPath = options.get("config") ?? DEFAULT_CONFIG_PATH;
 const frontendConfigPath = options.get("frontend-config") ?? DEFAULT_FRONTEND_CONFIG_PATH;
 const ledgerPath = options.get("ledger") ?? DEFAULT_LEDGER_PATH;
+const releaseLedgerPath = options.get("release-ledger") ?? DEFAULT_RELEASE_LEDGER_PATH;
+const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATUS_PATH;
+const ugcModerationRunbookPath = options.get("ugc-moderation-runbook") ?? options.get("ugc-runbook") ?? DEFAULT_UGC_MODERATION_RUNBOOK_PATH;
+const cloudflareCostUsageRunbookPath = options.get("cloudflare-cost-usage-runbook") ?? options.get("cost-usage-runbook") ?? DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH;
+const testFlightReviewNotesPath = options.get("testflight-review-notes") ?? options.get("review-notes") ?? DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH;
+const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
 
 await checkLedger(ledgerPath);
+await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath);
+await checkUgcModerationRunbook(ugcModerationRunbookPath);
+await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
+await checkTestFlightReviewNotes(testFlightReviewNotesPath);
+checkPolicySupportUrls();
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
 await checkOpenNextAdapter();
 await checkFrontendWranglerConfig(frontendConfigPath);
 await checkWranglerConfig(configPath);
 checkDeploymentUrls();
+await checkCloudflareExternalStateReport(cloudflareExternalStateReportPath);
 
 const blockers = checks.filter((check) => check.status === "fail");
 const warnings = checks.filter((check) => check.status === "warn");
@@ -60,8 +172,14 @@ const summary = {
   configPath,
   frontendConfigPath,
   ledgerPath,
+  releaseLedgerPath,
+  releaseStatusPath,
+  ugcModerationRunbookPath,
+  cloudflareCostUsageRunbookPath,
+  testFlightReviewNotesPath,
+  policySupportUrlEnvNames: Object.keys(REQUIRED_POLICY_SUPPORT_URLS),
   checks,
-  blockers: blockers.map((check) => check.name),
+  blockers: summarizeReleaseBlockers(blockers),
   warnings: warnings.map((check) => check.name),
 };
 
@@ -77,10 +195,338 @@ async function checkLedger(path) {
     for (const section of REQUIRED_LEDGER_SECTIONS) {
       record(`ledger.${section.replace(/^##\s+/, "").toLowerCase().replaceAll(" ", "_")}`, ledger.includes(section) ? "pass" : "fail", `${section} section is required.`);
     }
+    const duplicateNextActionLines = findDuplicateSignificantLines(extractMarkdownSection(ledger, "## Next Actions"));
+    record(
+      "ledger.next_actions.duplicate_lines",
+      duplicateNextActionLines.length === 0 ? "pass" : "fail",
+      duplicateNextActionLines.length === 0 ? "## Next Actions has no duplicated operator instructions." : "## Next Actions must not repeat the same operator instruction.",
+      { duplicates: duplicateNextActionLines },
+    );
     record("ledger.current_release_state", "pass", "current release state ledger is present.");
   } catch (error) {
     record("ledger.current_release_state", "fail", publicErrorMessage(error));
   }
+}
+
+async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, sourceLedgerPath) {
+  let releaseLedger = "";
+  let releaseStatus = "";
+
+  try {
+    releaseLedger = await readFile(releaseLedgerPath, "utf8");
+    record("release_harness.ledger", "pass", "release-ledger.yaml is present.");
+  } catch (error) {
+    record("release_harness.ledger", "fail", publicErrorMessage(error));
+  }
+
+  try {
+    releaseStatus = await readFile(releaseStatusPath, "utf8");
+    record("release_harness.status", "pass", "RELEASE_STATUS.md is present.");
+  } catch (error) {
+    record("release_harness.status", "fail", publicErrorMessage(error));
+  }
+
+  if (releaseLedger) {
+    for (const field of REQUIRED_RELEASE_LEDGER_FIELDS) {
+      record(
+        `release_harness.ledger.${field}`,
+        new RegExp(`^${escapeRegExp(field)}:`, "m").test(releaseLedger) ? "pass" : "fail",
+        `release-ledger.yaml must include top-level field ${field}.`,
+      );
+    }
+
+    record(
+      "release_harness.ledger.source_of_truth",
+      releaseLedger.includes(`source_of_truth: "${sourceLedgerPath}"`) || releaseLedger.includes(`source_of_truth: ${sourceLedgerPath}`)
+        ? "pass"
+        : "fail",
+      "release-ledger.yaml must point to docs/current-release-state.md as the detailed source of truth.",
+    );
+    const openBlockerIds = extractOpenReleaseBlockerIds(releaseLedger);
+    record(
+      "release_harness.ledger.open_blockers",
+      openBlockerIds.length === 0 ? "pass" : "fail",
+      openBlockerIds.length === 0 ? "release-ledger.yaml has no open release blockers." : "release-ledger.yaml has open release blockers that must be resolved before release status can pass.",
+      { blockers: openBlockerIds },
+    );
+    recordNoSecretLikePatterns("release_harness.ledger.redaction", releaseLedger, "release-ledger.yaml");
+  }
+
+  if (releaseStatus) {
+    for (const section of REQUIRED_RELEASE_STATUS_SECTIONS) {
+      record(
+        `release_harness.status.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+        releaseStatus.includes(section) ? "pass" : "fail",
+        `RELEASE_STATUS.md must include ${section}.`,
+      );
+    }
+
+    record(
+      "release_harness.status.source_of_truth",
+      releaseStatus.includes(sourceLedgerPath) ? "pass" : "fail",
+      "RELEASE_STATUS.md must link to docs/current-release-state.md.",
+    );
+    recordNoSecretLikePatterns("release_harness.status.redaction", releaseStatus, "RELEASE_STATUS.md");
+  }
+
+  if (releaseLedger && releaseStatus) {
+    const missingEvidence = extractOpenReleaseBlockerEvidenceTokens(releaseLedger).filter((token) => !releaseStatus.includes(token));
+    record(
+      "release_harness.status.open_blocker_evidence",
+      missingEvidence.length === 0 ? "pass" : "fail",
+      missingEvidence.length === 0
+        ? "RELEASE_STATUS.md summarizes every open blocker evidence token from release-ledger.yaml."
+        : "RELEASE_STATUS.md must include every open blocker evidence token from release-ledger.yaml.",
+      { missingEvidence },
+    );
+  }
+}
+
+async function checkUgcModerationRunbook(path) {
+  let runbook = "";
+  try {
+    runbook = await readFile(path, "utf8");
+    record("ugc_moderation.runbook", "pass", "UGC moderation runbook is present.");
+  } catch (error) {
+    record("ugc_moderation.runbook", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_UGC_MODERATION_RUNBOOK_SECTIONS) {
+    record(
+      `ugc_moderation.runbook.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      runbook.includes(section) ? "pass" : "fail",
+      `UGC moderation runbook must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_UGC_MODERATION_RUNBOOK_TOKENS.filter((token) => !runbook.includes(token));
+  record(
+    "ugc_moderation.runbook.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "UGC moderation runbook covers owner, alert queue, SLA, target types, and operator actions."
+      : "UGC moderation runbook is missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("ugc_moderation.runbook.redaction", runbook, path);
+}
+
+async function checkCloudflareCostUsageRunbook(path) {
+  let runbook = "";
+  try {
+    runbook = await readFile(path, "utf8");
+    record("cloudflare_cost_usage.runbook", "pass", "Cloudflare cost and usage runbook is present.");
+  } catch (error) {
+    record("cloudflare_cost_usage.runbook", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_SECTIONS) {
+    record(
+      `cloudflare_cost_usage.runbook.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      runbook.includes(section) ? "pass" : "fail",
+      `Cloudflare cost and usage runbook must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_TOKENS.filter((token) => !runbook.includes(token));
+  record(
+    "cloudflare_cost_usage.runbook.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "Cloudflare cost and usage runbook covers products, dashboards, thresholds, alerts, cadence, and TestFlight stop conditions."
+      : "Cloudflare cost and usage runbook is missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("cloudflare_cost_usage.runbook.redaction", runbook, path);
+}
+
+async function checkTestFlightReviewNotes(path) {
+  let notes = "";
+  try {
+    notes = await readFile(path, "utf8");
+    record("testflight_review_notes.doc", "pass", "TestFlight review notes are present.");
+  } catch (error) {
+    record("testflight_review_notes.doc", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_TESTFLIGHT_REVIEW_NOTES_SECTIONS) {
+    record(
+      `testflight_review_notes.doc.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      notes.includes(section) ? "pass" : "fail",
+      `TestFlight review notes must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_TESTFLIGHT_REVIEW_NOTES_TOKENS.filter((token) => !notes.includes(token));
+  record(
+    "testflight_review_notes.doc.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "TestFlight review notes cover beta copy, staging URLs, permissions, privacy/support URLs, UGC moderation, and Cloudflare evidence."
+      : "TestFlight review notes are missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("testflight_review_notes.doc.redaction", notes, path);
+}
+
+function checkPolicySupportUrls() {
+  const parsedUrls = new Map();
+
+  for (const [envVarName, checkName] of Object.entries(REQUIRED_POLICY_SUPPORT_URLS)) {
+    const parsed = parseRequiredHttpsUrl(process.env[envVarName], envVarName, `policy_url.${checkName}`);
+    if (parsed) {
+      parsedUrls.set(checkName, parsed.href);
+    }
+  }
+
+  recordSeparatedUrls(parsedUrls, "privacy_policy", "support", "privacy policy and support URLs must be different.", "policy_url");
+}
+
+function recordNoSecretLikePatterns(name, content, path) {
+  const secretLikePattern = /(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|BEGIN (RSA |OPENSSH |PRIVATE )?PRIVATE KEY|SUPABASE_SERVICE_ROLE_KEY[=:][^\s]+|JWT_SECRET[=:][^\s]+)/i;
+  record(name, secretLikePattern.test(content) ? "fail" : "pass", `${path} must not contain secret-like values.`);
+}
+
+async function checkCloudflareExternalStateReport(path) {
+  if (!path) {
+    return;
+  }
+
+  let report;
+  try {
+    report = parseJsonObjectFromText(await readFile(path, "utf8"));
+  } catch (error) {
+    record("cloudflare_external_state.report", "fail", `Cloudflare external-state report could not be read: ${publicErrorMessage(error)}`);
+    return;
+  }
+
+  if (!isRecord(report) || !Array.isArray(report.checks)) {
+    record("cloudflare_external_state.report", "fail", "Cloudflare external-state report must contain a checks array.");
+    return;
+  }
+
+  record("cloudflare_external_state.report", "pass", "Cloudflare external-state report was included in release status.", {
+    source: "cloudflare-external-state",
+    checkCount: report.checks.length,
+  });
+
+  for (const check of report.checks) {
+    if (!isRecord(check) || check.status !== "fail") {
+      continue;
+    }
+
+    const name = typeof check.name === "string" && check.name.length > 0 ? check.name : "cloudflare_external_state.unknown";
+    const message = typeof check.message === "string" && check.message.length > 0 ? check.message : "Cloudflare external-state check failed.";
+    record(name, "fail", message, {
+      ...safeExternalStateDetails(check),
+      source: "cloudflare-external-state",
+    });
+  }
+}
+
+function safeExternalStateDetails(check) {
+  const details = {};
+  if (typeof check.code === "string" && check.code.length > 0) {
+    details.code = check.code;
+  }
+  for (const key of ["missingBuckets", "missingSchema", "missingSeed"]) {
+    if (Array.isArray(check[key]) && check[key].every((value) => typeof value === "string")) {
+      details[key] = check[key];
+    }
+  }
+  if (isRecord(check.counts)) {
+    details.counts = Object.fromEntries(
+      Object.entries(check.counts).filter(([, value]) => typeof value === "number" && Number.isFinite(value)),
+    );
+  }
+  return details;
+}
+
+function summarizeReleaseBlockers(failedChecks) {
+  const blockerNames = [];
+  const seen = new Set();
+
+  for (const check of failedChecks) {
+    const [blockerName] = check.source === "cloudflare-external-state" ? summarizeExternalStateBlockers([check]) : [];
+    const name = blockerName ?? check.name;
+    if (typeof name === "string" && name.length > 0 && !seen.has(name)) {
+      seen.add(name);
+      blockerNames.push(name);
+    }
+  }
+
+  return blockerNames;
+}
+
+function extractOpenReleaseBlockerIds(releaseLedger) {
+  return extractOpenReleaseBlockerBlocks(releaseLedger).map((blocker, index) => {
+    const idMatch = blocker.match(/^\s*(?:-\s*)?id:\s*"?([^"\n]+)"?\s*$/m);
+    return idMatch?.[1] ?? `open-blocker-${index + 1}`;
+  });
+}
+
+function extractOpenReleaseBlockerEvidenceTokens(releaseLedger) {
+  const evidenceTokens = new Set();
+  const evidenceTokenPattern = /deployment_url\.\*|docs\/current-release-state\.md|[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+/g;
+
+  for (const blocker of extractOpenReleaseBlockerBlocks(releaseLedger)) {
+    const evidenceMatch = blocker.match(/^\s*evidence:\s*"?([^"\n]+)"?\s*$/m);
+    const evidence = evidenceMatch?.[1] ?? "";
+    for (const token of evidence.match(evidenceTokenPattern) ?? []) {
+      evidenceTokens.add(token);
+    }
+  }
+
+  return [...evidenceTokens];
+}
+
+function extractOpenReleaseBlockerBlocks(releaseLedger) {
+  const blockersMatch = releaseLedger.match(/\nblockers:\n(?<body>[\s\S]*?)(?=\n[A-Za-z_]+:\n|\s*$)/);
+  const blockersBody = blockersMatch?.groups?.body ?? "";
+  if (!blockersBody.trim() || /^\s*\[\]\s*$/m.test(blockersBody)) {
+    return [];
+  }
+
+  return blockersBody
+    .split(/\n\s*-\s+/)
+    .map((blocker) => blocker.trim())
+    .filter(Boolean)
+    .filter((blocker) => /^\s*status:\s*"?open"?\s*$/m.test(blocker));
+}
+
+function extractMarkdownSection(markdown, heading) {
+  const sectionStart = markdown.indexOf(heading);
+  if (sectionStart === -1) {
+    return "";
+  }
+
+  const bodyStart = sectionStart + heading.length;
+  const nextSectionStart = markdown.indexOf("\n## ", bodyStart);
+  return markdown.slice(bodyStart, nextSectionStart === -1 ? markdown.length : nextSectionStart);
+}
+
+function findDuplicateSignificantLines(text) {
+  const seenLines = new Set();
+  const duplicates = [];
+  const seenDuplicates = new Set();
+
+  for (const rawLine of text.split("\n")) {
+    const normalizedLine = rawLine.trim().replace(/\s+/g, " ");
+    if (normalizedLine.length < 30 || normalizedLine === "```bash" || normalizedLine === "```") {
+      continue;
+    }
+
+    if (seenLines.has(normalizedLine) && !seenDuplicates.has(normalizedLine)) {
+      duplicates.push(normalizedLine);
+      seenDuplicates.add(normalizedLine);
+    }
+    seenLines.add(normalizedLine);
+  }
+
+  return duplicates;
 }
 
 async function checkLegacyArtifacts() {
@@ -279,13 +725,17 @@ function checkDeploymentUrls() {
 }
 
 function parseDeploymentUrl(value, envVarName, checkName) {
+  return parseRequiredHttpsUrl(value, envVarName, `deployment_url.${checkName}`, { messageSubject: "deployment-shaped" });
+}
+
+function parseRequiredHttpsUrl(value, envVarName, checkName, options = {}) {
   if (typeof value !== "string" || value.trim().length === 0) {
-    record(`deployment_url.${checkName}`, "fail", `${envVarName} is required.`);
+    record(checkName, "fail", `${envVarName} is required.`);
     return null;
   }
 
   if (hasPlaceholder(value)) {
-    record(`deployment_url.${checkName}`, "fail", `${envVarName} still contains a placeholder.`);
+    record(checkName, "fail", `${envVarName} still contains a placeholder.`);
     return null;
   }
 
@@ -293,22 +743,22 @@ function parseDeploymentUrl(value, envVarName, checkName) {
   try {
     url = new URL(value);
   } catch {
-    record(`deployment_url.${checkName}`, "fail", `${envVarName} must be a valid absolute URL.`);
+    record(checkName, "fail", `${envVarName} must be a valid absolute URL.`);
     return null;
   }
 
   const validations = [
-    recordCheck(url.protocol === "https:", `deployment_url.${checkName}`, `${envVarName} must use https.`),
-    recordCheck(url.username === "" && url.password === "", `deployment_url.${checkName}`, `${envVarName} must not contain credentials.`),
-    recordCheck(url.search === "" && url.hash === "", `deployment_url.${checkName}`, `${envVarName} must not contain query params or fragments.`),
-    recordCheck(!isLocalhost(url.hostname), `deployment_url.${checkName}`, `${envVarName} must not point to localhost.`),
+    recordCheck(url.protocol === "https:", checkName, `${envVarName} must use https.`),
+    recordCheck(url.username === "" && url.password === "", checkName, `${envVarName} must not contain credentials.`),
+    recordCheck(url.search === "" && url.hash === "", checkName, `${envVarName} must not contain query params or fragments.`),
+    recordCheck(!isLocalhost(url.hostname), checkName, `${envVarName} must not point to localhost.`),
   ];
 
   if (!validations.every(Boolean)) {
     return null;
   }
 
-  record(`deployment_url.${checkName}`, "pass", `${envVarName} is deployment-shaped.`, { host: url.host });
+  record(checkName, "pass", `${envVarName} is ${options.messageSubject ?? "release-shaped"}.`, { host: url.host });
   return url;
 }
 
@@ -360,14 +810,14 @@ function isDateAtLeast(value, minimum) {
   return value >= minimum;
 }
 
-function recordSeparatedUrls(parsedUrls, leftKey, rightKey, message) {
+function recordSeparatedUrls(parsedUrls, leftKey, rightKey, message, prefix = "deployment_url") {
   const left = parsedUrls.get(leftKey);
   const right = parsedUrls.get(rightKey);
   if (!left || !right) {
     return;
   }
 
-  record(`deployment_url.${leftKey}.${rightKey}`, left !== right ? "pass" : "fail", message);
+  record(`${prefix}.${leftKey}.${rightKey}`, left !== right ? "pass" : "fail", message);
 }
 
 function bindingBy(items, bindingName) {
@@ -430,6 +880,51 @@ function stripJsonComments(source) {
   return output;
 }
 
+function parseJsonObjectFromText(text) {
+  const start = text.indexOf("{");
+  if (start === -1) {
+    throw new Error("No JSON object found.");
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const current = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (current === "\\") {
+        escaped = true;
+      } else if (current === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (current === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (current === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return JSON.parse(text.slice(start, index + 1));
+      }
+    }
+  }
+
+  throw new Error("No complete JSON object found.");
+}
+
 function parseArgs(rawArgs) {
   const parsedFlags = new Set();
   const parsedOptions = new Map();
@@ -463,6 +958,10 @@ function record(name, status, message, details = {}) {
 
 function hasPlaceholder(value) {
   return /TODO|^<.*>$|REPLACE_ME|CHANGE_ME/i.test(String(value));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isLocalhost(hostname) {
