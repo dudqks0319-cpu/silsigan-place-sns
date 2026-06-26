@@ -16,11 +16,11 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - Branch: `agent/silsigan-map-click-fix-20260622-1456`
 - Phase: `local_ready_external_blocked`
 - Pushed evidence baseline: `agent/silsigan-map-click-fix-20260622-1456` at `f56f6098f7f1abe2f968d68f4ef64a943322a056`
-- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED` and deployment URL blockers while production D1 `0002` passes.
+- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED` and deployment URL blockers while production D1 `0002` passes; D1 ranking abuse smoke now proves repeated same-user click/like signals do not inflate ranking counts.
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 116 passed
+- `pnpm test -- tests/cloudflare-api.test.ts`: 117 passed, including D1 ranking abuse smoke for repeated same-user click/like signals
 - `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
 - `pnpm release:gate -- --plan-only`: pass

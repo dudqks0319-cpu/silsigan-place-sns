@@ -25,7 +25,7 @@ local_checks:
   - name: "Targeted Cloudflare API tests"
     command: "pnpm test -- tests/cloudflare-api.test.ts"
     status: "pass"
-    evidence: "116 tests passed on 2026-06-25"
+    evidence: "117 tests passed on 2026-06-26, including D1 ranking abuse smoke for repeated same-user click/like signals"
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
@@ -85,6 +85,9 @@ security:
   privacy:
     status: "pass_local"
     evidence: "tests cover coarse radius, no raw coordinates in public responses, EXIF/GPS stripping, and filename minimization"
+  abuse_controls:
+    status: "pass_local"
+    evidence: "D1 ranking abuse smoke proves repeated same-user place click/like attempts return created=false and do not inflate ranking counts, unique_user_count, or live score"
   payments_legal:
     status: "not_applicable"
     evidence: "No payment flow in current release scope"

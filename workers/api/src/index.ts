@@ -1154,12 +1154,8 @@ async function clickPlace(request: Request, placeId: string, session: AnonymousS
   if (env.DB) {
     const anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
     await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
-    const now = Date.now();
-    const userWindows = placeClickWindowsFor(anonymousUserId);
-    const previous = userWindows.get(place.id);
-    const created = !previous || now - previous >= 5 * 60_000;
+    const created = !(await hasRecentD1PlaceClick(env.DB, place.id, anonymousUserId));
     if (created) {
-      userWindows.set(place.id, now);
       await recordD1PlaceEvent(env.DB, place, anonymousUserId, "click", { source });
     }
     const clickCount = await countD1Events(env.DB, place.id, "click");
@@ -4368,6 +4364,24 @@ async function getD1InteractionId(
     .first<{ id: string }>();
 
   return row?.id ?? null;
+}
+
+async function hasRecentD1PlaceClick(db: D1Database, placeId: string, anonymousUserId: string): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT id
+       FROM place_events
+       WHERE place_id = ?
+         AND anonymous_user_id = ?
+         AND event_type = 'click'
+         AND created_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-5 minutes')
+         AND expires_at > ${D1_NOW_SQL}
+       LIMIT 1`,
+    )
+    .bind(placeId, anonymousUserId)
+    .first<{ id: string }>();
+
+  return Boolean(row);
 }
 
 async function createD1UniqueInteraction(

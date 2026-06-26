@@ -3148,6 +3148,71 @@ test("D1 public live surfaces ignore expired three-hour place signals", { skip: 
   }
 });
 
+test("D1 ranking smoke counts repeated click and like signals once per anonymous user", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const anonymousId = "anon_d1_ranking_abuse_smoke";
+    const firstClick = await d1Post<SuccessPayload<{ clickCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/busan-gwangalli/click",
+      anonymousId,
+      { source: "detail" },
+    );
+    const secondClick = await d1Post<SuccessPayload<{ clickCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/busan-gwangalli/click",
+      anonymousId,
+      { source: "detail" },
+    );
+    const firstLike = await d1Post<SuccessPayload<{ likeCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/busan-gwangalli/like",
+      anonymousId,
+      {},
+    );
+    const secondLike = await d1Post<SuccessPayload<{ likeCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/busan-gwangalli/like",
+      anonymousId,
+      {},
+    );
+
+    assert.equal(firstClick.data.created, true);
+    assert.equal(secondClick.data.created, false);
+    assert.equal(secondClick.data.clickCount, 1);
+    assert.equal(firstLike.data.created, true);
+    assert.equal(secondLike.data.created, false);
+    assert.equal(secondLike.data.likeCount, 1);
+
+    const storedSignals = await db
+      .prepare(
+        `SELECT
+          SUM(CASE WHEN event_type = 'click' THEN 1 ELSE 0 END) AS clickEvents,
+          SUM(CASE WHEN event_type = 'like' THEN 1 ELSE 0 END) AS likeEvents,
+          COUNT(DISTINCT anonymous_user_id) AS uniqueUsers
+        FROM place_events
+        WHERE place_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind("busan-gwangalli")
+      .first<{ clickEvents: number; likeEvents: number; uniqueUsers: number }>();
+    assert.deepEqual(storedSignals, {
+      clickEvents: 1,
+      likeEvents: 1,
+      uniqueUsers: 1,
+    });
+
+    const ranking = await d1Get<SuccessPayload<Ranking[]>>(db, "https://api.test/api/rankings/regions/busan?limit=10", anonymousId);
+    const gwangalli = ranking.data.find((item) => item.placeId === "busan-gwangalli");
+    assert.equal(gwangalli?.clickCount, 1);
+    assert.equal(gwangalli?.likeCount, 1);
+    assert.equal(gwangalli?.uniqueUserCount, 1);
+    assert.equal(gwangalli?.score, 101);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("admin moderation role gates update D1 R2 and CACHE invalidation", { skip: !sqlite3Available() }, async () => {
   const { db, tempDir } = createSeededSqliteD1();
   const r2 = new FakeR2Bucket();

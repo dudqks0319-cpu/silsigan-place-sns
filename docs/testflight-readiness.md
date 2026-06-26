@@ -49,6 +49,7 @@ Only consider App Store production submission after TestFlight evidence is clean
 - [ ] `pnpm release:gate -- --production-candidate` passes.
 - [ ] App privacy labels, support URL, privacy policy URL, and review notes match the implemented data handling.
 - [ ] UGC moderation owner, response SLA, abuse handling, user restriction, and deletion/restore runbooks are documented and operable.
+- [x] Ranking manipulation smoke proves repeated same-user click/like signals do not inflate D1 ranking counts.
 - [ ] Account deletion or anonymous data deletion/retention behavior is verified end-to-end if account-like identity is exposed in the native build.
 - [ ] Store screenshots and metadata use real app surfaces, not placeholder beta/demo claims.
 
@@ -97,3 +98,11 @@ R2 was rechecked after production D1 passed.
 | Cloudflare R2 docs | operator action required | The account needs an R2 subscription added through Cloudflare Dashboard checkout before CLI bucket evidence can pass: https://developers.cloudflare.com/r2/get-started/ |
 
 No R2 bucket create, Worker deploy, Pages deploy, or staging smoke was run because R2 subscription and staging URLs are still missing.
+
+## 2026-06-26 Ranking Manipulation Smoke
+
+The D1 ranking smoke now covers repeated same-user click and like attempts against the same place.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 117 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`. |
