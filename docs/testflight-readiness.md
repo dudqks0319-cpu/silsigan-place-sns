@@ -36,8 +36,8 @@ The following must be true before treating the app as TestFlight-ready:
 - [ ] `SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging -- --require-admin` passes with a staging admin token.
 - [ ] `pnpm smoke:pages` passes against staging Pages and staging Worker URLs.
 - [ ] Workers tail redaction is captured from staging and passes `pnpm smoke:tail-redaction`.
-- [ ] iPhone real-device QA covers launch, map display, current-location allow/deny, place detail, report create, comment create/delete, photo upload/preview, like/unlike, moderation report, and no raw coordinate/file-name leakage in visible UI.
-- [ ] Android real-device QA covers the same user flows if Android beta distribution is in scope.
+- [ ] iPhone real-device QA in `docs/real-device-qa.md` covers launch, map display, current-location allow/deny, place detail, report create, comment create/delete, photo upload/preview, like/unlike, moderation report, and no raw coordinate/file-name leakage in visible UI.
+- [ ] Android real-device QA in `docs/real-device-qa.md` covers the same user flows if Android beta distribution is in scope.
 
 ## App Store Submission Gate
 
@@ -59,4 +59,17 @@ Only consider App Store production submission after TestFlight evidence is clean
 | Missing staging/production URLs | Deploy Worker/Pages surfaces and export the four `SILSIGAN_*_URL` variables. |
 | `D1_0002_NOT_APPLIED` on production | Apply production D1 migration only after explicit production confirmation. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
-| No real-device QA ledger yet | Record iPhone and optional Android device evidence after staging is live. |
+| No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and optional Android device evidence after staging is live. |
+
+## 2026-06-26 Phase 1 Probe
+
+Read-only Cloudflare probes were rerun without mutating R2, D1, Worker, or Pages resources.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `pnpm cf:external-state` | blocked | `R2_NOT_ENABLED`, four missing deployment URL blockers, and production `D1_0002_NOT_APPLIED`; staging D1 `0002` and staging/production Worker dry-runs still pass. |
+| `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000` | blocked | Fails on `cloudflare.r2.enabled` / `R2_NOT_ENABLED`. |
+| `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000` | blocked | Remote production D1 lists pending `0002_posts_questions.sql`; posts/questions evidence fails with `D1_0002_NOT_APPLIED`. |
+| `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=/tmp/silsigan-cf-external-state-20260626.json` | blocked | Combined blocker payload is `release_harness.ledger.open_blockers`, four deployment URL blockers, `R2_NOT_ENABLED`, and `D1_0002_NOT_APPLIED`. |
+
+No Phase 1 mutating action was executed. R2 enablement, bucket creation, deployment URL setup, and production D1 `--apply --confirm-production` remain operator-owned steps.
