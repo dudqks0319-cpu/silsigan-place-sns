@@ -89,4 +89,5 @@ pnpm release:gate -- --release-candidate --tail-file=artifacts/cloudflare-tail/s
 - Cloudflare 비용/사용량 운영 runbook: `docs/cloudflare-cost-usage-runbook.md`
 - 보안 게이트: `docs/security-gate.md`
 - TestFlight/App Store readiness: `docs/testflight-readiness.md`
+- TestFlight 리뷰 노트 초안 및 제출 blocker: `docs/testflight-review-notes.md`
 - Real-device QA ledger: `docs/real-device-qa.md`

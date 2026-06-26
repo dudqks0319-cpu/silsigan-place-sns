@@ -25,7 +25,7 @@ local_checks:
   - name: "Targeted Cloudflare API tests"
     command: "pnpm test -- tests/cloudflare-api.test.ts"
     status: "pass"
-    evidence: "119 tests passed on 2026-06-26, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, and Cloudflare cost/usage runbook guard coverage"
+    evidence: "120 tests passed on 2026-06-26, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, and TestFlight review notes guard coverage"
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
@@ -38,6 +38,10 @@ local_checks:
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
     evidence: "docs/cloudflare-cost-usage-runbook.md includes Usage & billing dashboard checks, Billing alerts, daily/weekly evidence cadence, R2/D1/Workers/Durable Objects/Cloudflare Images metrics, budget thresholds, and TestFlight stop conditions"
+  - name: "TestFlight review notes gate"
+    command: "node scripts/release-state-check.mjs --strict"
+    status: "pass_local"
+    evidence: "docs/testflight-review-notes.md includes beta description, reviewer instructions, staging URL requirements, permission copy, UGC moderation, privacy policy URL/support URL status, staging evidence, and stop conditions"
   - name: "Release gate plan"
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
@@ -102,6 +106,9 @@ security:
   cloudflare_cost_usage:
     status: "pass_local"
     evidence: "docs/cloudflare-cost-usage-runbook.md defines owner, dashboard checks, baseline thresholds, Billing alerts, evidence cadence, and stop conditions; live billing dashboard evidence remains staging-blocked"
+  testflight_review_notes:
+    status: "pass_local"
+    evidence: "docs/testflight-review-notes.md defines beta app description, reviewer instructions, permissions, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; final HTTPS privacy/support URLs remain external-test blocker"
   payments_legal:
     status: "not_applicable"
     evidence: "No payment flow in current release scope"

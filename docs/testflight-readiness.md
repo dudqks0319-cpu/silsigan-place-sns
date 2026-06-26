@@ -37,6 +37,7 @@ The following must be true before treating the app as TestFlight-ready:
 - [ ] `SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging -- --require-admin` passes with a staging admin token.
 - [ ] `pnpm smoke:pages` passes against staging Pages and staging Worker URLs.
 - [ ] Workers tail redaction is captured from staging and passes `pnpm smoke:tail-redaction`.
+- [x] TestFlight beta description, reviewer instructions, permission copy, UGC moderation notes, and staging evidence requirements are documented in `docs/testflight-review-notes.md` and guarded by `release:status`.
 - [ ] iPhone real-device QA in `docs/real-device-qa.md` covers launch, map display, current-location allow/deny, place detail, report create, comment create/delete, photo upload/preview, like/unlike, moderation report, and no raw coordinate/file-name leakage in visible UI.
 - [ ] Android real-device QA in `docs/real-device-qa.md` covers the same user flows if Android beta distribution is in scope.
 
@@ -107,7 +108,7 @@ The D1 ranking smoke now covers repeated same-user click and like attempts again
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 119 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence. |
+| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 120 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence; the TestFlight review notes smoke verifies beta copy, staging URL requirements, permission copy, UGC moderation, privacy/support URL status, staging evidence, and stop conditions. |
 
 ## 2026-06-26 UGC Moderation Runbook Gate
 
@@ -124,3 +125,13 @@ The Cloudflare cost/usage MVP criteria are now a release-state checked artifact.
 | Probe | Result | Evidence |
 | --- | --- | --- |
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/cloudflare-cost-usage-runbook.md` to cover owner, Usage & billing dashboard checks, baseline thresholds, Billing alerts, daily/weekly evidence cadence, product tokens for R2/D1/Workers/Durable Objects/Cloudflare Images, and TestFlight stop conditions. Current failure remains the known external P0 blockers, not missing cost/usage criteria. |
+
+## 2026-06-26 TestFlight Review Notes Gate
+
+The TestFlight beta/reviewer note packet is now a release-state checked artifact. This closes the P1 "external TestFlight review notes" documentation gap without claiming external TestFlight submission readiness.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/testflight-review-notes.md` to cover beta app description, reviewer instructions, permissions, UGC moderation, privacy policy URL/support URL status, staging evidence, and stop conditions. Current failure remains the known external P0 blockers, not missing TestFlight review-note coverage. |
+
+Still open: the final privacy policy URL and support URL must be real HTTPS pages before external TestFlight review notes are submitted.

@@ -10,6 +10,7 @@ const DEFAULT_RELEASE_LEDGER_PATH = "release-ledger.yaml";
 const DEFAULT_RELEASE_STATUS_PATH = "RELEASE_STATUS.md";
 const DEFAULT_UGC_MODERATION_RUNBOOK_PATH = "docs/ugc-moderation-runbook.md";
 const DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH = "docs/cloudflare-cost-usage-runbook.md";
+const DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH = "docs/testflight-review-notes.md";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
@@ -82,6 +83,33 @@ const REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_TOKENS = [
   "budget",
   "TestFlight",
 ];
+const REQUIRED_TESTFLIGHT_REVIEW_NOTES_SECTIONS = [
+  "# #실시간 TestFlight review notes",
+  "## Beta App Description",
+  "## Reviewer Instructions",
+  "## Permissions",
+  "## UGC Moderation",
+  "## Privacy And Support URLs",
+  "## Staging Evidence",
+  "## Stop Conditions",
+];
+const REQUIRED_TESTFLIGHT_REVIEW_NOTES_TOKENS = [
+  "TestFlight",
+  "Cloudflare",
+  "SILSIGAN_STAGING_PAGES_URL",
+  "SILSIGAN_STAGING_API_BASE_URL",
+  "privacy policy URL",
+  "support URL",
+  "location permission",
+  "camera",
+  "photo library",
+  "UGC moderation",
+  "R2",
+  "D1",
+  "report",
+  "hide",
+  "delete",
+];
 const REQUIRED_ENV_URLS = {
   SILSIGAN_STAGING_PAGES_URL: "staging.pages",
   SILSIGAN_STAGING_API_BASE_URL: "staging.worker_api",
@@ -113,6 +141,7 @@ const releaseLedgerPath = options.get("release-ledger") ?? DEFAULT_RELEASE_LEDGE
 const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATUS_PATH;
 const ugcModerationRunbookPath = options.get("ugc-moderation-runbook") ?? options.get("ugc-runbook") ?? DEFAULT_UGC_MODERATION_RUNBOOK_PATH;
 const cloudflareCostUsageRunbookPath = options.get("cloudflare-cost-usage-runbook") ?? options.get("cost-usage-runbook") ?? DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH;
+const testFlightReviewNotesPath = options.get("testflight-review-notes") ?? options.get("review-notes") ?? DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH;
 const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
@@ -121,6 +150,7 @@ await checkLedger(ledgerPath);
 await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath);
 await checkUgcModerationRunbook(ugcModerationRunbookPath);
 await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
+await checkTestFlightReviewNotes(testFlightReviewNotesPath);
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
 await checkOpenNextAdapter();
@@ -141,6 +171,7 @@ const summary = {
   releaseStatusPath,
   ugcModerationRunbookPath,
   cloudflareCostUsageRunbookPath,
+  testFlightReviewNotesPath,
   checks,
   blockers: summarizeReleaseBlockers(blockers),
   warnings: warnings.map((check) => check.name),
@@ -303,6 +334,36 @@ async function checkCloudflareCostUsageRunbook(path) {
     { missingTokens },
   );
   recordNoSecretLikePatterns("cloudflare_cost_usage.runbook.redaction", runbook, path);
+}
+
+async function checkTestFlightReviewNotes(path) {
+  let notes = "";
+  try {
+    notes = await readFile(path, "utf8");
+    record("testflight_review_notes.doc", "pass", "TestFlight review notes are present.");
+  } catch (error) {
+    record("testflight_review_notes.doc", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_TESTFLIGHT_REVIEW_NOTES_SECTIONS) {
+    record(
+      `testflight_review_notes.doc.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      notes.includes(section) ? "pass" : "fail",
+      `TestFlight review notes must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_TESTFLIGHT_REVIEW_NOTES_TOKENS.filter((token) => !notes.includes(token));
+  record(
+    "testflight_review_notes.doc.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "TestFlight review notes cover beta copy, staging URLs, permissions, privacy/support URLs, UGC moderation, and Cloudflare evidence."
+      : "TestFlight review notes are missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("testflight_review_notes.doc.redaction", notes, path);
 }
 
 function recordNoSecretLikePatterns(name, content, path) {
