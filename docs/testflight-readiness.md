@@ -55,7 +55,7 @@ Only consider App Store production submission after TestFlight evidence is clean
 
 | Blocker | Owner action |
 | --- | --- |
-| `R2_NOT_ENABLED` | Enable R2 in Cloudflare Dashboard, then rerun R2 evidence checks. |
+| `R2_NOT_ENABLED` | Add the R2 subscription through Cloudflare Dashboard checkout, then rerun R2 evidence checks. |
 | Missing staging/production URLs | Deploy Worker/Pages surfaces and export the four `SILSIGAN_*_URL` variables. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
 | No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and optional Android device evidence after staging is live. |
@@ -84,3 +84,15 @@ Production D1 `0002_posts_questions.sql` was applied with the explicit productio
 | `node scripts/cloudflare-external-state-check.mjs` | blocked | Production D1 now passes; remaining blockers are `R2_NOT_ENABLED` and the four missing staging/production deployment URLs. |
 
 R2 enablement, R2 bucket creation, deployment URL setup, real staging smoke, and real-device QA are still open.
+
+## 2026-06-26 R2 Recheck
+
+R2 was rechecked after production D1 passed.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000` | blocked | Still fails on `cloudflare.r2.enabled` / `R2_NOT_ENABLED`. |
+| `node scripts/cloudflare-external-state-check.mjs` | blocked | Staging and production D1 pass; remaining external blockers are R2 plus the four staging/production deployment URLs. |
+| Cloudflare R2 docs | operator action required | The account needs an R2 subscription added through Cloudflare Dashboard checkout before CLI bucket evidence can pass: https://developers.cloudflare.com/r2/get-started/ |
+
+No R2 bucket create, Worker deploy, Pages deploy, or staging smoke was run because R2 subscription and staging URLs are still missing.

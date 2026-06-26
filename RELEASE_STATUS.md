@@ -30,7 +30,7 @@
 
 ## 막힌 항목
 
-- P0: Cloudflare R2 is not enabled: `R2_NOT_ENABLED`
+- P0: Cloudflare R2 subscription is not enabled: `R2_NOT_ENABLED`
 - P0: Missing staging/production Pages/API URLs: `deployment_url.*`, `URL_REQUIRED`
 - P0: Real staging Worker/Pages smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
 
@@ -40,10 +40,10 @@
 pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000
 ```
 
-R2를 Cloudflare Dashboard에서 활성화한 뒤 위 check를 먼저 다시 실행한다. R2 check가 통과하면 `pnpm cf:r2:evidence -- --env=staging --apply`로 누락 staging bucket을 만들고, staging Worker/Pages URL을 설정한 뒤 release-candidate smoke로 넘어간다. Production D1은 이미 적용됐으므로 이후에는 `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`로 유지 검증만 한다.
+Cloudflare Dashboard > Storage & databases > R2 > Overview에서 R2 subscription checkout을 완료한 뒤 위 check를 먼저 다시 실행한다. R2 check가 통과하면 `pnpm cf:r2:evidence -- --env=staging --apply`로 누락 staging bucket을 만들고, staging Worker/Pages URL을 설정한 뒤 release-candidate smoke로 넘어간다. Production D1은 이미 적용됐으므로 이후에는 `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`로 유지 검증만 한다.
 
 ## 사람이 직접 해야 하는 일
 
-- Cloudflare Dashboard에서 R2 활성화
+- Cloudflare Dashboard에서 R2 subscription checkout 완료
 - Staging/production Pages와 Worker 배포 URL 확정
 - Staging admin token과 captured Workers tail log 제공
