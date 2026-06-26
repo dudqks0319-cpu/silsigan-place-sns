@@ -20,9 +20,10 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 117 passed, including D1 ranking abuse smoke for repeated same-user click/like signals
+- `pnpm test -- tests/cloudflare-api.test.ts`: 118 passed, including D1 ranking abuse smoke for repeated same-user click/like signals and UGC moderation runbook guard coverage
 - `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
+- `node scripts/release-state-check.mjs --strict`: UGC moderation runbook gate passes; current failure remains expected external blockers
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`

@@ -85,6 +85,7 @@ pnpm release:gate -- --release-candidate --tail-file=artifacts/cloudflare-tail/s
 - 배포 가이드: `_workspace/05_deploy_guide.md`
 - QA/Security 리뷰: `_workspace/06_review_report.md`
 - 개인정보/위치정보/사진/신고 정책: `docs/privacy-safety-policy.md`
+- UGC 신고/숨김/삭제/제한 운영 runbook: `docs/ugc-moderation-runbook.md`
 - 보안 게이트: `docs/security-gate.md`
 - TestFlight/App Store readiness: `docs/testflight-readiness.md`
 - Real-device QA ledger: `docs/real-device-qa.md`

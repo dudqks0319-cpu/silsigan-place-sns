@@ -25,11 +25,15 @@ local_checks:
   - name: "Targeted Cloudflare API tests"
     command: "pnpm test -- tests/cloudflare-api.test.ts"
     status: "pass"
-    evidence: "117 tests passed on 2026-06-26, including D1 ranking abuse smoke for repeated same-user click/like signals"
+    evidence: "118 tests passed on 2026-06-26, including D1 ranking abuse smoke for repeated same-user click/like signals and UGC moderation runbook guard coverage"
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
-    evidence: "release_harness.ledger.open_blockers fails with remaining open P0 release blockers; release_harness.status.open_blocker_evidence and ledger.next_actions.duplicate_lines pass and would fail status/ledger drift; --cloudflare-external-state-report=<captured-json> now surfaces R2_NOT_ENABLED and deployment URL blockers while production D1 0002 passes"
+    evidence: "release_harness.ledger.open_blockers fails with remaining open P0 release blockers; release_harness.status.open_blocker_evidence, ugc_moderation.runbook.required_tokens, and ledger.next_actions.duplicate_lines pass and would fail status/ledger/runbook drift; --cloudflare-external-state-report=<captured-json> now surfaces R2_NOT_ENABLED and deployment URL blockers while production D1 0002 passes"
+  - name: "UGC moderation runbook gate"
+    command: "node scripts/release-state-check.mjs --strict"
+    status: "pass_local"
+    evidence: "docs/ugc-moderation-runbook.md includes ownership, MODERATION_ALERT_WEBHOOK_URL intake, 12h/24h/72h SLA, comment/photo targets, hide/restore/delete/restrict actions, evidence/audit, escalation, and stop conditions"
   - name: "Release gate plan"
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
@@ -88,6 +92,9 @@ security:
   abuse_controls:
     status: "pass_local"
     evidence: "D1 ranking abuse smoke proves repeated same-user place click/like attempts return created=false and do not inflate ranking counts, unique_user_count, or live score"
+  ugc_moderation:
+    status: "pass_local"
+    evidence: "docs/ugc-moderation-runbook.md defines owner, report intake queue, SLA, operator actions, audit evidence, escalation, and stop conditions; live webhook secret verification remains staging-blocked"
   payments_legal:
     status: "not_applicable"
     evidence: "No payment flow in current release scope"

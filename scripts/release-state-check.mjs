@@ -8,6 +8,7 @@ const DEFAULT_FRONTEND_CONFIG_PATH = "wrangler.jsonc";
 const DEFAULT_LEDGER_PATH = "docs/current-release-state.md";
 const DEFAULT_RELEASE_LEDGER_PATH = "release-ledger.yaml";
 const DEFAULT_RELEASE_STATUS_PATH = "RELEASE_STATUS.md";
+const DEFAULT_UGC_MODERATION_RUNBOOK_PATH = "docs/ugc-moderation-runbook.md";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
@@ -28,6 +29,31 @@ const REQUIRED_RELEASE_LEDGER_FIELDS = [
   "next_action",
 ];
 const REQUIRED_RELEASE_STATUS_SECTIONS = ["# Release Status", "## 한 줄 상태", "## 현재 후보", "## 막힌 항목", "## 다음 행동"];
+const REQUIRED_UGC_MODERATION_RUNBOOK_SECTIONS = [
+  "# #실시간 UGC moderation runbook",
+  "## Ownership",
+  "## Intake Queue",
+  "## SLA",
+  "## Operator Actions",
+  "## Evidence And Audit",
+  "## Escalation",
+  "## Stop Conditions",
+];
+const REQUIRED_UGC_MODERATION_RUNBOOK_TOKENS = [
+  "MODERATION_ALERT_WEBHOOK_URL",
+  "privacy_face",
+  "privacy_plate",
+  "sensitive_info",
+  "comment",
+  "photo",
+  "12h",
+  "24h",
+  "72h",
+  "hide",
+  "restore",
+  "delete",
+  "restrict",
+];
 const REQUIRED_ENV_URLS = {
   SILSIGAN_STAGING_PAGES_URL: "staging.pages",
   SILSIGAN_STAGING_API_BASE_URL: "staging.worker_api",
@@ -57,12 +83,14 @@ const frontendConfigPath = options.get("frontend-config") ?? DEFAULT_FRONTEND_CO
 const ledgerPath = options.get("ledger") ?? DEFAULT_LEDGER_PATH;
 const releaseLedgerPath = options.get("release-ledger") ?? DEFAULT_RELEASE_LEDGER_PATH;
 const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATUS_PATH;
+const ugcModerationRunbookPath = options.get("ugc-moderation-runbook") ?? options.get("ugc-runbook") ?? DEFAULT_UGC_MODERATION_RUNBOOK_PATH;
 const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
 
 await checkLedger(ledgerPath);
 await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath);
+await checkUgcModerationRunbook(ugcModerationRunbookPath);
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
 await checkOpenNextAdapter();
@@ -81,6 +109,7 @@ const summary = {
   ledgerPath,
   releaseLedgerPath,
   releaseStatusPath,
+  ugcModerationRunbookPath,
   checks,
   blockers: summarizeReleaseBlockers(blockers),
   warnings: warnings.map((check) => check.name),
@@ -183,6 +212,36 @@ async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, so
       { missingEvidence },
     );
   }
+}
+
+async function checkUgcModerationRunbook(path) {
+  let runbook = "";
+  try {
+    runbook = await readFile(path, "utf8");
+    record("ugc_moderation.runbook", "pass", "UGC moderation runbook is present.");
+  } catch (error) {
+    record("ugc_moderation.runbook", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_UGC_MODERATION_RUNBOOK_SECTIONS) {
+    record(
+      `ugc_moderation.runbook.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      runbook.includes(section) ? "pass" : "fail",
+      `UGC moderation runbook must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_UGC_MODERATION_RUNBOOK_TOKENS.filter((token) => !runbook.includes(token));
+  record(
+    "ugc_moderation.runbook.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "UGC moderation runbook covers owner, alert queue, SLA, target types, and operator actions."
+      : "UGC moderation runbook is missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("ugc_moderation.runbook.redaction", runbook, path);
 }
 
 function recordNoSecretLikePatterns(name, content, path) {

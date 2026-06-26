@@ -15,7 +15,7 @@ This ledger records the device evidence required before TestFlight internal test
 | Staging Worker API URL | missing |
 | R2 staging bucket visibility | blocked by `R2_NOT_ENABLED` |
 | Staging D1 `0002` | applied and verified |
-| Production D1 `0002` | blocked by `D1_0002_NOT_APPLIED` |
+| Production D1 `0002` | applied and verified |
 | TestFlight build | not selected |
 | Android internal/debug build | not selected |
 
