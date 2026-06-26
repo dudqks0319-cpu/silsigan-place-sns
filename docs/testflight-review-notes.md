@@ -41,7 +41,7 @@ Required evidence before broader TestFlight expansion:
 
 ## Privacy And Support URLs
 
-The final privacy policy URL and support URL are still release blockers until they are real HTTPS pages that match the implemented data handling. Do not submit external TestFlight review notes with placeholder URLs.
+The final privacy policy URL and support URL are still release blockers until `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` are real HTTPS pages that match the implemented data handling. Do not submit external TestFlight review notes with placeholder URLs.
 
 The privacy policy must describe anonymous IDs, coarse location behavior, photo processing, UGC reports, moderation actions, retention, and deletion or restriction behavior. The support URL must give testers a path to report bugs, unsafe content, privacy concerns, and account/data deletion questions.
 
@@ -67,4 +67,5 @@ Stop TestFlight expansion if any of these are true:
 - location permission denial makes the app unusable.
 - camera or photo library permission failures produce crashes or raw path/filename exposure.
 - privacy policy URL or support URL is still a placeholder.
+- `SILSIGAN_PRIVACY_POLICY_URL` or `SILSIGAN_SUPPORT_URL` is missing, non-HTTPS, localhost, duplicated, or contains credentials/query/fragment values.
 - iPhone real-device smoke has a critical crash or blocks map/detail/comment/photo/like/report flows.

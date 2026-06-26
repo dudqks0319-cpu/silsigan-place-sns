@@ -12,18 +12,18 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 
 - Version: `0.1.0`
 - Build: `not_applicable`
-- Git SHA: `f56f6098f7f1abe2f968d68f4ef64a943322a056`
+- Git SHA: `bd4f46389c8c13d6eb158f7e683c70edc1e93982`
 - Branch: `agent/silsigan-map-click-fix-20260622-1456`
 - Phase: `local_ready_external_blocked`
-- Pushed evidence baseline: `agent/silsigan-map-click-fix-20260622-1456` at `f56f6098f7f1abe2f968d68f4ef64a943322a056`
-- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED` and deployment URL blockers while production D1 `0002` passes; D1 ranking abuse smoke now proves repeated same-user click/like signals do not inflate ranking counts.
+- Pushed evidence baseline: `agent/silsigan-map-click-fix-20260622-1456` at `bd4f46389c8c13d6eb158f7e683c70edc1e93982`
+- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED` and deployment URL blockers while production D1 `0002` passes; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates.
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 120 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, and TestFlight review notes guard coverage
+- `pnpm test -- tests/cloudflare-api.test.ts`: 121 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, and privacy/support URL guard coverage
 - `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
-- `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, and TestFlight review notes gates pass; current failure remains expected external blockers
+- `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, and TestFlight review notes gates pass; current failure remains expected external blockers plus missing `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL`
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
@@ -36,6 +36,7 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - P0: Cloudflare R2 subscription is not enabled: `R2_NOT_ENABLED`
 - P0: Missing staging/production Pages/API URLs: `deployment_url.*`, `URL_REQUIRED`
 - P0: Real staging Worker/Pages smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
+- P1: Final privacy/support URLs are not configured: `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`
 
 ## 다음 행동
 

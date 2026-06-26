@@ -16,16 +16,16 @@ candidate:
   phase: "local_ready_external_blocked"
   version: "0.1.0"
   build_number: "not_applicable"
-  git_sha: "f56f6098f7f1abe2f968d68f4ef64a943322a056"
+  git_sha: "bd4f46389c8c13d6eb158f7e683c70edc1e93982"
   branch: "agent/silsigan-map-click-fix-20260622-1456"
-  dirty_state: "main_worktree_dirty_on_feature_branch; pushed map-click baseline plus local release-status external report ingest delta"
+  dirty_state: "main_worktree_dirty_on_feature_branch; pushed TestFlight review notes gate plus local privacy/support URL gate delta"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
   - name: "Targeted Cloudflare API tests"
     command: "pnpm test -- tests/cloudflare-api.test.ts"
     status: "pass"
-    evidence: "120 tests passed on 2026-06-26, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, and TestFlight review notes guard coverage"
+    evidence: "121 tests passed on 2026-06-26, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, and privacy/support URL guard coverage"
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
@@ -42,6 +42,10 @@ local_checks:
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
     evidence: "docs/testflight-review-notes.md includes beta description, reviewer instructions, staging URL requirements, permission copy, UGC moderation, privacy policy URL/support URL status, staging evidence, and stop conditions"
+  - name: "Privacy and support URL gate"
+    command: "node scripts/release-state-check.mjs --strict"
+    status: "blocked_expected"
+    evidence: "release:status now requires SILSIGAN_PRIVACY_POLICY_URL and SILSIGAN_SUPPORT_URL to be distinct HTTPS URLs before external TestFlight review notes can be submitted"
   - name: "Release gate plan"
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
@@ -109,6 +113,9 @@ security:
   testflight_review_notes:
     status: "pass_local"
     evidence: "docs/testflight-review-notes.md defines beta app description, reviewer instructions, permissions, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; final HTTPS privacy/support URLs remain external-test blocker"
+  privacy_support_urls:
+    status: "blocked_expected"
+    evidence: "SILSIGAN_PRIVACY_POLICY_URL and SILSIGAN_SUPPORT_URL must be distinct HTTPS URLs without placeholders, credentials, query params, fragments, or localhost hosts"
   payments_legal:
     status: "not_applicable"
     evidence: "No payment flow in current release scope"
@@ -142,6 +149,13 @@ blockers:
     owner: "me"
     evidence: "docs/current-release-state.md"
     due: "before_public_release"
+  - id: "P1-SILSIGAN-PRIVACY-SUPPORT-URLS"
+    severity: "P1"
+    status: "open"
+    title: "Privacy policy and support URLs are not finalized for external TestFlight review notes."
+    owner: "me"
+    evidence: "SILSIGAN_PRIVACY_POLICY_URL, SILSIGAN_SUPPORT_URL"
+    due: "before_external_testflight_review"
 
 next_action:
   owner: "me"

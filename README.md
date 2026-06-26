@@ -64,6 +64,8 @@ export SILSIGAN_STAGING_PAGES_URL=https://<staging-pages>
 export SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker>
 export SILSIGAN_PRODUCTION_PAGES_URL=https://<production-pages>
 export SILSIGAN_PRODUCTION_API_BASE_URL=https://<production-worker>
+export SILSIGAN_PRIVACY_POLICY_URL=https://<privacy-policy>
+export SILSIGAN_SUPPORT_URL=https://<support>
 ```
 
 Next 관리자 화면에서 Worker 신고 큐와 운영 조치를 사용하려면 서버 환경변수에 `SILSIGAN_WORKER_API_BASE_URL`과 `SILSIGAN_WORKER_ADMIN_TOKEN`을 설정합니다. staging smoke는 `SILSIGAN_STAGING_ADMIN_TOKEN`을 설정하면 신고 생성부터 운영자 rejected 처리, 임시 사용자 제한/해제까지 확인합니다. 좌표 상태 운영 smoke는 실제 장소 상태를 변경하므로 `--coordinate-status` 또는 `SILSIGAN_RELEASE_GATE_COORDINATE_STATUS=1`을 명시하고, `SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID`, `SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE`, `SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE`를 함께 설정한 경우에만 실행합니다.

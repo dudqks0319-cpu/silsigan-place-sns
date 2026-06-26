@@ -110,6 +110,10 @@ const REQUIRED_TESTFLIGHT_REVIEW_NOTES_TOKENS = [
   "hide",
   "delete",
 ];
+const REQUIRED_POLICY_SUPPORT_URLS = {
+  SILSIGAN_PRIVACY_POLICY_URL: "privacy_policy",
+  SILSIGAN_SUPPORT_URL: "support",
+};
 const REQUIRED_ENV_URLS = {
   SILSIGAN_STAGING_PAGES_URL: "staging.pages",
   SILSIGAN_STAGING_API_BASE_URL: "staging.worker_api",
@@ -151,6 +155,7 @@ await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath)
 await checkUgcModerationRunbook(ugcModerationRunbookPath);
 await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
 await checkTestFlightReviewNotes(testFlightReviewNotesPath);
+checkPolicySupportUrls();
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
 await checkOpenNextAdapter();
@@ -172,6 +177,7 @@ const summary = {
   ugcModerationRunbookPath,
   cloudflareCostUsageRunbookPath,
   testFlightReviewNotesPath,
+  policySupportUrlEnvNames: Object.keys(REQUIRED_POLICY_SUPPORT_URLS),
   checks,
   blockers: summarizeReleaseBlockers(blockers),
   warnings: warnings.map((check) => check.name),
@@ -364,6 +370,19 @@ async function checkTestFlightReviewNotes(path) {
     { missingTokens },
   );
   recordNoSecretLikePatterns("testflight_review_notes.doc.redaction", notes, path);
+}
+
+function checkPolicySupportUrls() {
+  const parsedUrls = new Map();
+
+  for (const [envVarName, checkName] of Object.entries(REQUIRED_POLICY_SUPPORT_URLS)) {
+    const parsed = parseRequiredHttpsUrl(process.env[envVarName], envVarName, `policy_url.${checkName}`);
+    if (parsed) {
+      parsedUrls.set(checkName, parsed.href);
+    }
+  }
+
+  recordSeparatedUrls(parsedUrls, "privacy_policy", "support", "privacy policy and support URLs must be different.", "policy_url");
 }
 
 function recordNoSecretLikePatterns(name, content, path) {
@@ -706,13 +725,17 @@ function checkDeploymentUrls() {
 }
 
 function parseDeploymentUrl(value, envVarName, checkName) {
+  return parseRequiredHttpsUrl(value, envVarName, `deployment_url.${checkName}`, { messageSubject: "deployment-shaped" });
+}
+
+function parseRequiredHttpsUrl(value, envVarName, checkName, options = {}) {
   if (typeof value !== "string" || value.trim().length === 0) {
-    record(`deployment_url.${checkName}`, "fail", `${envVarName} is required.`);
+    record(checkName, "fail", `${envVarName} is required.`);
     return null;
   }
 
   if (hasPlaceholder(value)) {
-    record(`deployment_url.${checkName}`, "fail", `${envVarName} still contains a placeholder.`);
+    record(checkName, "fail", `${envVarName} still contains a placeholder.`);
     return null;
   }
 
@@ -720,22 +743,22 @@ function parseDeploymentUrl(value, envVarName, checkName) {
   try {
     url = new URL(value);
   } catch {
-    record(`deployment_url.${checkName}`, "fail", `${envVarName} must be a valid absolute URL.`);
+    record(checkName, "fail", `${envVarName} must be a valid absolute URL.`);
     return null;
   }
 
   const validations = [
-    recordCheck(url.protocol === "https:", `deployment_url.${checkName}`, `${envVarName} must use https.`),
-    recordCheck(url.username === "" && url.password === "", `deployment_url.${checkName}`, `${envVarName} must not contain credentials.`),
-    recordCheck(url.search === "" && url.hash === "", `deployment_url.${checkName}`, `${envVarName} must not contain query params or fragments.`),
-    recordCheck(!isLocalhost(url.hostname), `deployment_url.${checkName}`, `${envVarName} must not point to localhost.`),
+    recordCheck(url.protocol === "https:", checkName, `${envVarName} must use https.`),
+    recordCheck(url.username === "" && url.password === "", checkName, `${envVarName} must not contain credentials.`),
+    recordCheck(url.search === "" && url.hash === "", checkName, `${envVarName} must not contain query params or fragments.`),
+    recordCheck(!isLocalhost(url.hostname), checkName, `${envVarName} must not point to localhost.`),
   ];
 
   if (!validations.every(Boolean)) {
     return null;
   }
 
-  record(`deployment_url.${checkName}`, "pass", `${envVarName} is deployment-shaped.`, { host: url.host });
+  record(checkName, "pass", `${envVarName} is ${options.messageSubject ?? "release-shaped"}.`, { host: url.host });
   return url;
 }
 
@@ -787,14 +810,14 @@ function isDateAtLeast(value, minimum) {
   return value >= minimum;
 }
 
-function recordSeparatedUrls(parsedUrls, leftKey, rightKey, message) {
+function recordSeparatedUrls(parsedUrls, leftKey, rightKey, message, prefix = "deployment_url") {
   const left = parsedUrls.get(leftKey);
   const right = parsedUrls.get(rightKey);
   if (!left || !right) {
     return;
   }
 
-  record(`deployment_url.${leftKey}.${rightKey}`, left !== right ? "pass" : "fail", message);
+  record(`${prefix}.${leftKey}.${rightKey}`, left !== right ? "pass" : "fail", message);
 }
 
 function bindingBy(items, bindingName) {

@@ -38,6 +38,7 @@ The following must be true before treating the app as TestFlight-ready:
 - [ ] `pnpm smoke:pages` passes against staging Pages and staging Worker URLs.
 - [ ] Workers tail redaction is captured from staging and passes `pnpm smoke:tail-redaction`.
 - [x] TestFlight beta description, reviewer instructions, permission copy, UGC moderation notes, and staging evidence requirements are documented in `docs/testflight-review-notes.md` and guarded by `release:status`.
+- [x] Privacy/support URL readiness is guarded by `release:status`; missing, placeholder, non-HTTPS, localhost, query/fragment, credentialed, or duplicate values fail before external TestFlight review notes are submitted.
 - [ ] iPhone real-device QA in `docs/real-device-qa.md` covers launch, map display, current-location allow/deny, place detail, report create, comment create/delete, photo upload/preview, like/unlike, moderation report, and no raw coordinate/file-name leakage in visible UI.
 - [ ] Android real-device QA in `docs/real-device-qa.md` covers the same user flows if Android beta distribution is in scope.
 
@@ -62,6 +63,7 @@ Only consider App Store production submission after TestFlight evidence is clean
 | --- | --- |
 | `R2_NOT_ENABLED` | Add the R2 subscription through Cloudflare Dashboard checkout, then rerun R2 evidence checks. |
 | Missing staging/production URLs | Deploy Worker/Pages surfaces and export the four `SILSIGAN_*_URL` variables. |
+| Missing privacy/support URLs | Publish final HTTPS privacy/support pages and export `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL`. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
 | No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and optional Android device evidence after staging is live. |
 
@@ -108,7 +110,7 @@ The D1 ranking smoke now covers repeated same-user click and like attempts again
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 120 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence; the TestFlight review notes smoke verifies beta copy, staging URL requirements, permission copy, UGC moderation, privacy/support URL status, staging evidence, and stop conditions. |
+| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 121 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence; the TestFlight review notes smoke verifies beta copy, staging URL requirements, permission copy, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; the privacy/support URL smoke verifies required HTTPS URLs and rejects unsafe or placeholder values. |
 
 ## 2026-06-26 UGC Moderation Runbook Gate
 
@@ -135,3 +137,11 @@ The TestFlight beta/reviewer note packet is now a release-state checked artifact
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/testflight-review-notes.md` to cover beta app description, reviewer instructions, permissions, UGC moderation, privacy policy URL/support URL status, staging evidence, and stop conditions. Current failure remains the known external P0 blockers, not missing TestFlight review-note coverage. |
 
 Still open: the final privacy policy URL and support URL must be real HTTPS pages before external TestFlight review notes are submitted.
+
+## 2026-06-26 Privacy/Support URL Gate
+
+The privacy/support URL finalization blocker is now release-state checked instead of only being text in the readiness plan.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` to be distinct HTTPS URLs with no placeholders, credentials, query params, fragments, or localhost hosts. Current failure remains expected until final public URLs are available. |
