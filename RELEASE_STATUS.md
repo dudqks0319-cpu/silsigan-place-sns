@@ -2,7 +2,7 @@
 
 ## 한 줄 상태
 
-로컬 Cloudflare 전환 검증, staging/production D1 `0002` 원격 적용, staging web Worker 배포와 read-only 브라우저 smoke 증적은 준비됐지만, Cloudflare R2 활성화, staging API/prod Worker 배포, URL export, real staging mutation smoke가 남아 있어 public release는 `blocked-external`이다.
+로컬 Cloudflare 전환 검증, staging/production D1 `0002` 원격 적용, staging/production web Worker 배포와 read-only 브라우저 smoke 증적은 준비됐지만, Cloudflare R2 활성화, staging/production API Worker 배포, API URL export, real staging mutation smoke가 남아 있어 public release는 `blocked-external`이다.
 
 상세 source of truth는 [docs/current-release-state.md](docs/current-release-state.md)이다. 이 파일은 공통 release harness가 읽는 요약 index다.
 
@@ -12,11 +12,11 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 
 - Version: `0.1.0`
 - Build: `not_applicable`
-- Git SHA: `40bc4ddfa73af4bb2a79166b849d1b083b0cfe10`
+- Git SHA: `33195ae84af24a0a70251e6660b953d53c57f512`
 - Branch: `agent/silsigan-map-click-fix-20260622-1456`
 - Phase: `local_ready_external_blocked`
-- Pushed evidence baseline before this ledger update: `agent/silsigan-map-click-fix-20260622-1456` at `40bc4ddfa73af4bb2a79166b849d1b083b0cfe10`
-- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED`, missing API/prod web Worker deployments, and deployment URL blockers while production D1 `0002` passes; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates; 2026-06-27 staging web Worker `silsigan-web-staging` is deployed at `https://silsigan-web-staging.dudqks0319.workers.dev`.
+- Pushed evidence baseline before this ledger update: `agent/silsigan-map-click-fix-20260622-1456` at `33195ae84af24a0a70251e6660b953d53c57f512`
+- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED`, missing API Worker deployments, and API deployment URL blockers while staging/production D1 `0002` and staging/production web Worker deployments pass; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates; 2026-06-27 web Workers are deployed at `https://silsigan-web-staging.dudqks0319.workers.dev` and `https://silsigan-web-production.dudqks0319.workers.dev`.
 
 ## 통과한 증거
 
@@ -31,7 +31,11 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - `pnpm exec wrangler deploy --config wrangler.jsonc --env staging`: pass on 2026-06-27, deployed `silsigan-web-staging` version `1f78ede2-80c6-4ac6-8388-305bfa8b4a1c` to `https://silsigan-web-staging.dudqks0319.workers.dev`
 - `curl -I https://silsigan-web-staging.dudqks0319.workers.dev`: pass on 2026-06-27 with HTTP 200
 - `pnpm smoke:pages -- --pages-url=https://silsigan-web-staging.dudqks0319.workers.dev --timeout-ms=60000`: pass on 2026-06-27 for read-only browser coverage: map surface/visibility, uncovered controls, traffic/filter/requery, header buttons, onboarding dismiss, bottom nav, ranking detail, and marker detail
-- `pnpm cf:external-state`: expected blocked-external on 2026-06-27 after staging web deploy; Wrangler auth passes, staging web Worker deployment passes, staging and production D1 `0002` evidence pass with `posts=4`, `questions=3`, and remaining external blockers are `R2_NOT_ENABLED`, missing staging/production API Workers, missing production web Worker, and four missing deployment URL env values
+- `pnpm cf:web:dry-run:production`: pass on 2026-06-27, read 95 assets and validated the `ASSETS` binding
+- `pnpm exec wrangler deploy --config wrangler.jsonc --env production`: pass on 2026-06-27, deployed `silsigan-web-production` version `2c136948-8a7e-450a-93d4-0fe8d5d8fcdb` to `https://silsigan-web-production.dudqks0319.workers.dev`
+- `curl -I https://silsigan-web-production.dudqks0319.workers.dev`: pass on 2026-06-27 with HTTP 200
+- `pnpm smoke:pages -- --pages-url=https://silsigan-web-production.dudqks0319.workers.dev --timeout-ms=60000`: pass on 2026-06-27 for read-only browser coverage: map surface/visibility, uncovered controls, traffic/filter/requery, header buttons, onboarding dismiss, bottom nav, ranking detail, and marker detail
+- `pnpm cf:external-state`: expected blocked-external on 2026-06-27 after staging/production web deploys; Wrangler auth passes, both web Worker deployments pass, staging/production Pages URL shape passes when exported, staging and production D1 `0002` evidence pass with `posts=4`, `questions=3`, and remaining external blockers are `R2_NOT_ENABLED`, missing staging/production API Workers, and missing staging/production API URL env values
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
@@ -42,8 +46,8 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 ## 막힌 항목
 
 - P0: Cloudflare R2 subscription is not enabled: `R2_NOT_ENABLED`
-- P0: Configured staging/production API Workers and production web Worker are not deployed: `worker_deployment.staging.api`, `worker_deployment.production.api`, `worker_deployment.production.web`
-- P0: Missing staging/production Pages/API URLs: `deployment_url.*`, `URL_REQUIRED`
+- P0: Configured staging/production API Workers are not deployed: `worker_deployment.staging.api`, `worker_deployment.production.api`
+- P0: Missing staging/production API URLs: `deployment_url.staging.worker_api`, `deployment_url.production.worker_api`, `URL_REQUIRED`
 - P0: Real staging API smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
 - P0: iPhone and Android real-device QA evidence is not captured: `docs/real-device-qa.md`
 - P1: Final privacy/support URLs are not configured: `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`
@@ -54,10 +58,10 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000
 ```
 
-Cloudflare Dashboard > Storage & databases > R2 > Overview에서 R2 subscription checkout을 완료한 뒤 위 check를 먼저 다시 실행한다. R2 check가 통과하면 `pnpm cf:r2:evidence -- --env=staging --apply`로 누락 staging bucket을 만들고, staging API Worker를 배포한 뒤 `SILSIGAN_STAGING_PAGES_URL=https://silsigan-web-staging.dudqks0319.workers.dev`와 staging API URL을 함께 export해서 release-candidate smoke로 넘어간다. Production D1은 이미 적용됐으므로 이후에는 `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`로 유지 검증만 한다.
+Cloudflare Dashboard > Storage & databases > R2 > Overview에서 R2 subscription checkout을 완료한 뒤 위 check를 먼저 다시 실행한다. R2 check가 통과하면 `pnpm cf:r2:evidence -- --env=staging --apply`로 누락 staging bucket을 만들고, staging API Worker를 배포한 뒤 `SILSIGAN_STAGING_PAGES_URL=https://silsigan-web-staging.dudqks0319.workers.dev`, `SILSIGAN_PRODUCTION_PAGES_URL=https://silsigan-web-production.dudqks0319.workers.dev`, staging/production API URL을 함께 export해서 release-candidate smoke로 넘어간다. Production D1은 이미 적용됐으므로 이후에는 `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`로 유지 검증만 한다.
 
 ## 사람이 직접 해야 하는 일
 
 - Cloudflare Dashboard에서 R2 subscription checkout 완료
-- Staging API와 production web/API Worker 배포 URL 확정
+- Staging/production API Worker 배포 URL 확정
 - Staging admin token과 captured Workers tail log 제공
