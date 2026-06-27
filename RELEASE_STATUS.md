@@ -12,20 +12,20 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 
 - Version: `0.1.0`
 - Build: `not_applicable`
-- Git SHA: `33195ae84af24a0a70251e6660b953d53c57f512`
+- Git SHA: `5064e765763cb6a2bdabc45ac2f91f76c034cada`
 - Branch: `agent/silsigan-map-click-fix-20260622-1456`
 - Phase: `local_ready_external_blocked`
-- Pushed evidence baseline before this ledger update: `agent/silsigan-map-click-fix-20260622-1456` at `33195ae84af24a0a70251e6660b953d53c57f512`
-- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED`, missing API Worker deployments, and API deployment URL blockers while staging/production D1 `0002` and staging/production web Worker deployments pass; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates; 2026-06-27 web Workers are deployed at `https://silsigan-web-staging.dudqks0319.workers.dev` and `https://silsigan-web-production.dudqks0319.workers.dev`.
+- Pushed evidence baseline before this ledger update: `agent/silsigan-map-click-fix-20260622-1456` at `5064e765763cb6a2bdabc45ac2f91f76c034cada`
+- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED`, missing API Worker deployments, and API deployment URL blockers while staging/production D1 `0002` and staging/production web Worker deployments pass; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates; 2026-06-27 web Workers are deployed at `https://silsigan-web-staging.dudqks0319.workers.dev` and `https://silsigan-web-production.dudqks0319.workers.dev`, and `.env.example` / operator docs now define these public web/privacy/support URL values.
 
 ## 통과한 증거
 
 - `pnpm test -- tests/cloudflare-api.test.ts`: 125 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, privacy/support URL guard coverage, real-device QA ledger guard coverage, public privacy/support page guard coverage, auth-aware external-state blocker canonicalization, and Worker deployment absence classification
-- `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
+- `node scripts/release-state-check.mjs --strict` with `.env.example` sourced: expected blocked-external with `release_harness.ledger.open_blockers`, `deployment_url.staging.worker_api`, and `deployment_url.production.worker_api`; staging/production Pages URL and privacy/support URL shape gates pass
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
-- `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, and TestFlight review notes gates pass; current failure remains expected external blockers plus missing `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL`
+- `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, and TestFlight review notes gates pass; current failure remains expected open external blockers plus missing staging/production API URL values
 - `node scripts/release-state-check.mjs --strict`: real-device QA ledger structure passes against `docs/real-device-qa.md`; actual iPhone/Android evidence remains blocked until staging URLs and R2 pass
-- `node scripts/release-state-check.mjs --strict`: `/privacy` and `/support` page source checks pass; actual HTTPS `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` remain blocked until deployment URLs are final
+- `node scripts/release-state-check.mjs --strict`: `/privacy` and `/support` page source checks pass; HTTPS `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` values are defined in `.env.example` and still must be exported in the actual release shell
 - `pnpm cf:build`: pass on 2026-06-27 from clean worktree `40bc4dd`, generated `.open-next/worker.js`
 - `pnpm cf:web:dry-run:staging`: pass on 2026-06-27, read 95 assets and validated the `ASSETS` binding
 - `pnpm exec wrangler deploy --config wrangler.jsonc --env staging`: pass on 2026-06-27, deployed `silsigan-web-staging` version `1f78ede2-80c6-4ac6-8388-305bfa8b4a1c` to `https://silsigan-web-staging.dudqks0319.workers.dev`
@@ -50,7 +50,7 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - P0: Missing staging/production API URLs: `deployment_url.staging.worker_api`, `deployment_url.production.worker_api`, `URL_REQUIRED`
 - P0: Real staging API smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
 - P0: iPhone and Android real-device QA evidence is not captured: `docs/real-device-qa.md`
-- P1: Final privacy/support URLs are not configured: `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`
+- P1: Privacy/support URL values are defined but still need final release-shell export and external TestFlight review-note confirmation: `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`
 
 ## 다음 행동
 
@@ -58,7 +58,7 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000
 ```
 
-Cloudflare Dashboard > Storage & databases > R2 > Overview에서 R2 subscription checkout을 완료한 뒤 위 check를 먼저 다시 실행한다. R2 check가 통과하면 `pnpm cf:r2:evidence -- --env=staging --apply`로 누락 staging bucket을 만들고, staging API Worker를 배포한 뒤 `SILSIGAN_STAGING_PAGES_URL=https://silsigan-web-staging.dudqks0319.workers.dev`, `SILSIGAN_PRODUCTION_PAGES_URL=https://silsigan-web-production.dudqks0319.workers.dev`, staging/production API URL을 함께 export해서 release-candidate smoke로 넘어간다. Production D1은 이미 적용됐으므로 이후에는 `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`로 유지 검증만 한다.
+Cloudflare Dashboard > Storage & databases > R2 > Overview에서 R2 subscription checkout을 완료한 뒤 위 check를 먼저 다시 실행한다. R2 check가 통과하면 `pnpm cf:r2:evidence -- --env=staging --apply`로 누락 staging bucket을 만들고, staging API Worker를 배포한 뒤 `.env.example` / `docs/cloudflare-staging-operator-packet.md`의 public web/privacy/support URL 값과 staging/production API URL을 함께 export해서 release-candidate smoke로 넘어간다. Production D1은 이미 적용됐으므로 이후에는 `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`로 유지 검증만 한다.
 
 ## 사람이 직접 해야 하는 일
 

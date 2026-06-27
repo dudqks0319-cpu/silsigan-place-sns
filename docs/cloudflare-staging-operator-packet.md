@@ -1,6 +1,6 @@
 # Cloudflare staging operator packet
 
-Updated: 2026-06-26
+Updated: 2026-06-27
 Scope: Cloudflare-backed TestFlight MVP evidence, not App Store production submission.
 
 ## Current Block
@@ -12,6 +12,11 @@ pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000
 ```
 
 Expected current result before Dashboard action: `R2_NOT_ENABLED`.
+
+Staging and production web Workers are already deployed and have passed read-only browser smoke:
+
+- Staging web: `https://silsigan-web-staging.dudqks0319.workers.dev`
+- Production web: `https://silsigan-web-production.dudqks0319.workers.dev`
 
 Cloudflare requires adding the R2 subscription through Dashboard checkout before bucket evidence can pass:
 
@@ -50,8 +55,13 @@ After R2 is enabled, set the staging URLs in the shell that will run the release
 
 ```bash
 export SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker-api>
-export SILSIGAN_STAGING_PAGES_URL=https://<staging-pages>
+export SILSIGAN_STAGING_PAGES_URL=https://silsigan-web-staging.dudqks0319.workers.dev
+export SILSIGAN_PRODUCTION_PAGES_URL=https://silsigan-web-production.dudqks0319.workers.dev
+export SILSIGAN_PRIVACY_POLICY_URL=https://silsigan-web-staging.dudqks0319.workers.dev/privacy
+export SILSIGAN_SUPPORT_URL=https://silsigan-web-staging.dudqks0319.workers.dev/support
 ```
+
+`SILSIGAN_PRODUCTION_API_BASE_URL` is intentionally left unset until the production API Worker is deployed. Do not use the staging API URL for production-candidate smoke.
 
 For mutation/admin smoke, also set:
 

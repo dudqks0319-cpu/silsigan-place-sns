@@ -32,9 +32,11 @@ The following must be true before treating the app as TestFlight-ready:
 - [ ] Cloudflare R2 is enabled and `pnpm cf:r2:evidence -- --env=staging --check` passes.
 - [ ] Staging Worker API is deployed and `SILSIGAN_STAGING_API_BASE_URL` is set to an HTTPS URL.
 - [x] Staging web frontend is deployed at `https://silsigan-web-staging.dudqks0319.workers.dev` and read-only `pnpm smoke:pages` passes for map controls, bottom nav, ranking detail, and marker detail.
-- [ ] `SILSIGAN_STAGING_PAGES_URL` is exported to the staging web URL in the release/smoke environment.
+- [x] `SILSIGAN_STAGING_PAGES_URL` value is defined in `.env.example` and `docs/cloudflare-staging-operator-packet.md`.
+- [ ] `SILSIGAN_STAGING_PAGES_URL` is exported in the actual release/smoke shell.
 - [x] Production web frontend is deployed at `https://silsigan-web-production.dudqks0319.workers.dev` and read-only `pnpm smoke:pages` passes for map controls, bottom nav, ranking detail, and marker detail.
-- [ ] `SILSIGAN_PRODUCTION_PAGES_URL` is exported to the production web URL in the release/smoke environment.
+- [x] `SILSIGAN_PRODUCTION_PAGES_URL` value is defined in `.env.example` and `docs/cloudflare-staging-operator-packet.md`.
+- [ ] `SILSIGAN_PRODUCTION_PAGES_URL` is exported in the actual release/smoke shell.
 - [ ] `pnpm cf:external-state` passes for staging R2, staging D1, staging Worker dry-run, and deployment URL shape.
 - [ ] `pnpm smoke:staging` passes against the staging Worker.
 - [ ] `SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging -- --require-admin` passes with a staging admin token.
@@ -68,7 +70,7 @@ Only consider App Store production submission after TestFlight evidence is clean
 | --- | --- |
 | `R2_NOT_ENABLED` | Add the R2 subscription through Cloudflare Dashboard checkout, then rerun R2 evidence checks. |
 | Missing Worker deployments and staging/production URLs | Staging/production web Workers are deployed; deploy configured staging/production API Workers, then export the four `SILSIGAN_*_URL` variables. |
-| Missing privacy/support URLs | Local `/privacy` and `/support` pages now exist on the staging web URL; export the intended HTTPS `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL` values before external TestFlight notes. |
+| Missing privacy/support URL shell exports | Local `/privacy` and `/support` pages now exist on the staging web URL, and `.env.example` / operator packet define the HTTPS values. Export `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL` in the actual release shell before external TestFlight notes. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
 | No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and Android device evidence after staging is live. |
 
@@ -129,7 +131,7 @@ The configured OpenNext staging web Worker is now deployed, but this does not un
 | `curl -I https://silsigan-web-staging.dudqks0319.workers.dev` | pass | Returned HTTP 200. |
 | `pnpm smoke:pages -- --pages-url=https://silsigan-web-staging.dudqks0319.workers.dev --timeout-ms=60000` | pass read-only | Map surface/visibility, uncovered map controls, traffic/filter/requery, header buttons, onboarding dismiss, bottom nav, safety menu, ranking detail, and marker detail passed. Mutating and share/OG checks were intentionally skipped. |
 
-Still open: export `SILSIGAN_STAGING_PAGES_URL` in the release/smoke environment, deploy the staging API Worker after R2 is enabled, and run real staging API/mutation/admin/tail smoke.
+Still open: export `SILSIGAN_STAGING_PAGES_URL` in the actual release/smoke shell, deploy the staging API Worker after R2 is enabled, and run real staging API/mutation/admin/tail smoke.
 
 ## 2026-06-27 Production Web Worker Deploy
 
@@ -143,7 +145,7 @@ The configured OpenNext production web Worker is now deployed for URL readiness 
 | `curl -I https://silsigan-web-production.dudqks0319.workers.dev` | pass | Returned HTTP 200. |
 | `pnpm smoke:pages -- --pages-url=https://silsigan-web-production.dudqks0319.workers.dev --timeout-ms=60000` | pass read-only | Map surface/visibility, uncovered map controls, traffic/filter/requery, header buttons, onboarding dismiss, bottom nav, safety menu, ranking detail, and marker detail passed. Mutating and share/OG checks were intentionally skipped. |
 
-Still open: export `SILSIGAN_PRODUCTION_PAGES_URL` in the release/smoke environment, deploy the production API Worker after R2 is enabled, and run production-candidate read-only API/Pages smoke.
+Still open: export `SILSIGAN_PRODUCTION_PAGES_URL` in the actual release/smoke shell, deploy the production API Worker after R2 is enabled, and run production-candidate read-only API/Pages smoke.
 
 ## 2026-06-26 Ranking Manipulation Smoke
 
@@ -177,7 +179,7 @@ The TestFlight beta/reviewer note packet is now a release-state checked artifact
 | --- | --- | --- |
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/testflight-review-notes.md` to cover beta app description, reviewer instructions, permissions, UGC moderation, privacy policy URL/support URL status, staging evidence, and stop conditions. Current failure remains the known external P0 blockers, not missing TestFlight review-note coverage. |
 
-Still open: the final privacy policy URL and support URL must be real HTTPS pages before external TestFlight review notes are submitted.
+Still open: the final privacy policy URL and support URL values must be exported in the actual release shell before external TestFlight review notes are submitted.
 
 ## 2026-06-26 Privacy/Support URL Gate
 
@@ -185,7 +187,7 @@ The privacy/support URL finalization blocker is now release-state checked instea
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` to be distinct HTTPS URLs with no placeholders, credentials, query params, fragments, or localhost hosts. Current failure remains expected until final public URLs are available. |
+| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` to be distinct HTTPS URLs with no placeholders, credentials, query params, fragments, or localhost hosts. With `.env.example` sourced, these URL shape checks pass and the current failure remains the known open release/API URL blockers. |
 
 ## 2026-06-27 Real-Device QA Ledger Gate
 
@@ -197,8 +199,8 @@ The real-device QA ledger is now a release-state checked artifact. This closes t
 
 ## 2026-06-27 Privacy/Support Pages
 
-Local public privacy and support pages now exist, but final URL readiness remains blocked until the app is deployed to HTTPS Pages URLs.
+Local public privacy and support pages now exist on the deployed staging web URL, but final readiness still requires exporting those HTTPS values in the actual release shell.
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `src/app/privacy/page.tsx` and `src/app/support/page.tsx` to include public-page tokens for data handling, Cloudflare D1/R2, location, photos, reports, deletion requests, TestFlight support, and final support/privacy URL language. Current failure remains expected until final HTTPS `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` are exported. |
+| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `src/app/privacy/page.tsx` and `src/app/support/page.tsx` to include public-page tokens for data handling, Cloudflare D1/R2, location, photos, reports, deletion requests, TestFlight support, and final support/privacy URL language. With `.env.example` sourced, page and URL checks pass; external TestFlight readiness still requires final release-shell export evidence. |

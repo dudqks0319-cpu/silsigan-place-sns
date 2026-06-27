@@ -8,7 +8,8 @@
 - Next.js 프론트 + Cloudflare Workers API + D1 + R2 + Durable Objects
 - 초기 지역: 전국, 서울, 부산, 제주, 강원, 경주
 - 초기 카테고리: 관광지, 축제/행사장, 맛집/카페, 병원, 관공서, 주차장
-- MVP 제외: 결제, 현금성 포인트, DM, 팔로우, 업체 광고, 네이티브 앱, AI 자동 판독
+- MVP 제외: 결제, 현금성 포인트, DM, 팔로우, 업체 광고, 정식 네이티브 고도화, AI 자동 판독
+- TestFlight MVP 범위: `apps/mobile` Expo shell에서 핵심 권한 문구와 전국 실시간 경험을 검증한다. App Store 정식 제출은 staging API/R2 smoke와 real-device QA 이후 판단한다.
 
 ## 보안/개인정보 원칙
 
@@ -55,18 +56,20 @@ wrangler dev --config workers/api/wrangler.jsonc
 
 `workers/api/wrangler.jsonc`는 development, staging, production binding을 분리합니다. 기본 development Worker dry-run은 local config sanity check이며, root config의 D1/KV ID는 development 리소스를 만들기 전까지 placeholder로 남습니다. release evidence는 staging/production dry-run만 사용합니다. 현재 staging/production D1/KV ID는 실제 Cloudflare 리소스로 반영되어 있으며, 리소스를 재생성할 때만 해당 environment ID를 새 값으로 교체합니다. environment별 secret은 `wrangler secret put <KEY> --env staging|production`으로 등록합니다. 신고 큐 알림은 `MODERATION_ALERT_WEBHOOK_URL`과 선택값 `MODERATION_ALERT_WEBHOOK_TOKEN`을 Worker secret으로 등록합니다.
 
-남은 외부 배포 blocker는 Cloudflare Dashboard의 R2 활성화와 staging/production Pages/API HTTPS URL 설정입니다. R2가 활성화되기 전에는 `wrangler deploy --env staging`이 Cloudflare code `10042`로 실패합니다.
+남은 외부 배포 blocker는 Cloudflare Dashboard의 R2 활성화와 staging/production API HTTPS URL 설정입니다. Staging/production web Workers는 배포되어 read-only browser smoke를 통과했으며, R2가 활성화되기 전에는 API Worker `wrangler deploy --env staging`이 Cloudflare code `10042`로 실패합니다.
 
 `pnpm cf:preflight`는 Worker binding뿐 아니라 staging/production Pages URL과 Worker API URL도 확인합니다. 출시 전 CI 또는 로컬 shell에 아래 값을 실제 HTTPS 배포 URL로 지정해야 합니다.
 
 ```bash
-export SILSIGAN_STAGING_PAGES_URL=https://<staging-pages>
+export SILSIGAN_STAGING_PAGES_URL=https://silsigan-web-staging.dudqks0319.workers.dev
 export SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker>
-export SILSIGAN_PRODUCTION_PAGES_URL=https://<production-pages>
+export SILSIGAN_PRODUCTION_PAGES_URL=https://silsigan-web-production.dudqks0319.workers.dev
 export SILSIGAN_PRODUCTION_API_BASE_URL=https://<production-worker>
-export SILSIGAN_PRIVACY_POLICY_URL=https://<privacy-policy>
-export SILSIGAN_SUPPORT_URL=https://<support>
+export SILSIGAN_PRIVACY_POLICY_URL=https://silsigan-web-staging.dudqks0319.workers.dev/privacy
+export SILSIGAN_SUPPORT_URL=https://silsigan-web-staging.dudqks0319.workers.dev/support
 ```
+
+`SILSIGAN_STAGING_API_BASE_URL`과 `SILSIGAN_PRODUCTION_API_BASE_URL`은 R2 subscription checkout 후 API Workers가 배포될 때 확정합니다. `apps/mobile`은 현재 Expo native shell이므로 Capacitor `server.url` 설정 파일은 없습니다.
 
 Next 관리자 화면에서 Worker 신고 큐와 운영 조치를 사용하려면 서버 환경변수에 `SILSIGAN_WORKER_API_BASE_URL`과 `SILSIGAN_WORKER_ADMIN_TOKEN`을 설정합니다. staging smoke는 `SILSIGAN_STAGING_ADMIN_TOKEN`을 설정하면 신고 생성부터 운영자 rejected 처리, 임시 사용자 제한/해제까지 확인합니다. 좌표 상태 운영 smoke는 실제 장소 상태를 변경하므로 `--coordinate-status` 또는 `SILSIGAN_RELEASE_GATE_COORDINATE_STATUS=1`을 명시하고, `SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID`, `SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE`, `SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE`를 함께 설정한 경우에만 실행합니다.
 
