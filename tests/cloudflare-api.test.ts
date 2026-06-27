@@ -275,6 +275,8 @@ test("release state check separates ready fixtures from external release blocker
     const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
     const realDeviceQaPath = join(tempDir, "real-device-qa.md");
+    const privacyPagePath = join(tempDir, "privacy-page.tsx");
+    const supportPagePath = join(tempDir, "support-page.tsx");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       readyConfigPath,
@@ -301,6 +303,7 @@ test("release state check separates ready fixtures from external release blocker
     writeCloudflareCostUsageRunbook(costUsageRunbookPath);
     writeTestFlightReviewNotes(testFlightReviewNotesPath);
     writeRealDeviceQaLedger(realDeviceQaPath);
+    writePublicPolicySupportPages(privacyPagePath, supportPagePath);
     writeFileSync(
       externalStateReportPath,
       [
@@ -348,6 +351,8 @@ test("release state check separates ready fixtures from external release blocker
       `--cost-usage-runbook=${costUsageRunbookPath}`,
       `--review-notes=${testFlightReviewNotesPath}`,
       `--real-device-qa=${realDeviceQaPath}`,
+      `--privacy-page=${privacyPagePath}`,
+      `--support-page=${supportPagePath}`,
     ], {
       encoding: "utf8",
       env: createReadyPreflightProcessEnv(),
@@ -377,6 +382,10 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.privacy" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.privacy.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.support" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.support.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.support" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy.support" && check.status === "pass"));
@@ -392,6 +401,8 @@ test("release state check separates ready fixtures from external release blocker
         `--cost-usage-runbook=${costUsageRunbookPath}`,
         `--review-notes=${testFlightReviewNotesPath}`,
         `--real-device-qa=${realDeviceQaPath}`,
+        `--privacy-page=${privacyPagePath}`,
+        `--support-page=${supportPagePath}`,
         `--cloudflare-external-state-report=${externalStateReportPath}`,
         "--strict",
       ], {
@@ -669,6 +680,81 @@ test("release state check requires an operable real-device QA ledger", () => {
       assert.ok(tokenCheck?.missingTokens?.includes("Android internal/debug build"));
       assert.ok(tokenCheck?.missingTokens?.includes("Photo upload/preview"));
       assert.ok(tokenCheck?.missingTokens?.includes("network-redacted.json"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires public privacy and support pages", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-public-policy-pages-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const realDeviceQaPath = join(tempDir, "real-device-qa.md");
+    const incompletePrivacyPagePath = join(tempDir, "privacy-page.tsx");
+    const incompleteSupportPagePath = join(tempDir, "support-page.tsx");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeRealDeviceQaLedger(realDeviceQaPath);
+    writeFileSync(incompletePrivacyPagePath, "export default function Privacy(){return <main>개인정보 처리방침</main>;}", "utf8");
+    writeFileSync(incompleteSupportPagePath, "export default function Support(){return <main>지원 및 신고 안내</main>;}", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        `--real-device-qa=${realDeviceQaPath}`,
+        `--privacy-page=${incompletePrivacyPagePath}`,
+        `--support-page=${incompleteSupportPagePath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when public privacy/support pages are incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const privacyTokenCheck = payload.checks.find((check) => check.name === "public_policy_page.privacy.required_tokens");
+      const supportTokenCheck = payload.checks.find((check) => check.name === "public_policy_page.support.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("public_policy_page.privacy.required_tokens"));
+      assert.ok(payload.blockers.includes("public_policy_page.support.required_tokens"));
+      assert.equal(privacyTokenCheck?.status, "fail");
+      assert.equal(supportTokenCheck?.status, "fail");
+      assert.ok(privacyTokenCheck?.missingTokens?.includes("raw coordinate"));
+      assert.ok(privacyTokenCheck?.missingTokens?.includes("Cloudflare D1"));
+      assert.ok(supportTokenCheck?.missingTokens?.includes("TestFlight"));
+      assert.ok(supportTokenCheck?.missingTokens?.includes("privacy_face"));
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -2570,6 +2656,35 @@ function writeRealDeviceQaLedger(path: string) {
       "## Evidence Naming",
       "",
       "Use `network-redacted.json`, `known-issues.md`, screenshots, and console logs. Do not store raw coordinates, original filenames, tokens, or anonymous IDs.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writePublicPolicySupportPages(privacyPagePath: string, supportPagePath: string) {
+  writeFileSync(
+    privacyPagePath,
+    [
+      "export default function PrivacyPage() {",
+      "  return <main>",
+      "    <h1>개인정보 처리방침</h1>",
+      "    <p>위치정보 raw coordinate Cloudflare D1 R2 EXIF/GPS 원본 파일명 신고 delete support URL privacy policy URL</p>",
+      "  </main>;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  writeFileSync(
+    supportPagePath,
+    [
+      "export default function SupportPage() {",
+      "  return <main>",
+      "    <h1>지원 및 신고 안내</h1>",
+      "    <p>TestFlight iPhone Android 지도 위치 권한 privacy_face privacy_plate sensitive_info 삭제 요청 support URL privacy policy URL</p>",
+      "  </main>;",
+      "}",
       "",
     ].join("\n"),
     "utf8",

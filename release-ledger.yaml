@@ -25,7 +25,7 @@ local_checks:
   - name: "Targeted Cloudflare API tests"
     command: "pnpm test -- tests/cloudflare-api.test.ts"
     status: "pass"
-    evidence: "122 tests passed on 2026-06-27, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, real-device QA ledger guard coverage, and privacy/support URL guard coverage"
+    evidence: "123 tests passed on 2026-06-27, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, real-device QA ledger guard coverage, public privacy/support page guard coverage, and privacy/support URL guard coverage"
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
@@ -50,6 +50,10 @@ local_checks:
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
     evidence: "docs/real-device-qa.md now guards required iPhone/Android QA matrices, staging environment fields, permission flows, UGC flows, redaction requirements, crash checks, and artifact naming before TestFlight internal testing"
+  - name: "Public privacy/support page gate"
+    command: "node scripts/release-state-check.mjs --strict"
+    status: "pass_local"
+    evidence: "/privacy and /support page source now guards implemented data handling, TestFlight support, content reports, deletion requests, and final URL language before live privacy/support env URLs can be accepted"
   - name: "Release gate plan"
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
@@ -120,6 +124,9 @@ security:
   real_device_qa:
     status: "blocked_expected"
     evidence: "docs/real-device-qa.md defines the iPhone/Android QA matrix and evidence artifact rules; actual iPhone/Android device evidence remains blocked until staging URLs and R2 pass"
+  public_policy_support_pages:
+    status: "pass_local"
+    evidence: "src/app/privacy/page.tsx and src/app/support/page.tsx exist and release:status verifies required public-page tokens; live HTTPS SILSIGAN_PRIVACY_POLICY_URL and SILSIGAN_SUPPORT_URL remain external-test blockers"
   privacy_support_urls:
     status: "blocked_expected"
     evidence: "SILSIGAN_PRIVACY_POLICY_URL and SILSIGAN_SUPPORT_URL must be distinct HTTPS URLs without placeholders, credentials, query params, fragments, or localhost hosts"
