@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
+const DEFAULT_FRONTEND_CONFIG_PATH = "wrangler.jsonc";
 const DEFAULT_ENVS = ["staging", "production"];
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
 const D1_RELEASE_EVIDENCE_QUERY = [
@@ -32,6 +33,7 @@ const FIELD_SPECIFIC_BLOCKER_CODES = new Set([
   "DEPLOYMENT_URL_UNSAFE",
   "DEPLOYMENT_URL_DUPLICATE",
 ]);
+const CHECK_SPECIFIC_BLOCKER_CODES = new Set(["WORKER_DEPLOYMENT_MISSING"]);
 
 if (isCliEntryPoint()) {
   await main();
@@ -102,6 +104,18 @@ export async function readExpectedD1Databases(configPath = DEFAULT_CONFIG_PATH, 
   return expected;
 }
 
+export async function readExpectedWorkerDeployments(configPath = DEFAULT_CONFIG_PATH, frontendConfigPath = DEFAULT_FRONTEND_CONFIG_PATH, targetEnvs = DEFAULT_ENVS) {
+  const [apiConfig, frontendConfig] = await Promise.all([
+    readWranglerConfig(configPath),
+    readWranglerConfig(frontendConfigPath),
+  ]);
+
+  return [
+    ...readWorkerNamesFromConfig(apiConfig, configPath, "api", targetEnvs),
+    ...readWorkerNamesFromConfig(frontendConfig, frontendConfigPath, "web", targetEnvs),
+  ];
+}
+
 export function classifyR2BucketListResult(result, expectedBucketNames = []) {
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 
@@ -139,6 +153,40 @@ export function classifyR2BucketListResult(result, expectedBucketNames = []) {
     status: "pass",
     message: "Cloudflare R2 is enabled and required project buckets are visible to Wrangler.",
     bucketCount: expectedBucketNames.length,
+  };
+}
+
+export function classifyWorkerDeploymentResult(result, deployment) {
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const name = `worker_deployment.${deployment.envName}.${deployment.kind}`;
+
+  if (result.exitCode !== 0) {
+    if (/Worker does not exist|code:\s*10007/i.test(output)) {
+      return {
+        name,
+        status: "fail",
+        code: "WORKER_DEPLOYMENT_MISSING",
+        message: `Configured ${deployment.envName} ${deployment.kind} Worker is not deployed to the Cloudflare account yet.`,
+        workerName: deployment.workerName,
+      };
+    }
+
+    return {
+      name,
+      status: "fail",
+      code: "WORKER_DEPLOYMENT_CHECK_FAILED",
+      message: `Could not read configured ${deployment.envName} ${deployment.kind} Worker deployments with Wrangler.`,
+      workerName: deployment.workerName,
+      outputTail: sanitizeWranglerOutput(tail(output, 1_500)),
+    };
+  }
+
+  return {
+    name,
+    status: "pass",
+    message: `Configured ${deployment.envName} ${deployment.kind} Worker has Cloudflare deployment history.`,
+    workerName: deployment.workerName,
+    deploymentCount: countJsonDeployments(output),
   };
 }
 
@@ -284,12 +332,14 @@ async function main() {
   }
 
   const configPath = options.get("config") ?? DEFAULT_CONFIG_PATH;
+  const frontendConfigPath = options.get("frontend-config") ?? DEFAULT_FRONTEND_CONFIG_PATH;
   const targetEnvs = options.get("env") ? options.get("env").split(",").map((envName) => envName.trim()).filter(Boolean) : DEFAULT_ENVS;
   const timeoutMs = numberOption(options.get("timeout-ms") ?? process.env.SILSIGAN_CLOUDFLARE_EXTERNAL_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
   const checks = [];
 
   let expectedBucketNames = [];
   let expectedD1Databases = [];
+  let expectedWorkerDeployments = [];
   try {
     expectedBucketNames = await readExpectedR2BucketNames(configPath, targetEnvs);
     record(checks, "wrangler.config.r2Buckets", "pass", "Expected R2 bucket names were read from wrangler config.", {
@@ -308,6 +358,15 @@ async function main() {
     record(checks, "wrangler.config.d1Databases", "fail", publicErrorMessage(error));
   }
 
+  try {
+    expectedWorkerDeployments = await readExpectedWorkerDeployments(configPath, frontendConfigPath, targetEnvs);
+    record(checks, "wrangler.config.workerDeployments", "pass", "Expected API and web Worker names were read from Wrangler configs.", {
+      workerCount: expectedWorkerDeployments.filter((deployment) => deployment.workerName).length,
+    });
+  } catch (error) {
+    record(checks, "wrangler.config.workerDeployments", "fail", publicErrorMessage(error));
+  }
+
   let cloudflareAuthBlocked = false;
   if (!flags.has("skip-whoami")) {
     const whoami = await runCommand("npx", ["--yes", "wrangler", "whoami"], timeoutMs);
@@ -322,6 +381,30 @@ async function main() {
         ? classifyAuthBlockedRemoteCheck("cloudflare.r2.enabled", "R2 bucket visibility check")
         : classifyR2BucketListResult(await runCommand("npx", ["--yes", "wrangler", "r2", "bucket", "list"], timeoutMs), expectedBucketNames),
     );
+  }
+
+  if (!flags.has("skip-worker-deployments")) {
+    for (const deployment of expectedWorkerDeployments) {
+      if (!deployment.workerName) {
+        record(
+          checks,
+          `worker_deployment.${deployment.envName}.${deployment.kind}`,
+          "fail",
+          `${deployment.configPath} must define a Worker name for ${deployment.envName} ${deployment.kind}.`,
+          { code: "WORKER_NAME_REQUIRED" },
+        );
+        continue;
+      }
+
+      checks.push(
+        cloudflareAuthBlocked
+          ? classifyAuthBlockedRemoteCheck(`worker_deployment.${deployment.envName}.${deployment.kind}`, `${deployment.envName} ${deployment.kind} Worker deployment check`)
+          : classifyWorkerDeploymentResult(
+              await runCommand("npx", ["--yes", "wrangler", "deployments", "list", "--config", deployment.configPath, "--env", deployment.envName, "--json"], timeoutMs),
+              deployment,
+            ),
+      );
+    }
   }
 
   if (!flags.has("skip-deployment-urls")) {
@@ -389,6 +472,7 @@ async function main() {
       {
         ok: failed.length === 0,
         configPath,
+        frontendConfigPath,
         envs: targetEnvs,
         checks,
         blockers: summarizeExternalStateBlockers(failed),
@@ -498,7 +582,7 @@ function externalStateBlockerForCheck(check) {
     return null;
   }
 
-  if (FIELD_SPECIFIC_BLOCKER_CODES.has(check.code)) {
+  if (FIELD_SPECIFIC_BLOCKER_CODES.has(check.code) || CHECK_SPECIFIC_BLOCKER_CODES.has(check.code)) {
     return typeof check.name === "string" ? check.name : check.code;
   }
 
@@ -573,6 +657,26 @@ function stripJsonComments(source) {
   return output;
 }
 
+async function readWranglerConfig(configPath) {
+  return JSON.parse(stripJsonComments(await readFile(configPath, "utf8")));
+}
+
+function readWorkerNamesFromConfig(config, configPath, kind, targetEnvs) {
+  const expected = [];
+
+  for (const envName of targetEnvs) {
+    const envConfig = envName === "" ? config : config.env?.[envName];
+    expected.push({
+      envName,
+      kind,
+      configPath,
+      workerName: typeof envConfig?.name === "string" && envConfig.name.length > 0 ? envConfig.name : null,
+    });
+  }
+
+  return expected;
+}
+
 function parseD1Counters(output) {
   const counters = {};
   const matcher = /\b(posts_table|questions_table|post_indexes|question_indexes|posts|questions)=(\d+)\b/g;
@@ -582,6 +686,19 @@ function parseD1Counters(output) {
     match = matcher.exec(output);
   }
   return counters;
+}
+
+function countJsonDeployments(output) {
+  try {
+    const value = JSON.parse(output);
+    if (Array.isArray(value)) return value.length;
+    if (Array.isArray(value?.items)) return value.items.length;
+    if (Array.isArray(value?.deployments)) return value.deployments.length;
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 function record(checks, name, status, message, details = {}) {
@@ -611,6 +728,7 @@ function printHelp() {
 Checks non-mutating Cloudflare account state needed before staging release evidence:
   wrangler whoami
   wrangler r2 bucket list
+  configured API/web Worker deployment history
   remote D1 posts/questions migration and seed read check
   staging/production deployment URL shape
   wrangler deploy --dry-run --env <env>
@@ -618,10 +736,12 @@ Checks non-mutating Cloudflare account state needed before staging release evide
 Options:
   --skip-whoami           Skip Wrangler OAuth/account read check.
   --skip-r2               Skip R2 account and bucket visibility check.
+  --skip-worker-deployments Skip configured API/web Worker deployment history checks.
   --skip-d1               Skip remote D1 migration and seed evidence check.
   --skip-deployment-urls  Skip staging/production deployment URL shape checks.
   --skip-dry-run          Skip Worker dry-run checks.
   --timeout-ms N          Per-command timeout.
+  --frontend-config PATH  Frontend Worker Wrangler config. Default: wrangler.jsonc.
 `);
 }
 

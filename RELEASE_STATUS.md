@@ -16,17 +16,17 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - Branch: `agent/silsigan-map-click-fix-20260622-1456`
 - Phase: `local_ready_external_blocked`
 - Pushed evidence baseline: `agent/silsigan-map-click-fix-20260622-1456` at `bd4f46389c8c13d6eb158f7e683c70edc1e93982`
-- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED` and deployment URL blockers while production D1 `0002` passes; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates.
+- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED`, missing API/web Worker deployments, and deployment URL blockers while production D1 `0002` passes; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates.
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 124 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, privacy/support URL guard coverage, real-device QA ledger guard coverage, public privacy/support page guard coverage, and auth-aware external-state blocker canonicalization
+- `pnpm test -- tests/cloudflare-api.test.ts`: 125 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, privacy/support URL guard coverage, real-device QA ledger guard coverage, public privacy/support page guard coverage, auth-aware external-state blocker canonicalization, and Worker deployment absence classification
 - `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
 - `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, and TestFlight review notes gates pass; current failure remains expected external blockers plus missing `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL`
 - `node scripts/release-state-check.mjs --strict`: real-device QA ledger structure passes against `docs/real-device-qa.md`; actual iPhone/Android evidence remains blocked until staging URLs and R2 pass
 - `node scripts/release-state-check.mjs --strict`: `/privacy` and `/support` page source checks pass; actual HTTPS `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` remain blocked until deployment URLs are final
-- `pnpm cf:external-state`: expected blocked-external on 2026-06-27; Wrangler auth passes, staging and production D1 `0002` evidence pass with `posts=4`, `questions=3`, and remaining external blockers are `R2_NOT_ENABLED` plus four missing deployment URLs
+- `pnpm cf:external-state`: expected blocked-external on 2026-06-27; Wrangler auth passes, staging and production D1 `0002` evidence pass with `posts=4`, `questions=3`, and remaining external blockers are `R2_NOT_ENABLED`, four missing Worker deployments, and four missing deployment URLs
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
@@ -37,6 +37,7 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 ## 막힌 항목
 
 - P0: Cloudflare R2 subscription is not enabled: `R2_NOT_ENABLED`
+- P0: Configured staging/production API/web Workers are not deployed: `worker_deployment.*`
 - P0: Missing staging/production Pages/API URLs: `deployment_url.*`, `URL_REQUIRED`
 - P0: Real staging Worker/Pages smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
 - P0: iPhone and Android real-device QA evidence is not captured: `docs/real-device-qa.md`

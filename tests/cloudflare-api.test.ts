@@ -1729,6 +1729,31 @@ test("Cloudflare external state check canonicalizes missing auth before remote c
   assert.deepEqual(externalState.summarizeExternalStateBlockers([authCheck, r2Check, d1Check]), ["CLOUDFLARE_AUTH_REQUIRED"]);
 });
 
+test("Cloudflare external state check classifies missing Worker deployments without leaking account details", () => {
+  const check = externalState.classifyWorkerDeploymentResult(
+    {
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        "A request to the Cloudflare API (/accounts/2a0a85b82393ae6cfb2dea0b41853458/workers/scripts/silsigan-api-staging/deployments) failed. This Worker does not exist on your account. [code: 10007] user@example.com",
+    },
+    {
+      envName: "staging",
+      kind: "api",
+      workerName: "silsigan-api-staging",
+      configPath: "workers/api/wrangler.jsonc",
+    },
+  );
+
+  assert.equal(check.name, "worker_deployment.staging.api");
+  assert.equal(check.status, "fail");
+  assert.equal(check.code, "WORKER_DEPLOYMENT_MISSING");
+  assert.equal(check.workerName, "silsigan-api-staging");
+  assert.equal(JSON.stringify(check).includes("user@example.com"), false);
+  assert.equal(JSON.stringify(check).includes("2a0a85b82393ae6cfb2dea0b41853458"), false);
+  assert.deepEqual(externalState.summarizeExternalStateBlockers([check]), ["worker_deployment.staging.api"]);
+});
+
 test("Cloudflare external state check classifies remote D1 migration and seed evidence", () => {
   const missingMigration = externalState.classifyD1MigrationResult(
     {
