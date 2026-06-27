@@ -18,7 +18,7 @@ candidate:
   build_number: "not_applicable"
   git_sha: "5064e765763cb6a2bdabc45ac2f91f76c034cada"
   branch: "agent/silsigan-map-click-fix-20260622-1456"
-  dirty_state: "main_worktree_dirty_on_feature_branch; staging/production web Workers deployed and public web URL exports documented on agent branch"
+  dirty_state: "main_worktree_dirty_on_feature_branch; staging/production web Workers deployed, public web URL exports documented, and mobile TestFlight shell public links prepared on agent branch"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
@@ -54,6 +54,10 @@ local_checks:
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
     evidence: "/privacy and /support page source now guards implemented data handling, TestFlight support, content reports, deletion requests, and final URL language before live privacy/support env URLs can be accepted"
+  - name: "Mobile TestFlight public URL shell"
+    command: "cd apps/mobile && pnpm lint && pnpm typecheck && pnpm test"
+    status: "pass_local"
+    evidence: "apps/mobile exposes privacy, support, and staging web link controls in the My tab, app.json extra.silsigan contains the same public URLs, and 5 mobile tests pass including release-shaped public URL coverage"
   - name: "Release gate plan"
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
@@ -133,6 +137,9 @@ security:
   testflight_review_notes:
     status: "pass_local"
     evidence: "docs/testflight-review-notes.md defines beta app description, reviewer instructions, permissions, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; HTTPS privacy/support URL values are defined, but final external TestFlight notes still require release-shell export and confirmation"
+  mobile_testflight_shell:
+    status: "pass_local"
+    evidence: "apps/mobile My tab exposes public privacy/support/staging web links; expo config includes iOS camera/location/photo usage strings, Android camera/location permissions, and extra.silsigan public URLs; real-device QA remains blocked until staging API/R2 are ready"
   real_device_qa:
     status: "blocked_expected"
     evidence: "docs/real-device-qa.md defines the iPhone/Android QA matrix and evidence artifact rules; actual iPhone/Android device evidence remains blocked until staging URLs and R2 pass"

@@ -2,6 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import { useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -17,6 +18,7 @@ import {
   questionTypeOptions,
   quickQuestionExamples,
   recentReports,
+  serviceLinks,
   serviceScope,
   type NationwidePlace,
   type RegionName,
@@ -365,6 +367,15 @@ function MyScreen() {
         <StatCard label="답변" value="1건" />
         <StatCard label="숨김 사용자" value="0명" />
       </View>
+      <View style={styles.supportCard}>
+        <Text style={styles.policyTitle}>베타 지원</Text>
+        <Text style={styles.policyText}>개인정보, 지원 문의, staging web 확인은 공개 배포 URL로 연결됩니다.</Text>
+        <View style={styles.supportLinkGrid}>
+          <ExternalLinkButton label="개인정보" url={serviceLinks.privacyPolicyUrl} />
+          <ExternalLinkButton label="지원 문의" url={serviceLinks.supportUrl} />
+          <ExternalLinkButton label="staging web" url={serviceLinks.stagingWebUrl} />
+        </View>
+      </View>
     </View>
   );
 }
@@ -430,6 +441,14 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={styles.statValue}>{value}</Text>
     </View>
+  );
+}
+
+function ExternalLinkButton({ label, url }: { label: string; url: string }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={() => void Linking.openURL(url)} style={styles.supportLinkButton}>
+      <Text style={styles.supportLinkText}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -889,6 +908,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 19,
+  },
+  supportCard: {
+    backgroundColor: "#fff",
+    borderColor: "#dbe6f3",
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 10,
+    padding: 15,
+  },
+  supportLinkGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  supportLinkButton: {
+    alignItems: "center",
+    backgroundColor: "#eef4ff",
+    borderColor: "#c7d7fe",
+    borderRadius: 14,
+    borderWidth: 1,
+    minHeight: 42,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  supportLinkText: {
+    color: "#1d4ed8",
+    fontSize: 13,
+    fontWeight: "900",
   },
   footerCtaSpacer: {
     marginTop: 2,

@@ -45,6 +45,7 @@ The following must be true before treating the app as TestFlight-ready:
 - [x] TestFlight beta description, reviewer instructions, permission copy, UGC moderation notes, and staging evidence requirements are documented in `docs/testflight-review-notes.md` and guarded by `release:status`.
 - [x] Local `/privacy` and `/support` pages exist and are guarded by `release:status` for implemented data-handling, support, report, deletion, and final URL language.
 - [x] Privacy/support URL readiness is guarded by `release:status`; missing, placeholder, non-HTTPS, localhost, query/fragment, credentialed, or duplicate values fail before external TestFlight review notes are submitted.
+- [x] `apps/mobile` TestFlight shell exposes public `개인정보`, `지원 문의`, and `staging web` link controls and verifies release-shaped staging/privacy/support URLs locally.
 - [x] Real-device QA ledger structure is guarded by `release:status`; missing iPhone/Android matrices, permission flows, UGC flows, redaction rules, crash checks, or evidence artifact names fail before TestFlight internal testing.
 - [ ] iPhone real-device QA in `docs/real-device-qa.md` covers launch, map display, current-location allow/deny, place detail, report create, comment create/delete, photo upload/preview, like/unlike, moderation report, and no raw coordinate/file-name leakage in visible UI.
 - [ ] Android real-device QA in `docs/real-device-qa.md` covers the same user flows if Android beta distribution is in scope.
@@ -204,3 +205,15 @@ Local public privacy and support pages now exist on the deployed staging web URL
 | Probe | Result | Evidence |
 | --- | --- | --- |
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `src/app/privacy/page.tsx` and `src/app/support/page.tsx` to include public-page tokens for data handling, Cloudflare D1/R2, location, photos, reports, deletion requests, TestFlight support, and final support/privacy URL language. With `.env.example` sourced, page and URL checks pass; external TestFlight readiness still requires final release-shell export evidence. |
+
+## 2026-06-27 Mobile Public URL Readiness
+
+The Expo mobile shell now carries the same public staging/privacy/support links that the web release gates expect. This prepares the internal TestFlight surface without claiming staging API/R2 or real-device QA completion.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `cd apps/mobile && pnpm lint` | pass | ESLint passes after adding `Linking.openURL` public support controls. |
+| `cd apps/mobile && pnpm typecheck` | pass | TypeScript passes with `serviceLinks` and URL readiness helpers. |
+| `cd apps/mobile && pnpm test` | pass | 5 tests pass, including release-shaped public staging/privacy/support URL coverage. |
+| `cd apps/mobile && expo config --json` | pass | Expo manifest includes iOS camera/location/photo usage strings, Android camera/location permissions, and `extra.silsigan` public URL metadata. |
+| `cd apps/mobile && expo export --platform web` | not applicable | Blocked by missing `react-native-web`; no new dependency was added because the TestFlight target is native and real-device QA remains the required surface. |

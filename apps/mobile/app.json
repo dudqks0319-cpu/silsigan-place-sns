@@ -24,6 +24,13 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ]
+    },
+    "extra": {
+      "silsigan": {
+        "stagingWebUrl": "https://silsigan-web-staging.dudqks0319.workers.dev",
+        "privacyPolicyUrl": "https://silsigan-web-staging.dudqks0319.workers.dev/privacy",
+        "supportUrl": "https://silsigan-web-staging.dudqks0319.workers.dev/support"
+      }
     }
   }
 }
