@@ -11,7 +11,7 @@ Operator packet: `docs/cloudflare-staging-operator-packet.md`
 | Target | Current judgement | Reason |
 | --- | --- | --- |
 | Web/PWA beta MVP | possible locally | Cloudflare Worker API, D1 schema, local browser smoke, reporting, photos, likes, comments, rankings, and moderation guards are implemented and locally verified. |
-| TestFlight internal testing | candidate after staging URLs/R2 | Native wrapper and permission copy can be exercised once staging Worker/Pages URLs and R2 are available. |
+| TestFlight internal testing | candidate after staging API/R2 | Native wrapper and permission copy can be exercised once staging API URL, R2, and mutation smoke are available; staging web read-only smoke now passes. |
 | TestFlight external testing | blocked | Needs real staging smoke, R2/Images mutation proof, production-safe moderation runbook, and device QA evidence. |
 | App Store production submission | blocked | This is still a beta MVP until external Cloudflare resources, UGC operations, and real-device evidence are complete. |
 
@@ -21,7 +21,7 @@ The earlier release assessment correctly warns against App Store submission, but
 
 - Backend is no longer a Supabase-first MVP in the current release branch. README, package dependencies, release checks, and tests now target Cloudflare Workers, D1, R2, Durable Objects, and OpenNext Cloudflare.
 - Nationwide map and ranking scope are not just roadmap text. Local smoke and tests cover nationwide/region/map-bounds ranking panels, current-location controls, bbox place loading, and Worker ranking API query propagation.
-- Remaining release blockers are mostly external-state and evidence blockers, not missing local code paths: `R2_NOT_ENABLED`, missing configured API/web Worker deployments, staging/production deployment URLs, and real staging smoke.
+- Remaining release blockers are mostly external-state and evidence blockers, not missing local code paths: `R2_NOT_ENABLED`, missing configured API/prod web Worker deployments, staging/production deployment URL exports, and real staging mutation smoke.
 - App Store submission remains the wrong next milestone. The correct milestone is a TestFlight MVP with live Cloudflare staging and real-device QA.
 
 ## TestFlight MVP Gate
@@ -31,7 +31,8 @@ The following must be true before treating the app as TestFlight-ready:
 - [ ] `pnpm release:status -- --strict` passes or reports only intentionally deferred App Store production items.
 - [ ] Cloudflare R2 is enabled and `pnpm cf:r2:evidence -- --env=staging --check` passes.
 - [ ] Staging Worker API is deployed and `SILSIGAN_STAGING_API_BASE_URL` is set to an HTTPS URL.
-- [ ] Staging Pages frontend is deployed and `SILSIGAN_STAGING_PAGES_URL` is set to an HTTPS URL.
+- [x] Staging web frontend is deployed at `https://silsigan-web-staging.dudqks0319.workers.dev` and read-only `pnpm smoke:pages` passes for map controls, bottom nav, ranking detail, and marker detail.
+- [ ] `SILSIGAN_STAGING_PAGES_URL` is exported to the staging web URL in the release/smoke environment.
 - [ ] `pnpm cf:external-state` passes for staging R2, staging D1, staging Worker dry-run, and deployment URL shape.
 - [ ] `pnpm smoke:staging` passes against the staging Worker.
 - [ ] `SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging -- --require-admin` passes with a staging admin token.
@@ -64,8 +65,8 @@ Only consider App Store production submission after TestFlight evidence is clean
 | Blocker | Owner action |
 | --- | --- |
 | `R2_NOT_ENABLED` | Add the R2 subscription through Cloudflare Dashboard checkout, then rerun R2 evidence checks. |
-| Missing Worker deployments and staging/production URLs | Deploy configured API/web Workers and export the four `SILSIGAN_*_URL` variables. |
-| Missing privacy/support URLs | Local `/privacy` and `/support` pages now exist; deploy them to final HTTPS URLs and export `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL`. |
+| Missing Worker deployments and staging/production URLs | Staging web Worker is deployed; deploy configured staging/production API Workers and production web Worker, then export the four `SILSIGAN_*_URL` variables. |
+| Missing privacy/support URLs | Local `/privacy` and `/support` pages now exist on the staging web URL; export the intended HTTPS `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL` values before external TestFlight notes. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
 | No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and Android device evidence after staging is live. |
 
@@ -112,7 +113,21 @@ The external-state gate now treats missing Cloudflare auth as the canonical bloc
 
 ## 2026-06-27 Worker Deployment Inventory
 
-Read-only Wrangler deployment probes found that the configured Workers are not deployed yet: `silsigan-api-staging`, `silsigan-api-production`, `silsigan-web-staging`, and `silsigan-web-production`. The external-state gate now reports these as `worker_deployment.staging.api`, `worker_deployment.production.api`, `worker_deployment.staging.web`, and `worker_deployment.production.web` blockers before real staging smoke can start.
+Initial read-only Wrangler deployment probes found that the configured Workers were not deployed yet: `silsigan-api-staging`, `silsigan-api-production`, `silsigan-web-staging`, and `silsigan-web-production`. After the staging web deploy below, the external-state gate reports `worker_deployment.staging.web` as pass; remaining Worker deployment blockers are `worker_deployment.staging.api`, `worker_deployment.production.api`, and `worker_deployment.production.web`.
+
+## 2026-06-27 Staging Web Worker Deploy
+
+The configured OpenNext staging web Worker is now deployed, but this does not unblock API/R2 mutation smoke by itself.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `pnpm cf:build` | pass | Clean deploy worktree at `40bc4dd` generated `.open-next/worker.js`. |
+| `pnpm cf:web:dry-run:staging` | pass | Wrangler validated 95 static assets and the `ASSETS` binding for `silsigan-web-staging`. |
+| `pnpm exec wrangler deploy --config wrangler.jsonc --env staging` | pass | Deployed `silsigan-web-staging` version `1f78ede2-80c6-4ac6-8388-305bfa8b4a1c` to `https://silsigan-web-staging.dudqks0319.workers.dev`. |
+| `curl -I https://silsigan-web-staging.dudqks0319.workers.dev` | pass | Returned HTTP 200. |
+| `pnpm smoke:pages -- --pages-url=https://silsigan-web-staging.dudqks0319.workers.dev --timeout-ms=60000` | pass read-only | Map surface/visibility, uncovered map controls, traffic/filter/requery, header buttons, onboarding dismiss, bottom nav, safety menu, ranking detail, and marker detail passed. Mutating and share/OG checks were intentionally skipped. |
+
+Still open: export `SILSIGAN_STAGING_PAGES_URL` in the release/smoke environment, deploy the staging API Worker after R2 is enabled, and run real staging API/mutation/admin/tail smoke.
 
 ## 2026-06-26 Ranking Manipulation Smoke
 

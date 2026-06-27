@@ -16,9 +16,9 @@ candidate:
   phase: "local_ready_external_blocked"
   version: "0.1.0"
   build_number: "not_applicable"
-  git_sha: "bd4f46389c8c13d6eb158f7e683c70edc1e93982"
+  git_sha: "40bc4ddfa73af4bb2a79166b849d1b083b0cfe10"
   branch: "agent/silsigan-map-click-fix-20260622-1456"
-  dirty_state: "main_worktree_dirty_on_feature_branch; pushed TestFlight review notes gate plus local privacy/support URL gate delta"
+  dirty_state: "main_worktree_dirty_on_feature_branch; staging web Worker deployed from clean worktree and docs updated on agent branch"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
@@ -29,7 +29,7 @@ local_checks:
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
-    evidence: "release_harness.ledger.open_blockers fails with remaining open P0 release blockers; release_harness.status.open_blocker_evidence, ugc_moderation.runbook.required_tokens, and ledger.next_actions.duplicate_lines pass and would fail status/ledger/runbook drift; 2026-06-27 cf:external-state surfaces R2_NOT_ENABLED, worker_deployment.* blockers, and deployment URL blockers while staging/production D1 0002 passes"
+    evidence: "release_harness.ledger.open_blockers fails with remaining open P0 release blockers; release_harness.status.open_blocker_evidence, ugc_moderation.runbook.required_tokens, and ledger.next_actions.duplicate_lines pass and would fail status/ledger/runbook drift; 2026-06-27 cf:external-state after staging web deploy surfaces R2_NOT_ENABLED, remaining API/prod web worker_deployment blockers, and deployment URL blockers while staging web deployment and staging/production D1 0002 pass"
   - name: "UGC moderation runbook gate"
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
@@ -78,8 +78,8 @@ runtime_checks:
     evidence: "SILSIGAN_STAGING_API_BASE_URL is not configured"
   - name: "Staging Pages browser smoke"
     target: "cloudflare-staging"
-    status: "blocked"
-    evidence: "SILSIGAN_STAGING_PAGES_URL is not configured"
+    status: "pass_read_only"
+    evidence: "2026-06-27 pnpm smoke:pages -- --pages-url=https://silsigan-web-staging.dudqks0319.workers.dev --timeout-ms=60000 passed map surface/visibility, uncovered controls, bottom nav, ranking detail, and marker detail; mutating/share checks intentionally skipped"
 
 external_checks:
   - name: "Staging D1 posts/questions migration"
@@ -96,8 +96,12 @@ external_checks:
     evidence: "2026-06-26 pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000: R2_NOT_ENABLED; Cloudflare docs require adding an R2 subscription through Dashboard checkout before bucket evidence can pass"
   - name: "Deployment URLs"
     target: "cloudflare-pages-workers"
-    status: "blocked"
-    evidence: "Configured Workers are not deployed yet: worker_deployment.staging.api, worker_deployment.production.api, worker_deployment.staging.web, worker_deployment.production.web; SILSIGAN_STAGING_PAGES_URL, SILSIGAN_STAGING_API_BASE_URL, SILSIGAN_PRODUCTION_PAGES_URL, SILSIGAN_PRODUCTION_API_BASE_URL are missing"
+    status: "partial"
+    evidence: "Staging web Worker silsigan-web-staging is deployed at https://silsigan-web-staging.dudqks0319.workers.dev and HTTP 200/read-only Pages smoke pass; remaining blockers are worker_deployment.staging.api, worker_deployment.production.api, worker_deployment.production.web, plus SILSIGAN_STAGING_PAGES_URL/SILSIGAN_STAGING_API_BASE_URL/SILSIGAN_PRODUCTION_PAGES_URL/SILSIGAN_PRODUCTION_API_BASE_URL env exports"
+  - name: "Staging web Worker deploy"
+    target: "cloudflare-workers-staging-web"
+    status: "pass"
+    evidence: "2026-06-27 pnpm cf:build pass, pnpm cf:web:dry-run:staging pass, wrangler deploy --config wrangler.jsonc --env staging uploaded silsigan-web-staging version 1f78ede2-80c6-4ac6-8388-305bfa8b4a1c, curl -I returned HTTP 200"
 
 security:
   secrets:
@@ -145,9 +149,9 @@ blockers:
   - id: "P0-SILSIGAN-DEPLOYMENT-URLS"
     severity: "P0"
     status: "open"
-    title: "Staging and production API/web Workers are not deployed and Pages/API deployment URLs are not configured."
+    title: "Staging web Worker is deployed, but staging API, production API/web, and Pages/API URL exports are not complete."
     owner: "me"
-    evidence: "worker_deployment.* plus deployment_url.* and *_URL_REQUIRED blockers"
+    evidence: "staging web pass at https://silsigan-web-staging.dudqks0319.workers.dev; remaining worker_deployment.staging.api, worker_deployment.production.api, worker_deployment.production.web plus deployment_url.* and *_URL_REQUIRED blockers"
     due: "before_staging_release_candidate"
   - id: "P0-SILSIGAN-PRODUCTION-D1-0002"
     severity: "P0"
@@ -181,4 +185,4 @@ blockers:
 next_action:
   owner: "me"
   command: "pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000"
-  description: "After adding the R2 subscription in Cloudflare Dashboard checkout, verify bucket visibility and continue to staging Worker/Pages URL evidence."
+  description: "After adding the R2 subscription in Cloudflare Dashboard checkout, verify bucket visibility, deploy the staging API Worker, export SILSIGAN_STAGING_PAGES_URL=https://silsigan-web-staging.dudqks0319.workers.dev plus SILSIGAN_STAGING_API_BASE_URL, and continue to real staging smoke."
