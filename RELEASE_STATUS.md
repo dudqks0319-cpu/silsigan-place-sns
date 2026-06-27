@@ -20,10 +20,11 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 121 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, and privacy/support URL guard coverage
+- `pnpm test -- tests/cloudflare-api.test.ts`: 122 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, privacy/support URL guard coverage, and real-device QA ledger guard coverage
 - `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
 - `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, and TestFlight review notes gates pass; current failure remains expected external blockers plus missing `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL`
+- `node scripts/release-state-check.mjs --strict`: real-device QA ledger structure passes against `docs/real-device-qa.md`; actual iPhone/Android evidence remains blocked until staging URLs and R2 pass
 - `pnpm release:gate -- --plan-only`: pass
 - `git diff --check`: pass
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
@@ -36,6 +37,7 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - P0: Cloudflare R2 subscription is not enabled: `R2_NOT_ENABLED`
 - P0: Missing staging/production Pages/API URLs: `deployment_url.*`, `URL_REQUIRED`
 - P0: Real staging Worker/Pages smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
+- P0: iPhone and Android real-device QA evidence is not captured: `docs/real-device-qa.md`
 - P1: Final privacy/support URLs are not configured: `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`
 
 ## 다음 행동

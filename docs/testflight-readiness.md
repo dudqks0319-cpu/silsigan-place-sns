@@ -1,6 +1,6 @@
 # #실시간 TestFlight readiness
 
-Updated: 2026-06-26
+Updated: 2026-06-27
 Source of truth: `docs/current-release-state.md`
 Operator packet: `docs/cloudflare-staging-operator-packet.md`
 
@@ -39,6 +39,7 @@ The following must be true before treating the app as TestFlight-ready:
 - [ ] Workers tail redaction is captured from staging and passes `pnpm smoke:tail-redaction`.
 - [x] TestFlight beta description, reviewer instructions, permission copy, UGC moderation notes, and staging evidence requirements are documented in `docs/testflight-review-notes.md` and guarded by `release:status`.
 - [x] Privacy/support URL readiness is guarded by `release:status`; missing, placeholder, non-HTTPS, localhost, query/fragment, credentialed, or duplicate values fail before external TestFlight review notes are submitted.
+- [x] Real-device QA ledger structure is guarded by `release:status`; missing iPhone/Android matrices, permission flows, UGC flows, redaction rules, crash checks, or evidence artifact names fail before TestFlight internal testing.
 - [ ] iPhone real-device QA in `docs/real-device-qa.md` covers launch, map display, current-location allow/deny, place detail, report create, comment create/delete, photo upload/preview, like/unlike, moderation report, and no raw coordinate/file-name leakage in visible UI.
 - [ ] Android real-device QA in `docs/real-device-qa.md` covers the same user flows if Android beta distribution is in scope.
 
@@ -65,7 +66,7 @@ Only consider App Store production submission after TestFlight evidence is clean
 | Missing staging/production URLs | Deploy Worker/Pages surfaces and export the four `SILSIGAN_*_URL` variables. |
 | Missing privacy/support URLs | Publish final HTTPS privacy/support pages and export `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL`. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
-| No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and optional Android device evidence after staging is live. |
+| No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and Android device evidence after staging is live. |
 
 ## 2026-06-26 Phase 1 Read-Only Probe Before D1 Apply
 
@@ -110,7 +111,7 @@ The D1 ranking smoke now covers repeated same-user click and like attempts again
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 121 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence; the TestFlight review notes smoke verifies beta copy, staging URL requirements, permission copy, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; the privacy/support URL smoke verifies required HTTPS URLs and rejects unsafe or placeholder values. |
+| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 122 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence; the TestFlight review notes smoke verifies beta copy, staging URL requirements, permission copy, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; the real-device QA ledger smoke verifies iPhone/Android matrices, staging environment fields, permission flows, UGC flows, redaction rules, crash checks, and artifact names; the privacy/support URL smoke verifies required HTTPS URLs and rejects unsafe or placeholder values. |
 
 ## 2026-06-26 UGC Moderation Runbook Gate
 
@@ -145,3 +146,11 @@ The privacy/support URL finalization blocker is now release-state checked instea
 | Probe | Result | Evidence |
 | --- | --- | --- |
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` to be distinct HTTPS URLs with no placeholders, credentials, query params, fragments, or localhost hosts. Current failure remains expected until final public URLs are available. |
+
+## 2026-06-27 Real-Device QA Ledger Gate
+
+The real-device QA ledger is now a release-state checked artifact. This closes the documentation-shape gap without claiming iPhone or Android QA has passed.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/real-device-qa.md` to cover staging Pages/API environment fields, `R2_NOT_ENABLED`, TestFlight and Android build selection, iPhone and Android QA matrices, Naver map display, location allow/deny, camera/photo library, photo upload/preview, like/unlike, ranking refresh, report/moderation, crash checks, redaction requirements, and artifact names. Current failure remains expected until live staging, real-device evidence, and external URLs are available. |

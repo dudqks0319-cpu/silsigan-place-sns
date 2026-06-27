@@ -274,6 +274,7 @@ test("release state check separates ready fixtures from external release blocker
     const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
     const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const realDeviceQaPath = join(tempDir, "real-device-qa.md");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       readyConfigPath,
@@ -299,6 +300,7 @@ test("release state check separates ready fixtures from external release blocker
     writeUgcModerationRunbook(ugcRunbookPath);
     writeCloudflareCostUsageRunbook(costUsageRunbookPath);
     writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeRealDeviceQaLedger(realDeviceQaPath);
     writeFileSync(
       externalStateReportPath,
       [
@@ -345,6 +347,7 @@ test("release state check separates ready fixtures from external release blocker
       `--ugc-runbook=${ugcRunbookPath}`,
       `--cost-usage-runbook=${costUsageRunbookPath}`,
       `--review-notes=${testFlightReviewNotesPath}`,
+      `--real-device-qa=${realDeviceQaPath}`,
     ], {
       encoding: "utf8",
       env: createReadyPreflightProcessEnv(),
@@ -372,6 +375,8 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_cost_usage.runbook.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.support" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy.support" && check.status === "pass"));
@@ -386,6 +391,7 @@ test("release state check separates ready fixtures from external release blocker
         `--ugc-runbook=${ugcRunbookPath}`,
         `--cost-usage-runbook=${costUsageRunbookPath}`,
         `--review-notes=${testFlightReviewNotesPath}`,
+        `--real-device-qa=${realDeviceQaPath}`,
         `--cloudflare-external-state-report=${externalStateReportPath}`,
         "--strict",
       ], {
@@ -596,6 +602,73 @@ test("release state check requires operable TestFlight review notes", () => {
       assert.ok(tokenCheck?.missingTokens?.includes("SILSIGAN_STAGING_PAGES_URL"));
       assert.ok(tokenCheck?.missingTokens?.includes("privacy policy URL"));
       assert.ok(tokenCheck?.missingTokens?.includes("UGC moderation"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires an operable real-device QA ledger", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-real-device-qa-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const incompleteRealDeviceQaPath = join(tempDir, "real-device-qa.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeFileSync(incompleteRealDeviceQaPath, "# #실시간 real-device QA ledger\n\n## Scope\n\niPhone only\n", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        `--real-device-qa=${incompleteRealDeviceQaPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when the real-device QA ledger is incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const tokenCheck = payload.checks.find((check) => check.name === "real_device_qa.ledger.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("real_device_qa.ledger.environment"));
+      assert.ok(payload.blockers.includes("real_device_qa.ledger.required_tokens"));
+      assert.equal(tokenCheck?.status, "fail");
+      assert.ok(tokenCheck?.missingTokens?.includes("Staging Pages URL"));
+      assert.ok(tokenCheck?.missingTokens?.includes("Android internal/debug build"));
+      assert.ok(tokenCheck?.missingTokens?.includes("Photo upload/preview"));
+      assert.ok(tokenCheck?.missingTokens?.includes("network-redacted.json"));
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -2440,6 +2513,63 @@ function writeTestFlightReviewNotes(path: string) {
       "## Stop Conditions",
       "",
       "Stop TestFlight expansion if R2, D1, Cloudflare staging, report handling, hide/delete moderation, privacy/support URLs, or real-device smoke evidence is missing.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writeRealDeviceQaLedger(path: string) {
+  writeFileSync(
+    path,
+    [
+      "# #실시간 real-device QA ledger",
+      "",
+      "## Scope",
+      "",
+      "This ledger records iPhone and Android real-device evidence required before TestFlight internal testing.",
+      "",
+      "## Environment",
+      "",
+      "| Item | Current state |",
+      "| --- | --- |",
+      "| Staging Pages URL | ready |",
+      "| Staging Worker API URL | ready |",
+      "| R2 staging bucket visibility | guarded against R2_NOT_ENABLED |",
+      "| TestFlight build | selected |",
+      "| Android internal/debug build | selected |",
+      "",
+      "## iPhone QA Matrix",
+      "",
+      "| Flow | Required evidence | Result |",
+      "| --- | --- | --- |",
+      "| Naver map display | Map or fallback marker hit-test works | pass |",
+      "| Location allow | Permission prompt, current marker, no raw coordinates | pass |",
+      "| Location deny | Region selection remains usable | pass |",
+      "| Camera and photo library | Camera permission and photo library permission are captured | pass |",
+      "| Photo upload/preview | Upload succeeds and preview loads | pass |",
+      "| Like/unlike | State changes are bounded | pass |",
+      "| Ranking refresh | TOP 10 refresh is recorded | pass |",
+      "| Report/moderation | Report and hide/delete moderation are recorded | pass |",
+      "| Crash check | No crash during the full script | pass |",
+      "",
+      "## Android QA Matrix",
+      "",
+      "| Flow | Required evidence | Result |",
+      "| --- | --- | --- |",
+      "| Naver map display | Map or fallback marker hit-test works | pass |",
+      "| Location allow | Permission prompt, current marker, no raw coordinates | pass |",
+      "| Location deny | Region selection remains usable | pass |",
+      "| Camera and photo library | Camera permission and photo library permission are captured | pass |",
+      "| Photo upload/preview | Upload succeeds and preview loads | pass |",
+      "| Like/unlike | State changes are bounded | pass |",
+      "| Ranking refresh | TOP 10 refresh is recorded | pass |",
+      "| Report/moderation | Report and hide/delete moderation are recorded | pass |",
+      "| Crash check | No crash during the full script | pass |",
+      "",
+      "## Evidence Naming",
+      "",
+      "Use `network-redacted.json`, `known-issues.md`, screenshots, and console logs. Do not store raw coordinates, original filenames, tokens, or anonymous IDs.",
       "",
     ].join("\n"),
     "utf8",

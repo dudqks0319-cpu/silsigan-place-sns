@@ -11,6 +11,7 @@ const DEFAULT_RELEASE_STATUS_PATH = "RELEASE_STATUS.md";
 const DEFAULT_UGC_MODERATION_RUNBOOK_PATH = "docs/ugc-moderation-runbook.md";
 const DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH = "docs/cloudflare-cost-usage-runbook.md";
 const DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH = "docs/testflight-review-notes.md";
+const DEFAULT_REAL_DEVICE_QA_LEDGER_PATH = "docs/real-device-qa.md";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
@@ -110,6 +111,35 @@ const REQUIRED_TESTFLIGHT_REVIEW_NOTES_TOKENS = [
   "hide",
   "delete",
 ];
+const REQUIRED_REAL_DEVICE_QA_LEDGER_SECTIONS = [
+  "# #실시간 real-device QA ledger",
+  "## Scope",
+  "## Environment",
+  "## iPhone QA Matrix",
+  "## Android QA Matrix",
+  "## Evidence Naming",
+];
+const REQUIRED_REAL_DEVICE_QA_LEDGER_TOKENS = [
+  "Staging Pages URL",
+  "Staging Worker API URL",
+  "R2_NOT_ENABLED",
+  "TestFlight build",
+  "Android internal/debug build",
+  "Naver map display",
+  "Location allow",
+  "Location deny",
+  "Camera",
+  "photo library",
+  "Photo upload/preview",
+  "Like/unlike",
+  "Ranking refresh",
+  "Report/moderation",
+  "Crash check",
+  "raw coordinates",
+  "original filenames",
+  "network-redacted.json",
+  "known-issues.md",
+];
 const REQUIRED_POLICY_SUPPORT_URLS = {
   SILSIGAN_PRIVACY_POLICY_URL: "privacy_policy",
   SILSIGAN_SUPPORT_URL: "support",
@@ -146,6 +176,7 @@ const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATU
 const ugcModerationRunbookPath = options.get("ugc-moderation-runbook") ?? options.get("ugc-runbook") ?? DEFAULT_UGC_MODERATION_RUNBOOK_PATH;
 const cloudflareCostUsageRunbookPath = options.get("cloudflare-cost-usage-runbook") ?? options.get("cost-usage-runbook") ?? DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH;
 const testFlightReviewNotesPath = options.get("testflight-review-notes") ?? options.get("review-notes") ?? DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH;
+const realDeviceQaLedgerPath = options.get("real-device-qa") ?? options.get("real-device-qa-ledger") ?? DEFAULT_REAL_DEVICE_QA_LEDGER_PATH;
 const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
@@ -155,6 +186,7 @@ await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath)
 await checkUgcModerationRunbook(ugcModerationRunbookPath);
 await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
 await checkTestFlightReviewNotes(testFlightReviewNotesPath);
+await checkRealDeviceQaLedger(realDeviceQaLedgerPath);
 checkPolicySupportUrls();
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
@@ -177,6 +209,7 @@ const summary = {
   ugcModerationRunbookPath,
   cloudflareCostUsageRunbookPath,
   testFlightReviewNotesPath,
+  realDeviceQaLedgerPath,
   policySupportUrlEnvNames: Object.keys(REQUIRED_POLICY_SUPPORT_URLS),
   checks,
   blockers: summarizeReleaseBlockers(blockers),
@@ -370,6 +403,36 @@ async function checkTestFlightReviewNotes(path) {
     { missingTokens },
   );
   recordNoSecretLikePatterns("testflight_review_notes.doc.redaction", notes, path);
+}
+
+async function checkRealDeviceQaLedger(path) {
+  let ledger = "";
+  try {
+    ledger = await readFile(path, "utf8");
+    record("real_device_qa.ledger", "pass", "Real-device QA ledger is present.");
+  } catch (error) {
+    record("real_device_qa.ledger", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_REAL_DEVICE_QA_LEDGER_SECTIONS) {
+    record(
+      `real_device_qa.ledger.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      ledger.includes(section) ? "pass" : "fail",
+      `Real-device QA ledger must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_REAL_DEVICE_QA_LEDGER_TOKENS.filter((token) => !ledger.includes(token));
+  record(
+    "real_device_qa.ledger.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "Real-device QA ledger covers iPhone/Android staging evidence, permissions, UGC flows, redaction, crash checks, and artifact naming."
+      : "Real-device QA ledger is missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("real_device_qa.ledger.redaction", ledger, path);
 }
 
 function checkPolicySupportUrls() {

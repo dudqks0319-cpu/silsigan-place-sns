@@ -1,6 +1,6 @@
 # #실시간 real-device QA ledger
 
-Updated: 2026-06-26
+Updated: 2026-06-27
 Status: blocked until Cloudflare staging URLs and R2 are ready.
 
 ## Scope
@@ -30,7 +30,8 @@ This ledger records the device evidence required before TestFlight internal test
 | Place detail | Place marker/ranking item opens detail sheet | blocked-staging |
 | Place click | Worker records click and UI remains responsive | blocked-staging |
 | Comment create/delete | Comment appears, realtime/polling state updates, delete hides it | blocked-staging |
-| Photo upload/preview | Camera/library permission, upload success, preview loads from staging API | blocked-staging |
+| Camera and photo library | Camera permission prompt, photo library permission prompt, denied-state recovery | blocked-staging |
+| Photo upload/preview | Camera/photo library permission, upload success, preview loads from staging API | blocked-staging |
 | Like/unlike | Count/state changes and duplicate action is bounded | blocked-staging |
 | Ranking refresh | Nationwide/region/map-bounds TOP 10 updates or cache evidence is recorded | blocked-staging |
 | Report/moderation | User report succeeds, admin hide/delete affects public UI | blocked-staging |
@@ -47,7 +48,11 @@ This ledger records the device evidence required before TestFlight internal test
 | Location deny | Region selection remains usable | blocked-staging |
 | Back navigation | Back exits sheets/modals predictably without losing app state | blocked-staging |
 | Place detail | Place marker/ranking item opens detail sheet | blocked-staging |
-| Comment/photo/like/report | Core UGC flows work against staging API | blocked-staging |
+| Camera and photo library | Camera permission prompt, photo library permission prompt, denied-state recovery | blocked-staging |
+| Photo upload/preview | Camera/photo library permission, upload success, preview loads from staging API | blocked-staging |
+| Like/unlike | Count/state changes and duplicate action is bounded | blocked-staging |
+| Ranking refresh | Nationwide/region/map-bounds TOP 10 updates or cache evidence is recorded | blocked-staging |
+| Report/moderation | User report succeeds, admin hide/delete affects public UI | blocked-staging |
 | Crash check | No crash during the full script | blocked-staging |
 
 ## Evidence Naming
@@ -60,4 +65,4 @@ Store future evidence under `artifacts/real-device-qa/<date>-<platform>-<build>/
 - `console-redacted.log`
 - `known-issues.md`
 
-Do not store raw tokens, exact user coordinates, original filenames, unredacted anonymous IDs, private emails, or Cloudflare account identifiers in evidence artifacts.
+Do not store raw tokens, raw coordinates, exact user coordinates, original filenames, unredacted anonymous IDs, private emails, or Cloudflare account identifiers in evidence artifacts.
