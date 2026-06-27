@@ -12,15 +12,17 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 
 - Version: `0.1.0`
 - Build: `not_applicable`
-- Git SHA: `5064e765763cb6a2bdabc45ac2f91f76c034cada`
+- Git SHA: `98f3c6d0ab63ec58f72b3d2c61798cc938b73be4`
 - Branch: `agent/silsigan-map-click-fix-20260622-1456`
 - Phase: `local_ready_external_blocked`
-- Pushed evidence baseline before this ledger update: `agent/silsigan-map-click-fix-20260622-1456` at `5064e765763cb6a2bdabc45ac2f91f76c034cada`
+- Pushed evidence baseline before this ledger update: `agent/silsigan-map-click-fix-20260622-1456` at `98f3c6d0ab63ec58f72b3d2c61798cc938b73be4`
 - Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED`, missing API Worker deployments, and API deployment URL blockers while staging/production D1 `0002` and staging/production web Worker deployments pass; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates; 2026-06-27 web Workers are deployed at `https://silsigan-web-staging.dudqks0319.workers.dev` and `https://silsigan-web-production.dudqks0319.workers.dev`, `.env.example` / operator docs define these public web/privacy/support URL values, and `apps/mobile` now exposes the same public privacy/support/staging web links in the TestFlight shell surface. `release:status` also guards the mobile TestFlight shell UI tokens, service-link source, Expo permission metadata, and `extra.silsigan` public URL shape.
 
 ## 통과한 증거
 
 - `pnpm test`: 126 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, privacy/support URL guard coverage, real-device QA ledger guard coverage, public privacy/support page guard coverage, mobile TestFlight shell guard coverage, auth-aware external-state blocker canonicalization, and Worker deployment absence classification
+- `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000`: expected blocked-external on 2026-06-27 with `R2_NOT_ENABLED`; no bucket creation or mutation was attempted
+- `pnpm cf:external-state`: expected blocked-external on 2026-06-27 in a plain shell; Wrangler auth, web Worker deployments, staging/production D1 `0002`, and Worker dry-runs pass, while `R2_NOT_ENABLED`, missing staging/production API Workers, and missing staging/production Pages/API URL shell exports remain blockers
 - `node scripts/release-state-check.mjs --strict` with `.env.example` sourced: expected blocked-external with `release_harness.ledger.open_blockers`, `deployment_url.staging.worker_api`, and `deployment_url.production.worker_api`; staging/production Pages URL and privacy/support URL shape gates pass
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
 - `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, TestFlight review notes, and mobile TestFlight shell gates pass; current failure remains expected open external blockers plus missing staging/production API URL values

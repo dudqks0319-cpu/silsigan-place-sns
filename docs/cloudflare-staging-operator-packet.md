@@ -83,7 +83,9 @@ pnpm cf:external-state
 pnpm cf:preflight
 ```
 
-Expected before URL setup: `cf:preflight` fails on missing URL env only. Expected after URL setup: R2, D1, and URL checks pass.
+Run `cf:external-state` and `cf:preflight` in the same shell where the public URL exports above are set. A plain shell currently fails the Pages URL checks even though the web Workers are deployed, because `SILSIGAN_STAGING_PAGES_URL` and `SILSIGAN_PRODUCTION_PAGES_URL` are not automatically loaded from `.env.example`.
+
+Expected before API URL setup: R2/D1/web Worker checks are separated, Pages URL checks pass only when the public URL values are exported, and API URL checks fail until the API Workers are deployed. Expected after R2 and API URL setup: R2, D1, and URL checks pass.
 
 ## Staging Smoke
 

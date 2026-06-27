@@ -75,6 +75,17 @@ Only consider App Store production submission after TestFlight evidence is clean
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
 | No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and Android device evidence after staging is live. |
 
+## 2026-06-27 Current Recheck After Mobile Guard Push
+
+The pushed branch head is now `98f3c6d`. Local gates still pass, and the remaining blockers are external Cloudflare account/deployment items.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `pnpm test` | pass | 126 tests passed, including mobile TestFlight shell guard coverage, external-state blocker canonicalization, R2/D1 evidence planners, Worker/D1 API behavior, ranking abuse controls, moderation/admin auth, and local smoke harness checks. |
+| `node scripts/release-state-check.mjs --strict` with `.env.example` sourced | blocked expected | Local docs, mobile TestFlight shell, web URL shape, privacy/support URL shape, D1/KV bindings, OpenNext config, and legacy-removal gates pass. Remaining failures are open release blockers plus missing staging/production API URL values. |
+| `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000` | blocked | Still fails on `cloudflare.r2.enabled` / `R2_NOT_ENABLED`; no bucket creation or mutation was attempted. |
+| `pnpm cf:external-state` in a plain shell | blocked | Wrangler auth, staging/production web Worker deployment history, staging/production D1 `0002` evidence, and Worker dry-runs pass. Current blockers are `R2_NOT_ENABLED`, missing staging/production API Workers, and missing staging/production Pages/API URL shell exports. |
+
 ## 2026-06-26 Phase 1 Read-Only Probe Before D1 Apply
 
 Read-only Cloudflare probes were rerun without mutating R2, D1, Worker, or Pages resources.
