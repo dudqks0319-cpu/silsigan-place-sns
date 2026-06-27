@@ -208,6 +208,27 @@ export function classifyD1MigrationResult(result, envName) {
   };
 }
 
+export function classifyCloudflareAuthResult(result) {
+  return {
+    name: "cloudflare.auth",
+    status: result.exitCode === 0 ? "pass" : "fail",
+    ...(result.exitCode === 0 ? {} : { code: "CLOUDFLARE_AUTH_REQUIRED" }),
+    message:
+      result.exitCode === 0
+        ? "Wrangler OAuth or API token is available."
+        : "Wrangler cannot read the Cloudflare account. Set CLOUDFLARE_API_TOKEN or complete Wrangler login before remote R2/D1 evidence checks.",
+  };
+}
+
+export function classifyAuthBlockedRemoteCheck(name, subject) {
+  return {
+    name,
+    status: "fail",
+    code: "CLOUDFLARE_AUTH_REQUIRED",
+    message: `${subject} was skipped because Wrangler Cloudflare auth is not available.`,
+  };
+}
+
 export function sanitizeWranglerOutput(value) {
   return String(value)
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
@@ -287,18 +308,20 @@ async function main() {
     record(checks, "wrangler.config.d1Databases", "fail", publicErrorMessage(error));
   }
 
+  let cloudflareAuthBlocked = false;
   if (!flags.has("skip-whoami")) {
     const whoami = await runCommand("npx", ["--yes", "wrangler", "whoami"], timeoutMs);
-    record(
-      checks,
-      "cloudflare.auth",
-      whoami.exitCode === 0 ? "pass" : "fail",
-      whoami.exitCode === 0 ? "Wrangler OAuth is available." : "Wrangler OAuth is not available or cannot read the account.",
-    );
+    const authCheck = classifyCloudflareAuthResult(whoami);
+    checks.push(authCheck);
+    cloudflareAuthBlocked = authCheck.status === "fail";
   }
 
   if (!flags.has("skip-r2")) {
-    checks.push(classifyR2BucketListResult(await runCommand("npx", ["--yes", "wrangler", "r2", "bucket", "list"], timeoutMs), expectedBucketNames));
+    checks.push(
+      cloudflareAuthBlocked
+        ? classifyAuthBlockedRemoteCheck("cloudflare.r2.enabled", "R2 bucket visibility check")
+        : classifyR2BucketListResult(await runCommand("npx", ["--yes", "wrangler", "r2", "bucket", "list"], timeoutMs), expectedBucketNames),
+    );
   }
 
   if (!flags.has("skip-deployment-urls")) {
@@ -315,6 +338,11 @@ async function main() {
           `workers/api wrangler config must define a D1 database_name for ${database.envName}.`,
           { code: "D1_DATABASE_NAME_REQUIRED" },
         );
+        continue;
+      }
+
+      if (cloudflareAuthBlocked) {
+        checks.push(classifyAuthBlockedRemoteCheck(`cloudflare.d1.${database.envName}.migration_0002`, `Remote ${database.envName} D1 migration evidence check`));
         continue;
       }
 

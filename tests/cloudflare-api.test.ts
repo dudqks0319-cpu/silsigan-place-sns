@@ -1711,6 +1711,24 @@ test("Cloudflare external state check requires configured R2 buckets when R2 is 
   assert.deepEqual(check.missingBuckets, ["silsigan-photos-production"]);
 });
 
+test("Cloudflare external state check canonicalizes missing auth before remote checks", () => {
+  const authCheck = externalState.classifyCloudflareAuthResult({
+    exitCode: 1,
+    stdout: "",
+    stderr:
+      "In a non-interactive environment, set CLOUDFLARE_API_TOKEN. Account user@example.com /accounts/2a0a85b82393ae6cfb2dea0b41853458 failed.",
+  });
+  const r2Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.r2.enabled", "R2 bucket visibility check");
+  const d1Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.d1.staging.migration_0002", "Remote staging D1 migration evidence check");
+
+  assert.equal(authCheck.name, "cloudflare.auth");
+  assert.equal(authCheck.status, "fail");
+  assert.equal(authCheck.code, "CLOUDFLARE_AUTH_REQUIRED");
+  assert.equal(JSON.stringify(authCheck).includes("user@example.com"), false);
+  assert.equal(JSON.stringify(authCheck).includes("2a0a85b82393ae6cfb2dea0b41853458"), false);
+  assert.deepEqual(externalState.summarizeExternalStateBlockers([authCheck, r2Check, d1Check]), ["CLOUDFLARE_AUTH_REQUIRED"]);
+});
+
 test("Cloudflare external state check classifies remote D1 migration and seed evidence", () => {
   const missingMigration = externalState.classifyD1MigrationResult(
     {
