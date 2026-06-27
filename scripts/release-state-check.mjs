@@ -14,6 +14,9 @@ const DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH = "docs/testflight-review-notes.md";
 const DEFAULT_REAL_DEVICE_QA_LEDGER_PATH = "docs/real-device-qa.md";
 const DEFAULT_PRIVACY_PAGE_PATH = "src/app/privacy/page.tsx";
 const DEFAULT_SUPPORT_PAGE_PATH = "src/app/support/page.tsx";
+const DEFAULT_MOBILE_APP_PATH = "apps/mobile/App.tsx";
+const DEFAULT_MOBILE_APP_CONFIG_PATH = "apps/mobile/app.json";
+const DEFAULT_MOBILE_EXPERIENCE_PATH = "apps/mobile/src/silsiganExperience.ts";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
@@ -169,6 +172,39 @@ const REQUIRED_SUPPORT_PAGE_TOKENS = [
   "support URL",
   "privacy policy URL",
 ];
+const REQUIRED_MOBILE_APP_TOKENS = [
+  "serviceLinks",
+  "베타 지원",
+  "개인정보",
+  "지원 문의",
+  "staging web",
+  "ExternalLinkButton",
+  "Linking.openURL",
+  "accessibilityRole=\"button\"",
+];
+const REQUIRED_MOBILE_EXPERIENCE_TOKENS = [
+  "ServiceLinks",
+  "serviceLinks",
+  "stagingWebUrl",
+  "privacyPolicyUrl",
+  "supportUrl",
+  "getServiceLinkReadiness",
+];
+const REQUIRED_MOBILE_IOS_INFO_PLIST_KEYS = [
+  "NSCameraUsageDescription",
+  "NSLocationWhenInUseUsageDescription",
+  "NSPhotoLibraryUsageDescription",
+];
+const REQUIRED_MOBILE_ANDROID_PERMISSIONS = [
+  "CAMERA",
+  "ACCESS_COARSE_LOCATION",
+  "ACCESS_FINE_LOCATION",
+];
+const REQUIRED_MOBILE_EXTRA_LINKS = {
+  stagingWebUrl: "staging_web",
+  privacyPolicyUrl: "privacy_policy",
+  supportUrl: "support",
+};
 const REQUIRED_POLICY_SUPPORT_URLS = {
   SILSIGAN_PRIVACY_POLICY_URL: "privacy_policy",
   SILSIGAN_SUPPORT_URL: "support",
@@ -208,6 +244,9 @@ const testFlightReviewNotesPath = options.get("testflight-review-notes") ?? opti
 const realDeviceQaLedgerPath = options.get("real-device-qa") ?? options.get("real-device-qa-ledger") ?? DEFAULT_REAL_DEVICE_QA_LEDGER_PATH;
 const privacyPagePath = options.get("privacy-page") ?? DEFAULT_PRIVACY_PAGE_PATH;
 const supportPagePath = options.get("support-page") ?? DEFAULT_SUPPORT_PAGE_PATH;
+const mobileAppPath = options.get("mobile-app") ?? DEFAULT_MOBILE_APP_PATH;
+const mobileAppConfigPath = options.get("mobile-app-config") ?? DEFAULT_MOBILE_APP_CONFIG_PATH;
+const mobileExperiencePath = options.get("mobile-experience") ?? DEFAULT_MOBILE_EXPERIENCE_PATH;
 const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
@@ -219,6 +258,7 @@ await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
 await checkTestFlightReviewNotes(testFlightReviewNotesPath);
 await checkRealDeviceQaLedger(realDeviceQaLedgerPath);
 await checkPublicPolicySupportPages(privacyPagePath, supportPagePath);
+await checkMobileTestFlightShell(mobileAppPath, mobileAppConfigPath, mobileExperiencePath);
 checkPolicySupportUrls();
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
@@ -244,6 +284,9 @@ const summary = {
   realDeviceQaLedgerPath,
   privacyPagePath,
   supportPagePath,
+  mobileAppPath,
+  mobileAppConfigPath,
+  mobileExperiencePath,
   policySupportUrlEnvNames: Object.keys(REQUIRED_POLICY_SUPPORT_URLS),
   checks,
   blockers: summarizeReleaseBlockers(blockers),
@@ -504,6 +547,118 @@ async function checkTokenizedPage(path, checkPrefix, label, requiredTokens, pass
     { missingTokens },
   );
   recordNoSecretLikePatterns(`${checkPrefix}.redaction`, content, path);
+}
+
+async function checkMobileTestFlightShell(mobileAppPath, mobileAppConfigPath, mobileExperiencePath) {
+  let appSource = "";
+  try {
+    appSource = await readFile(mobileAppPath, "utf8");
+    record("mobile_testflight.app", "pass", "Mobile TestFlight shell is present.");
+  } catch (error) {
+    record("mobile_testflight.app", "fail", publicErrorMessage(error));
+  }
+
+  if (appSource) {
+    const missingTokens = REQUIRED_MOBILE_APP_TOKENS.filter((token) => !appSource.includes(token));
+    record(
+      "mobile_testflight.app.required_tokens",
+      missingTokens.length === 0 ? "pass" : "fail",
+      missingTokens.length === 0
+        ? "Mobile shell exposes public beta support links through tappable controls."
+        : "Mobile shell is missing required TestFlight support UI tokens.",
+      { missingTokens },
+    );
+    recordNoSecretLikePatterns("mobile_testflight.app.redaction", appSource, mobileAppPath);
+  }
+
+  let experienceSource = "";
+  try {
+    experienceSource = await readFile(mobileExperiencePath, "utf8");
+    record("mobile_testflight.experience", "pass", "Mobile experience source is present.");
+  } catch (error) {
+    record("mobile_testflight.experience", "fail", publicErrorMessage(error));
+  }
+
+  if (experienceSource) {
+    const missingTokens = REQUIRED_MOBILE_EXPERIENCE_TOKENS.filter((token) => !experienceSource.includes(token));
+    record(
+      "mobile_testflight.experience.required_tokens",
+      missingTokens.length === 0 ? "pass" : "fail",
+      missingTokens.length === 0
+        ? "Mobile experience exports concrete service links and readiness metadata."
+        : "Mobile experience source is missing required service-link tokens.",
+      { missingTokens },
+    );
+    recordNoSecretLikePatterns("mobile_testflight.experience.redaction", experienceSource, mobileExperiencePath);
+  }
+
+  let appConfig = null;
+  try {
+    appConfig = JSON.parse(await readFile(mobileAppConfigPath, "utf8"));
+    record("mobile_testflight.app_config", "pass", "Mobile Expo app config is present.");
+  } catch (error) {
+    record("mobile_testflight.app_config", "fail", `Mobile Expo app config could not be read: ${publicErrorMessage(error)}`);
+  }
+
+  if (!isRecord(appConfig)) {
+    return;
+  }
+
+  const expoConfig = isRecord(appConfig.expo) ? appConfig.expo : {};
+  const iosConfig = isRecord(expoConfig.ios) ? expoConfig.ios : {};
+  const iosInfoPlist = isRecord(iosConfig.infoPlist) ? iosConfig.infoPlist : {};
+  const androidConfig = isRecord(expoConfig.android) ? expoConfig.android : {};
+  const androidPermissions = Array.isArray(androidConfig.permissions) ? androidConfig.permissions : [];
+  const extraConfig = isRecord(expoConfig.extra) ? expoConfig.extra : {};
+  const silsiganExtraConfig = isRecord(extraConfig.silsigan) ? extraConfig.silsigan : {};
+
+  const missingIosPermissionKeys = REQUIRED_MOBILE_IOS_INFO_PLIST_KEYS.filter((key) => !readyString(iosInfoPlist[key]));
+  record(
+    "mobile_testflight.app_config.ios_permissions",
+    missingIosPermissionKeys.length === 0 ? "pass" : "fail",
+    missingIosPermissionKeys.length === 0
+      ? "Mobile iOS permission usage strings cover location, camera, and photo library prompts."
+      : "Mobile iOS permission usage strings are incomplete.",
+    { missingPermissionKeys: missingIosPermissionKeys },
+  );
+
+  const missingAndroidPermissions = REQUIRED_MOBILE_ANDROID_PERMISSIONS.filter((permission) => !androidPermissions.includes(permission));
+  record(
+    "mobile_testflight.app_config.android_permissions",
+    missingAndroidPermissions.length === 0 ? "pass" : "fail",
+    missingAndroidPermissions.length === 0
+      ? "Mobile Android permissions cover location and camera access."
+      : "Mobile Android permissions are incomplete.",
+    { missingPermissions: missingAndroidPermissions },
+  );
+
+  const parsedMobileUrls = new Map();
+  for (const [fieldName, checkName] of Object.entries(REQUIRED_MOBILE_EXTRA_LINKS)) {
+    const parsed = parseRequiredHttpsUrl(
+      silsiganExtraConfig[fieldName],
+      `expo.extra.silsigan.${fieldName}`,
+      `mobile_testflight.app_config.urls.${checkName}`,
+    );
+    if (parsed) {
+      parsedMobileUrls.set(checkName, parsed.href);
+    }
+  }
+
+  recordSeparatedUrls(parsedMobileUrls, "privacy_policy", "support", "Mobile privacy policy and support URLs must be different.", "mobile_testflight.app_config.urls");
+  recordSeparatedUrls(parsedMobileUrls, "staging_web", "privacy_policy", "Mobile staging web URL and privacy URL must be distinct.", "mobile_testflight.app_config.urls");
+  recordSeparatedUrls(parsedMobileUrls, "staging_web", "support", "Mobile staging web URL and support URL must be distinct.", "mobile_testflight.app_config.urls");
+
+  if (experienceSource && parsedMobileUrls.size > 0) {
+    const missingUrlValues = [...parsedMobileUrls.values()].filter((url) => !experienceSource.includes(url));
+    record(
+      "mobile_testflight.experience.url_values",
+      missingUrlValues.length === 0 ? "pass" : "fail",
+      missingUrlValues.length === 0
+        ? "Mobile experience source and Expo app config expose the same public URLs."
+        : "Mobile experience source is missing public URL values from Expo app config.",
+      { missingUrlValues },
+    );
+  }
 }
 
 function checkPolicySupportUrls() {

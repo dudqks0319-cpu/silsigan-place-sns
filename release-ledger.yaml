@@ -18,18 +18,18 @@ candidate:
   build_number: "not_applicable"
   git_sha: "5064e765763cb6a2bdabc45ac2f91f76c034cada"
   branch: "agent/silsigan-map-click-fix-20260622-1456"
-  dirty_state: "main_worktree_dirty_on_feature_branch; staging/production web Workers deployed, public web URL exports documented, and mobile TestFlight shell public links prepared on agent branch"
+  dirty_state: "local_commits_unpushed_on_agent_branch; staging/production web Workers deployed, public web URL exports documented, and mobile TestFlight shell public links guarded by release:status"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
   - name: "Targeted Cloudflare API tests"
-    command: "pnpm test -- tests/cloudflare-api.test.ts"
+    command: "pnpm test"
     status: "pass"
-    evidence: "125 tests passed on 2026-06-27, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, real-device QA ledger guard coverage, public privacy/support page guard coverage, privacy/support URL guard coverage, auth-aware external-state blocker canonicalization, and Worker deployment absence classification"
+    evidence: "126 tests passed on 2026-06-27, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, real-device QA ledger guard coverage, public privacy/support page guard coverage, privacy/support URL guard coverage, mobile TestFlight shell guard coverage, auth-aware external-state blocker canonicalization, and Worker deployment absence classification"
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
-    evidence: "release_harness.ledger.open_blockers fails with remaining open P0 release blockers; release_harness.status.open_blocker_evidence, ugc_moderation.runbook.required_tokens, and ledger.next_actions.duplicate_lines pass and would fail status/ledger/runbook drift; 2026-06-27 cf:external-state after staging/production web deploys surfaces R2_NOT_ENABLED, remaining API worker_deployment blockers, and API deployment URL blockers while staging/production web deployment and staging/production D1 0002 pass"
+    evidence: "release_harness.ledger.open_blockers fails with remaining open P0 release blockers; release_harness.status.open_blocker_evidence, ugc_moderation.runbook.required_tokens, mobile_testflight.app/app_config/experience gates, and ledger.next_actions.duplicate_lines pass and would fail status/ledger/runbook/mobile drift; 2026-06-27 cf:external-state after staging/production web deploys surfaces R2_NOT_ENABLED, remaining API worker_deployment blockers, and API deployment URL blockers while staging/production web deployment and staging/production D1 0002 pass"
   - name: "UGC moderation runbook gate"
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
@@ -57,7 +57,7 @@ local_checks:
   - name: "Mobile TestFlight public URL shell"
     command: "cd apps/mobile && pnpm lint && pnpm typecheck && pnpm test"
     status: "pass_local"
-    evidence: "apps/mobile exposes privacy, support, and staging web link controls in the My tab, app.json extra.silsigan contains the same public URLs, and 5 mobile tests pass including release-shaped public URL coverage"
+    evidence: "apps/mobile exposes privacy, support, and staging web link controls in the My tab, app.json extra.silsigan contains the same public URLs, release:status guards mobile UI/service-link/app-config URL and permission metadata, and 5 mobile tests pass including release-shaped public URL coverage"
   - name: "Release gate plan"
     command: "pnpm release:gate -- --plan-only"
     status: "pass"
@@ -69,7 +69,7 @@ local_checks:
   - name: "Git diff whitespace check"
     command: "git diff --check"
     status: "pass"
-    evidence: "No output on 2026-06-25"
+    evidence: "No output on 2026-06-27"
 
 runtime_checks:
   - name: "Local Pages browser report"
@@ -139,7 +139,7 @@ security:
     evidence: "docs/testflight-review-notes.md defines beta app description, reviewer instructions, permissions, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; HTTPS privacy/support URL values are defined, but final external TestFlight notes still require release-shell export and confirmation"
   mobile_testflight_shell:
     status: "pass_local"
-    evidence: "apps/mobile My tab exposes public privacy/support/staging web links; expo config includes iOS camera/location/photo usage strings, Android camera/location permissions, and extra.silsigan public URLs; real-device QA remains blocked until staging API/R2 are ready"
+    evidence: "apps/mobile My tab exposes public privacy/support/staging web links; expo config includes iOS camera/location/photo usage strings, Android camera/location permissions, and extra.silsigan public URLs; release:status now fails if mobile TestFlight shell UI tokens, service links, permission metadata, or URL shape drift; real-device QA remains blocked until staging API/R2 are ready"
   real_device_qa:
     status: "blocked_expected"
     evidence: "docs/real-device-qa.md defines the iPhone/Android QA matrix and evidence artifact rules; actual iPhone/Android device evidence remains blocked until staging URLs and R2 pass"

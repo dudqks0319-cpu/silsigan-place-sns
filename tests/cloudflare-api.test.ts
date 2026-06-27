@@ -277,6 +277,9 @@ test("release state check separates ready fixtures from external release blocker
     const realDeviceQaPath = join(tempDir, "real-device-qa.md");
     const privacyPagePath = join(tempDir, "privacy-page.tsx");
     const supportPagePath = join(tempDir, "support-page.tsx");
+    const mobileAppPath = join(tempDir, "mobile-App.tsx");
+    const mobileAppConfigPath = join(tempDir, "mobile-app.json");
+    const mobileExperiencePath = join(tempDir, "mobile-silsiganExperience.ts");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       readyConfigPath,
@@ -304,6 +307,7 @@ test("release state check separates ready fixtures from external release blocker
     writeTestFlightReviewNotes(testFlightReviewNotesPath);
     writeRealDeviceQaLedger(realDeviceQaPath);
     writePublicPolicySupportPages(privacyPagePath, supportPagePath);
+    writeMobileTestFlightShell(mobileAppPath, mobileAppConfigPath, mobileExperiencePath);
     writeFileSync(
       externalStateReportPath,
       [
@@ -353,6 +357,9 @@ test("release state check separates ready fixtures from external release blocker
       `--real-device-qa=${realDeviceQaPath}`,
       `--privacy-page=${privacyPagePath}`,
       `--support-page=${supportPagePath}`,
+      `--mobile-app=${mobileAppPath}`,
+      `--mobile-app-config=${mobileAppConfigPath}`,
+      `--mobile-experience=${mobileExperiencePath}`,
     ], {
       encoding: "utf8",
       env: createReadyPreflightProcessEnv(),
@@ -389,6 +396,12 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.support" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy.support" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.app.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.experience.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.app_config.ios_permissions" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.app_config.android_permissions" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.app_config.urls.staging_web" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.experience.url_values" && check.status === "pass"));
 
     try {
       execFileSync(process.execPath, [
@@ -403,6 +416,9 @@ test("release state check separates ready fixtures from external release blocker
         `--real-device-qa=${realDeviceQaPath}`,
         `--privacy-page=${privacyPagePath}`,
         `--support-page=${supportPagePath}`,
+        `--mobile-app=${mobileAppPath}`,
+        `--mobile-app-config=${mobileAppConfigPath}`,
+        `--mobile-experience=${mobileExperiencePath}`,
         `--cloudflare-external-state-report=${externalStateReportPath}`,
         "--strict",
       ], {
@@ -755,6 +771,134 @@ test("release state check requires public privacy and support pages", () => {
       assert.ok(privacyTokenCheck?.missingTokens?.includes("Cloudflare D1"));
       assert.ok(supportTokenCheck?.missingTokens?.includes("TestFlight"));
       assert.ok(supportTokenCheck?.missingTokens?.includes("privacy_face"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires mobile TestFlight shell public links and permissions", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-mobile-testflight-shell-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const realDeviceQaPath = join(tempDir, "real-device-qa.md");
+    const privacyPagePath = join(tempDir, "privacy-page.tsx");
+    const supportPagePath = join(tempDir, "support-page.tsx");
+    const mobileAppPath = join(tempDir, "mobile-App.tsx");
+    const mobileAppConfigPath = join(tempDir, "mobile-app.json");
+    const mobileExperiencePath = join(tempDir, "mobile-silsiganExperience.ts");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeRealDeviceQaLedger(realDeviceQaPath);
+    writePublicPolicySupportPages(privacyPagePath, supportPagePath);
+    writeFileSync(mobileAppPath, "export default function App(){ return null; }\n", "utf8");
+    writeFileSync(mobileExperiencePath, "export const serviceLinks = {};\n", "utf8");
+    writeFileSync(
+      mobileAppConfigPath,
+      JSON.stringify(
+        {
+          expo: {
+            ios: {
+              infoPlist: {
+                NSCameraUsageDescription: "camera",
+                NSLocationWhenInUseUsageDescription: "location",
+              },
+            },
+            android: {
+              permissions: ["CAMERA"],
+            },
+            extra: {
+              silsigan: {
+                stagingWebUrl: "http://localhost:3000?debug=1",
+                privacyPolicyUrl: "https://silsigan.kr/privacy",
+                supportUrl: "https://silsigan.kr/privacy",
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        `--real-device-qa=${realDeviceQaPath}`,
+        `--privacy-page=${privacyPagePath}`,
+        `--support-page=${supportPagePath}`,
+        `--mobile-app=${mobileAppPath}`,
+        `--mobile-app-config=${mobileAppConfigPath}`,
+        `--mobile-experience=${mobileExperiencePath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when the mobile TestFlight shell is incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{
+          name: string;
+          status: string;
+          message?: string;
+          missingTokens?: string[];
+          missingPermissionKeys?: string[];
+          missingPermissions?: string[];
+          missingUrlValues?: string[];
+        }>;
+      };
+      const appTokenCheck = payload.checks.find((check) => check.name === "mobile_testflight.app.required_tokens");
+      const experienceTokenCheck = payload.checks.find((check) => check.name === "mobile_testflight.experience.required_tokens");
+      const iosPermissionCheck = payload.checks.find((check) => check.name === "mobile_testflight.app_config.ios_permissions");
+      const androidPermissionCheck = payload.checks.find((check) => check.name === "mobile_testflight.app_config.android_permissions");
+      const stagingUrlChecks = payload.checks.filter((check) => check.name === "mobile_testflight.app_config.urls.staging_web");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("mobile_testflight.app.required_tokens"));
+      assert.ok(payload.blockers.includes("mobile_testflight.experience.required_tokens"));
+      assert.ok(payload.blockers.includes("mobile_testflight.app_config.ios_permissions"));
+      assert.ok(payload.blockers.includes("mobile_testflight.app_config.android_permissions"));
+      assert.ok(payload.blockers.includes("mobile_testflight.app_config.urls.staging_web"));
+      assert.ok(payload.blockers.includes("mobile_testflight.app_config.urls.privacy_policy.support"));
+      assert.equal(appTokenCheck?.status, "fail");
+      assert.ok(appTokenCheck?.missingTokens?.includes("Linking.openURL"));
+      assert.equal(experienceTokenCheck?.status, "fail");
+      assert.ok(experienceTokenCheck?.missingTokens?.includes("getServiceLinkReadiness"));
+      assert.ok(iosPermissionCheck?.missingPermissionKeys?.includes("NSPhotoLibraryUsageDescription"));
+      assert.ok(androidPermissionCheck?.missingPermissions?.includes("ACCESS_FINE_LOCATION"));
+      assert.ok(stagingUrlChecks.some((check) => check.message?.includes("https")));
+      assert.ok(stagingUrlChecks.some((check) => check.message?.includes("query")));
+      assert.ok(stagingUrlChecks.some((check) => check.message?.includes("localhost")));
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -2730,6 +2874,86 @@ function writePublicPolicySupportPages(privacyPagePath: string, supportPagePath:
       "}",
       "",
     ].join("\n"),
+    "utf8",
+  );
+}
+
+function writeMobileTestFlightShell(mobileAppPath: string, mobileAppConfigPath: string, mobileExperiencePath: string) {
+  const stagingWebUrl = "https://silsigan-web-staging.dudqks0319.workers.dev";
+  const privacyPolicyUrl = "https://silsigan-web-staging.dudqks0319.workers.dev/privacy";
+  const supportUrl = "https://silsigan-web-staging.dudqks0319.workers.dev/support";
+
+  writeFileSync(
+    mobileAppPath,
+    [
+      'import { Linking, Pressable, Text } from "react-native";',
+      'import { serviceLinks } from "./src/silsiganExperience";',
+      "",
+      "export default function App() {",
+      "  return <>",
+      "    <Text>베타 지원</Text>",
+      "    <ExternalLinkButton label=\"개인정보\" url={serviceLinks.privacyPolicyUrl} />",
+      "    <ExternalLinkButton label=\"지원 문의\" url={serviceLinks.supportUrl} />",
+      "    <ExternalLinkButton label=\"staging web\" url={serviceLinks.stagingWebUrl} />",
+      "  </>;",
+      "}",
+      "",
+      "function ExternalLinkButton({ label, url }: { label: string; url: string }) {",
+      "  return <Pressable accessibilityRole=\"button\" onPress={() => void Linking.openURL(url)}><Text>{label}</Text></Pressable>;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  writeFileSync(
+    mobileExperiencePath,
+    [
+      "export type ServiceLinks = {",
+      "  stagingWebUrl: string;",
+      "  privacyPolicyUrl: string;",
+      "  supportUrl: string;",
+      "};",
+      "",
+      "export const serviceLinks: ServiceLinks = {",
+      `  stagingWebUrl: "${stagingWebUrl}",`,
+      `  privacyPolicyUrl: "${privacyPolicyUrl}",`,
+      `  supportUrl: "${supportUrl}",`,
+      "};",
+      "",
+      "export function getServiceLinkReadiness() {",
+      "  return { stagingWebUrl: true, privacyPolicyUrl: true, supportUrl: true };",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  writeFileSync(
+    mobileAppConfigPath,
+    JSON.stringify(
+      {
+        expo: {
+          ios: {
+            infoPlist: {
+              NSCameraUsageDescription: "camera",
+              NSLocationWhenInUseUsageDescription: "location",
+              NSPhotoLibraryUsageDescription: "photo library",
+            },
+          },
+          android: {
+            permissions: ["CAMERA", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+          },
+          extra: {
+            silsigan: {
+              stagingWebUrl,
+              privacyPolicyUrl,
+              supportUrl,
+            },
+          },
+        },
+      },
+      null,
+      2,
+    ),
     "utf8",
   );
 }
