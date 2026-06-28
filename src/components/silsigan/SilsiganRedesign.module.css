@@ -1,12 +1,9 @@
 .redesign {
   min-height: 100dvh;
-  background:
-    radial-gradient(circle at 20% 10%, rgba(39, 203, 107, 0.18), transparent 32%),
-    radial-gradient(circle at 85% 18%, rgba(59, 130, 246, 0.15), transparent 30%),
-    linear-gradient(135deg, #f7fbf8 0%, #edf5f1 44%, #f8fafc 100%);
-  color: #17211a;
+  background: #f7f8fa;
+  color: #111827;
   font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", sans-serif;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .redesign * {
@@ -49,7 +46,7 @@
   overflow: hidden;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 38px;
-  background: #f8faf9;
+  background: #f7f8fa;
   box-shadow: 0 34px 90px rgba(15, 23, 42, 0.18), inset 0 0 0 8px rgba(255, 255, 255, 0.64);
 }
 
@@ -62,7 +59,7 @@
   font-size: 12px;
   font-weight: 800;
   color: #111827;
-  background: rgba(248, 250, 249, 0.92);
+  background: rgba(247, 248, 250, 0.94);
   backdrop-filter: blur(14px);
   position: relative;
   z-index: 5;
@@ -75,7 +72,7 @@
 
 .topHeader {
   padding: 6px 20px 12px;
-  background: rgba(248, 250, 249, 0.88);
+  background: rgba(247, 248, 250, 0.92);
   backdrop-filter: blur(18px);
   border-bottom: 1px solid rgba(15, 23, 42, 0.05);
   position: relative;
@@ -93,8 +90,8 @@
   margin: 0 0 3px;
   color: #16a34a;
   font-size: 11px;
-  font-weight: 900;
-  letter-spacing: -0.01em;
+  font-weight: 800;
+  letter-spacing: 0;
 }
 
 .headerRow h1,
@@ -190,9 +187,97 @@
 .questionCard,
 .mapBottomSheet {
   border: 1px solid rgba(15, 23, 42, 0.06);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.06);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+}
+
+.homeHeaderCard {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: start;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.homeHeaderCard h2 {
+  margin: 0;
+  color: #111827;
+  font-size: 26px;
+  line-height: 1.08;
+}
+
+.homeHeaderCard span {
+  display: block;
+  margin-top: 8px;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 650;
+}
+
+.homeHeaderActions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.homeHeaderActions button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #f9fafb;
+  color: #111827;
+  display: grid;
+  place-items: center;
+}
+
+.feedControlSection,
+.photoFeedSection,
+.searchHeroCard,
+.uploadStepCard,
+.selectedPlaceCard {
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+}
+
+.feedControlSection {
+  display: grid;
+  gap: 10px;
+}
+
+.homeHashtagRow {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.homeHashtagRow::-webkit-scrollbar {
+  display: none;
+}
+
+.homeHashtagRow button {
+  min-height: 34px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #374151;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.homeHashtagActive {
+  background: #111827 !important;
+  color: #ffffff !important;
 }
 
 .searchCard {
@@ -606,12 +691,12 @@
 
 .feedTabs button,
 .hashtagCloud button {
-  border: 1px solid rgba(15, 23, 42, 0.06);
+  border: 1px solid #e5e7eb;
   border-radius: 999px;
-  background: #f8fafc;
-  color: #334155;
+  background: #ffffff;
+  color: #374151;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 800;
   white-space: nowrap;
 }
 
@@ -620,7 +705,7 @@
 }
 
 .activeFeedTab {
-  background: #0f172a !important;
+  background: #111827 !important;
   color: #fff !important;
 }
 
@@ -631,10 +716,10 @@
 
 .feedPostCard {
   overflow: hidden;
-  border: 1px solid rgba(15, 23, 42, 0.07);
-  border-radius: 22px;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
   background: #fff;
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
 
 .feedPhoto {
@@ -656,9 +741,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.38), transparent 23%),
-    linear-gradient(180deg, transparent, rgba(15, 23, 42, 0.34));
+  background: linear-gradient(180deg, transparent 28%, rgba(15, 23, 42, 0.44));
 }
 
 .feedPhoto span,
@@ -842,25 +925,165 @@
 
 .feedActions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .feedActions button {
   min-height: 38px;
   border: 0;
-  border-radius: 14px;
-  background: #f8fafc;
-  color: #334155;
+  border-radius: 12px;
+  background: #f9fafb;
+  color: #374151;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.1;
 }
 
 .feedActionActive {
-  background: #dcfce7 !important;
+  background: #ecfdf3 !important;
   color: #15803d !important;
+}
+
+.trendingPlaceList,
+.searchResultList {
+  display: grid;
+  gap: 8px;
+}
+
+.trendingPlaceList button,
+.searchResultList button {
+  width: 100%;
+  min-height: 58px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #ffffff;
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  text-align: left;
+}
+
+.trendingPlaceList button > span {
+  width: 26px;
+  height: 26px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: #111827;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.trendingPlaceList strong,
+.searchResultList strong {
+  display: block;
+  color: #111827;
+  font-size: 13px;
+}
+
+.trendingPlaceList small,
+.searchResultList span {
+  display: block;
+  margin-top: 3px;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.trendingPlaceList em {
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #15803d;
+  padding: 5px 7px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.searchHeroCard {
+  display: grid;
+  gap: 9px;
+}
+
+.searchHeroCard p {
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hotRegionGrid,
+.searchResultTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hotRegionGrid button,
+.searchResultTabs button {
+  min-height: 36px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #374151;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.searchResultTabs {
+  margin-bottom: 10px;
+}
+
+.searchPhotoGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.searchPhotoTile {
+  min-height: 138px;
+  border: 0;
+  border-radius: 16px;
+  color: #ffffff;
+  padding: 12px;
+  display: grid;
+  align-content: end;
+  text-align: left;
+  overflow: hidden;
+  position: relative;
+}
+
+.searchPhotoTile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 35%, rgba(17, 24, 39, 0.5));
+}
+
+.searchPhotoTile span,
+.searchPhotoTile strong {
+  position: relative;
+  z-index: 1;
+}
+
+.searchPhotoTile span {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.searchPhotoTile strong {
+  margin-top: 4px;
+  font-size: 13px;
 }
 
 .safetyInline {
@@ -2794,26 +3017,56 @@
   gap: 12px;
 }
 
+.uploadStepCard {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.uploadStepCard span {
+  min-height: 50px;
+  border-radius: 14px;
+  background: #f9fafb;
+  color: #374151;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  padding: 6px 4px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.15;
+  font-weight: 800;
+}
+
+.uploadStepCard strong {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #111827;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+}
+
 .uploadBox {
   min-height: 116px;
-  border: 1.5px dashed rgba(22, 163, 74, 0.34);
-  border-radius: 20px;
+  border: 1.5px dashed rgba(17, 24, 39, 0.22);
+  border-radius: 18px;
   display: grid;
   place-items: center;
   gap: 4px;
-  color: #16a34a;
-  background: #f0fdf4;
+  color: #111827;
+  background: #f9fafb;
 }
 
 .uploadAttached {
   border-style: solid;
-  background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.16), rgba(59, 130, 246, 0.14)),
-    #f8fafc;
+  background: #ecfdf3;
 }
 
 .uploadBox strong {
-  color: #14532d;
+  color: #111827;
 }
 
 .uploadBox span {
@@ -2824,7 +3077,7 @@
 
 .photoUploadCard button {
   padding: 11px 12px;
-  background: #0f172a;
+  background: #111827;
   color: #fff;
   display: inline-flex;
   align-items: center;
@@ -2834,6 +3087,40 @@
 
 .photoUploadCard .photoSafetyNotice {
   grid-column: 1 / -1;
+}
+
+.selectedPlaceCard {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.selectedPlaceCard svg {
+  color: #15803d;
+  margin-top: 2px;
+}
+
+.selectedPlaceCard span {
+  display: block;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.selectedPlaceCard strong {
+  display: block;
+  margin-top: 3px;
+  color: #111827;
+  font-size: 15px;
+}
+
+.selectedPlaceCard p {
+  margin: 4px 0 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 700;
 }
 
 .choiceGroup h3 {

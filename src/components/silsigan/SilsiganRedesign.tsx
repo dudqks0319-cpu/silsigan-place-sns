@@ -7,13 +7,11 @@ import {
   Bookmark,
   Camera,
   Car,
-  CheckCircle2,
   ChevronRight,
   CircleParking,
   Clock,
   CloudSun,
   Filter,
-  Flag,
   Hash,
   Heart,
   Home,
@@ -22,6 +20,7 @@ import {
   Map as MapIcon,
   MapPin,
   MessageCircleQuestion,
+  MoreHorizontal,
   Plus,
   Search,
   Settings,
@@ -70,7 +69,7 @@ import { RankingPanel } from "./RankingPanel";
 import { RegionTabs, type RegionTabId } from "./RegionTabs";
 import styles from "./SilsiganRedesign.module.css";
 
-type View = "home" | "map" | "place" | "report" | "ask" | "my";
+type View = "home" | "search" | "map" | "place" | "report" | "ask" | "my";
 type StatusTone = "calm" | "normal" | "busy" | "danger";
 type Category = ReportCategory;
 type ApiPlaceInput = ApiPlace & {
@@ -254,6 +253,7 @@ type WorkerComment = {
 
 type MyMenuTarget = "reports" | "questions" | "saved" | "hashtags" | "badges" | "safety";
 type FeedTab = (typeof feedTabLabels)[number];
+type SearchResultTab = "장소" | "해시태그" | "사진";
 
 type PlaceLikeResult = {
   placeId: string;
@@ -346,18 +346,16 @@ const presentationByPlaceId: Record<string, Pick<Place, "distance" | "x" | "y">>
 
 const navItems: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "home", label: "홈", icon: Home },
+  { id: "search", label: "검색", icon: Search },
+  { id: "report", label: "올리기", icon: Plus },
   { id: "map", label: "지도", icon: MapIcon },
-  { id: "report", label: "제보", icon: Plus },
-  { id: "ask", label: "질문", icon: MessageCircleQuestion },
   { id: "my", label: "마이", icon: User },
 ];
 
 const filterLabels = ["전체", "사람 많음", "주차 만차", "줄 있음", "사진 있음"];
-const feedTabLabels = ["전체", "내 주변", "팔로우", "관광지", "맛집", "주차", "야경"] as const;
-const reportChips = ["사람 없음", "보통", "많음", "매우 많음"];
-const parkingChips = ["널널", "여유 있음", "거의 없음", "만차"];
-const lineChips = ["없음", "보통", "있음", "매우 김"];
-const weatherChips = ["맑음", "흐림", "비", "실내"];
+const feedTabLabels = ["전체", "서울", "부산", "제주", "내 주변"] as const;
+const homeHashtagChips = ["주차만차", "웨이팅", "한산함", "사진스팟", "야경", "비오는날"] as const;
+const uploadStepLabels = ["사진 선택", "장소 선택", "해시태그 선택", "한 줄 입력", "올리기"] as const;
 const questionExamples = ["주차 자리 있나요?", "줄 많이 긴가요?", "사진으로 볼 수 있나요?", "아이랑 가도 괜찮나요?"];
 const launchRegionIds = new Set<RegionId>(["busan", "gyeongju", "ulsan"]);
 const launchRegionBounds: Partial<Record<RegionId, MapBounds>> = {
@@ -659,7 +657,7 @@ const fieldQuests: FieldQuest[] = [
 ];
 
 export default function SilsiganRedesign() {
-  const [activeView, setActiveView] = useState<View>("map");
+  const [activeView, setActiveView] = useState<View>("home");
   const phoneBodyRef = useRef<HTMLDivElement>(null);
   const [places, setPlaces] = useState<Place[]>([]);
   const [tourismPlaces, setTourismPlaces] = useState<Place[]>([]);
@@ -675,7 +673,7 @@ export default function SilsiganRedesign() {
   const [activeFilter, setActiveFilter] = useState(filterLabels[0]);
   const [reportText, setReportText] = useState("");
   const [questionText, setQuestionText] = useState("");
-  const [toast, setToast] = useState("현장 인증 제보를 올리면 물어보기권을 받을 수 있어요.");
+  const [toast, setToast] = useState("방금 올라온 장소 사진으로 오늘 갈 곳의 분위기를 확인하세요.");
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pickedCrowd, setPickedCrowd] = useState("많음");
@@ -1695,13 +1693,6 @@ export default function SilsiganRedesign() {
     setToast("도움돼요가 반영됐습니다. 피드 랭킹에 즉시 반영됩니다.");
   };
 
-  const toggleSavePost = (post: PublicPost) => {
-    setSavedPostIds((current) => toggleSetValue(current, post.id));
-    const isSaved = savedPostIds.has(post.id);
-    trackEvent("save_post", { postId: post.id, saved: !isSaved });
-    setToast(isSaved ? "저장을 해제했습니다." : "마이에 저장했습니다.");
-  };
-
   const sharePost = async (post: PublicPost) => {
     const shareUrl = `${getSiteUrl()}/share/post/${post.id}`;
     const shareText = `${post.shareCard.headline}\n${post.shareCard.body}\n${post.shareCard.hashtags.map((tag) => `#${tag}`).join(" ")}\n${shareUrl}`;
@@ -1827,24 +1818,29 @@ export default function SilsiganRedesign() {
                     selectedHashtagName={selectedHashtagName}
                     followedHashtagNames={followedHashtagNames}
                     helpfulPostIds={helpfulPostIds}
-                    savedPostIds={savedPostIds}
                     reports={reports}
                     onFlagPost={setPendingFlagPost}
                     onClearHashtagFilter={clearHashtagFilter}
                     onFollowHashtag={toggleHashtagFollow}
                     onHelpfulPost={markHelpful}
                     onOpenPlace={openPlace}
-                    onSavePost={toggleSavePost}
                     onSelectChallenge={selectChallenge}
                     onShareLaunchCard={shareLaunchCard}
                     onSharePost={sharePost}
                     onSelectHashtag={selectHashtag}
+                    onGoSearch={() => setActiveView("search")}
                     onGoMap={() => setActiveView("map")}
-                    onGoMapWithFilter={(filter) => {
-                      setActiveFilter(filter);
-                      setActiveView("map");
-                    }}
                     onGoReport={() => setActiveView("report")}
+                  />
+                )}
+                {activeView === "search" && (
+                  <SearchScreen
+                    hashtags={hashtags}
+                    places={places}
+                    posts={rankedPosts}
+                    onGoMap={() => setActiveView("map")}
+                    onOpenPlace={openPlace}
+                    onSelectHashtag={selectHashtag}
                   />
                 )}
                 {activeView === "map" && (
@@ -1903,14 +1899,12 @@ export default function SilsiganRedesign() {
                     onFollowPlace={() => togglePlaceFollow(selectedPlace)}
                     followedPlace={followedPlaceIds.has(selectedPlace.id)}
                     helpfulPostIds={helpfulPostIds}
-                    savedPostIds={savedPostIds}
                     onHelpfulPost={markHelpful}
                     onReport={() => setActiveView("report")}
                     onPhotoDelete={deletePlacePhoto}
                     onPhotoClick={clickPlacePhoto}
                     onPhotoUpload={uploadPlacePhoto}
                     onReportPhoto={openPhotoReport}
-                    onSavePost={toggleSavePost}
                     onSharePost={sharePost}
                     onSelectHashtag={selectHashtag}
                     workerPhotos={workerPhotos}
@@ -1921,19 +1915,11 @@ export default function SilsiganRedesign() {
                     isSubmitting={isSubmitting}
                     place={selectedPlace}
                     sensitiveWarning={sensitivePhotoWarningFor(selectedPlace)}
-                    pickedCrowd={pickedCrowd}
-                    pickedParking={pickedParking}
-                    pickedLine={pickedLine}
-                    pickedWeather={pickedWeather}
                     photoAttached={photoAttached}
                     locationVerificationStatus={locationVerificationStatus}
                     reportText={reportText}
                     recommendedTags={recommendedTags}
                     quickReportPresets={quickReportPresets}
-                    setPickedCrowd={setPickedCrowd}
-                    setPickedParking={setPickedParking}
-                    setPickedLine={setPickedLine}
-                    setPickedWeather={setPickedWeather}
                     setPhotoAttached={setPhotoAttached}
                     setReportText={setReportText}
                     onApplyPreset={applyQuickReportPreset}
@@ -2028,12 +2014,13 @@ function TopHeader({
   toast: string;
   onBack: () => void;
 }) {
-  const isDetail = ["place", "report", "ask"].includes(activeView);
+  const isDetail = ["place", "ask"].includes(activeView);
   const titleMap: Record<View, string> = {
-    home: "실시간",
+    home: "#실시간",
+    search: "검색",
     map: "지도",
     place: selectedPlace?.name ?? "장소 상세",
-    report: "현장 제보하기",
+    report: "사진 올리기",
     ask: "물어보기",
     my: "마이",
   };
@@ -2072,20 +2059,18 @@ function HomeScreen({
   selectedHashtagName,
   followedHashtagNames,
   helpfulPostIds,
-  savedPostIds,
   reports,
   onFlagPost,
   onClearHashtagFilter,
   onFollowHashtag,
   onHelpfulPost,
   onOpenPlace,
-  onSavePost,
   onSelectChallenge,
   onShareLaunchCard,
   onSharePost,
   onSelectHashtag,
+  onGoSearch,
   onGoMap,
-  onGoMapWithFilter,
   onGoReport,
 }: {
   places: Place[];
@@ -2096,109 +2081,79 @@ function HomeScreen({
   selectedHashtagName: string | null;
   followedHashtagNames: Set<string>;
   helpfulPostIds: Set<string>;
-  savedPostIds: Set<string>;
   reports: Report[];
   onFlagPost: (post: PublicPost) => void;
   onClearHashtagFilter: () => void;
   onFollowHashtag: (hashtagName: string) => void;
   onHelpfulPost: (post: PublicPost) => void;
   onOpenPlace: (place: Place) => void;
-  onSavePost: (post: PublicPost) => void;
   onSelectChallenge: (challenge: Challenge) => void;
   onShareLaunchCard: () => void;
   onSharePost: (post: PublicPost) => void;
   onSelectHashtag: (hashtagName: string) => void;
+  onGoSearch: () => void;
   onGoMap: () => void;
-  onGoMapWithFilter: (filter: string) => void;
   onGoReport: () => void;
 }) {
   const [activeFeedTab, setActiveFeedTab] = useState<FeedTab>("전체");
-  const featured = places[0];
   const placeById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
   const filteredPosts = useMemo(
     () =>
       posts
         .filter((post) => !post.hiddenAt)
         .filter((post) => postMatchesFeedTab(post, placeById.get(post.placeId), activeFeedTab, followedHashtagNames))
-        .slice(0, 4),
+        .slice(0, 8),
     [activeFeedTab, followedHashtagNames, placeById, posts],
   );
-  const goodCount = places.filter((place) => place.signal === "가도 좋음").length;
-  const cautionCount = places.filter((place) => place.signal === "혼잡 주의" || place.signal === "대기 보통").length;
-  const avoidCount = places.filter((place) => place.signal === "출발 전 확인").length;
+  const trendingPlaces = useMemo(
+    () =>
+      [...places]
+        .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name, "ko"))
+        .slice(0, 5),
+    [places],
+  );
 
   return (
     <div className={styles.screenStack}>
-      <section className={styles.searchCard}>
-        <div className={styles.searchBox}>
-          <Search size={18} />
-          <span>오늘 어디 가세요?</span>
+      <section className={styles.homeHeaderCard}>
+        <div>
+          <p className={styles.eyebrow}>방금 올라온 장소 사진</p>
+          <h2>#실시간</h2>
+          <span>지금 사람들이 올린 장소 사진으로, 오늘 갈 곳의 분위기를 확인하세요.</span>
         </div>
-        <div className={styles.keywordRow}>
-          {["광안리 주차", "황리단길 웨이팅", "태화강 산책"].map((keyword) => (
-            <button key={keyword} type="button" onClick={() => onSelectHashtag(keyword.replaceAll(" ", ""))}>{keyword}</button>
+        <div className={styles.homeHeaderActions}>
+          <button type="button" onClick={onGoSearch} aria-label="검색">
+            <Search size={17} />
+          </button>
+          <button type="button" onClick={onGoMap} aria-label="현재 위치 지도">
+            <LocateFixed size={17} />
+          </button>
+        </div>
+      </section>
+
+      <section className={styles.feedControlSection} aria-label="지역과 해시태그 필터">
+        <div className={styles.feedTabs}>
+          {feedTabLabels.map((tab) => (
+            <button key={tab} className={tab === activeFeedTab ? styles.activeFeedTab : ""} type="button" onClick={() => setActiveFeedTab(tab)} aria-pressed={tab === activeFeedTab}>{tab}</button>
           ))}
         </div>
-      </section>
-
-      <section className={`${styles.heroCard} ${styles.busyHero}`}>
-        <div>
-          <span className={styles.badge}>부산·경주·울산 주말 베타</span>
-          <h2>도착해서 후회하지 말고, 출발 전에 #실시간.</h2>
-          <p>광안리 주차, 황리단길 웨이팅, 해운대 혼잡도를 현장 제보로 먼저 확인합니다.</p>
-        </div>
-        <button type="button" onClick={() => featured && onOpenPlace(featured)} disabled={!featured}>
-          대표 현장 보기 <ChevronRight size={16} />
-        </button>
-      </section>
-
-      <LaunchShareCard onGoMap={onGoMap} onGoReport={onGoReport} onShare={onShareLaunchCard} />
-
-      <section className={styles.decisionRail} aria-label="현재 판단 요약">
-        <button type="button" onClick={() => onGoMapWithFilter("전체")}>
-          <CheckCircle2 size={17} />
-          <span>가도 좋음</span>
-          <strong>{goodCount}</strong>
-        </button>
-        <button type="button" onClick={() => onGoMapWithFilter("사람 많음")}>
-          <AlertTriangle size={17} />
-          <span>주의</span>
-          <strong>{cautionCount}</strong>
-        </button>
-        <button type="button" onClick={() => onGoMapWithFilter("주차 만차")}>
-          <ShieldAlert size={17} />
-          <span>지금은 비추</span>
-          <strong>{avoidCount}</strong>
-        </button>
-      </section>
-
-      <section className={styles.challengeSection}>
-        <SectionTitle title="이번 주 실시간 챌린지" caption="해시태그로 참여" />
-        <div className={styles.challengeList}>
-          {challenges.map((challenge) => (
-            <button key={challenge.id} type="button" onClick={() => onSelectChallenge(challenge)}>
-              <span>#{challenge.hashtagName}</span>
-              <strong>{challenge.title}</strong>
-              <p>{challenge.description}</p>
-              <small>{challenge.rewardBadge} 뱃지</small>
+        <div className={styles.homeHashtagRow}>
+          {homeHashtagChips.map((tag) => (
+            <button key={tag} className={selectedHashtagName === tag ? styles.homeHashtagActive : ""} type="button" onClick={() => onSelectHashtag(tag)}>
+              #{tag}
             </button>
           ))}
         </div>
       </section>
 
-      <section className={styles.sectionBlock}>
-        <SectionTitle title={selectedHashtagName ? `#${selectedHashtagName} 피드` : "실시간 사진 피드"} caption={selectedHashtagName ? `${filteredPosts.length}개 현장 게시물` : `${activeFeedTab} ${filteredPosts.length}건`} />
+      <section className={styles.photoFeedSection}>
+        <SectionTitle title={selectedHashtagName ? `#${selectedHashtagName}` : "지금 올라온 장소 사진"} caption={selectedHashtagName ? `${filteredPosts.length}장` : `${activeFeedTab} 사진 ${filteredPosts.length}장`} />
         {selectedHashtagName && (
           <div className={styles.feedFilterBanner}>
             <span>해시태그 필터 적용 중</span>
             <button type="button" onClick={onClearHashtagFilter}>전체 피드 보기</button>
           </div>
         )}
-        <div className={styles.feedTabs}>
-          {feedTabLabels.map((tab) => (
-            <button key={tab} className={tab === activeFeedTab ? styles.activeFeedTab : ""} type="button" onClick={() => setActiveFeedTab(tab)} aria-pressed={tab === activeFeedTab}>{tab}</button>
-          ))}
-        </div>
         <div className={styles.feedList}>
           {filteredPosts.map((post) => {
             const place = places.find((item) => item.id === post.placeId) ?? places[0];
@@ -2210,18 +2165,16 @@ function HomeScreen({
                 onFlag={() => onFlagPost(post)}
                 onHelpful={() => onHelpfulPost(post)}
                 onOpenPlace={() => onOpenPlace(place)}
-                onSave={() => onSavePost(post)}
                 onShare={() => onSharePost(post)}
                 onSelectHashtag={onSelectHashtag}
                 helpfulActive={helpfulPostIds.has(post.id)}
-                saved={savedPostIds.has(post.id)}
               />
             );
           })}
           {filteredPosts.length === 0 && (
             <LaunchInlineEmptyState
-              title={`${activeFeedTab} 조건에 맞는 현장 게시물이 없습니다`}
-              body="첫 2주는 운영자가 직접 제보를 시드하고 현장 리포터 20명을 모으는 단계입니다."
+              title={`${activeFeedTab} 조건에 맞는 사진이 없습니다`}
+              body="장소 사진을 올리면 이 피드와 해시태그 탐색에 바로 반영됩니다."
               onGoReport={onGoReport}
               onShare={onShareLaunchCard}
             />
@@ -2230,7 +2183,28 @@ function HomeScreen({
       </section>
 
       <section className={styles.sectionBlock}>
-        <SectionTitle title="인기 해시태그" caption="최대 5개 추천 구조" />
+        <SectionTitle title="지금 뜨는 곳 TOP 5" caption="최근 사진과 반응 기준" />
+        <div className={styles.trendingPlaceList}>
+          {trendingPlaces.map((place, index) => {
+            const postCount = posts.filter((post) => post.placeId === place.id && !post.hiddenAt).length;
+            const tags = posts.find((post) => post.placeId === place.id)?.hashtagNames.slice(0, 2) ?? [];
+
+            return (
+              <button key={place.id} type="button" onClick={() => onOpenPlace(place)}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{place.name}</strong>
+                  <small>{postCount}장 · {tags.map((tag) => `#${tag}`).join(" ") || place.signal}</small>
+                </div>
+                <em>{index < 2 ? "상승" : "신규"}</em>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="인기 해시태그" caption="탐색과 검색에 사용" />
         <div className={styles.hashtagCloud}>
           {hashtags.slice(0, 10).map((tag) => (
             <button key={tag.id} type="button" onClick={() => onSelectHashtag(tag.name)}>
@@ -2248,48 +2222,36 @@ function HomeScreen({
         )}
       </section>
 
-      <section className={styles.sectionBlock}>
-        <SectionTitle title="지금 많이 확인하는 곳" caption="제보 · 질문 · 길찾기 기준" />
-        <div className={styles.rankingList}>
-          {places.map((place, index) => (
-            <button key={place.id} className={styles.rankingItem} type="button" onClick={() => onOpenPlace(place)}>
-              <span className={styles.rank}>{index + 1}</span>
-              <div>
-                <strong>{place.name}</strong>
-                <p>{place.summary}</p>
-              </div>
-              <span className={styles.visitors}>{place.visitors}</span>
+      <section className={styles.ctaGrid}>
+        <button className={styles.ctaCard} type="button" onClick={onGoReport}>
+          <Camera size={20} />
+          <strong>사진 올리기</strong>
+          <span>5단계 안에 끝내기</span>
+        </button>
+        <button className={styles.ctaCard} type="button" onClick={onGoMap}>
+          <MapPin size={20} />
+          <strong>지도에서 보기</strong>
+          <span>작은 핀으로 보조 탐색</span>
+        </button>
+      </section>
+
+      <LaunchShareCard onGoMap={onGoMap} onGoReport={onGoReport} onShare={onShareLaunchCard} />
+
+      <section className={styles.challengeSection}>
+        <SectionTitle title="이번 주 해시태그" caption="사진 올릴 때 추천" />
+        <div className={styles.challengeList}>
+          {challenges.map((challenge) => (
+            <button key={challenge.id} type="button" onClick={() => onSelectChallenge(challenge)}>
+              <span>#{challenge.hashtagName}</span>
+              <strong>{challenge.title}</strong>
+              <p>{challenge.description}</p>
+              <small>{challenge.rewardBadge} 뱃지</small>
             </button>
           ))}
         </div>
       </section>
 
-      <section className={styles.ctaGrid}>
-        <button className={styles.ctaCard} type="button" onClick={onGoMap}>
-          <MapPin size={20} />
-          <strong>내 주변 지도</strong>
-          <span>상태 핀으로 보기</span>
-        </button>
-        <button className={styles.ctaCard} type="button" onClick={onGoReport}>
-          <Camera size={20} />
-          <strong>현장 제보</strong>
-          <span>물어보기권 받기</span>
-        </button>
-      </section>
-
-      {reports.length > 0 && (
-        <section className={styles.sectionBlock}>
-          <SectionTitle title="상태 제보 큐" caption="신고/숨김 대상 포함" />
-          <div className={styles.reportGrid}>
-            {reports.slice(0, 2).map((report) => {
-              const place = places.find((item) => item.id === report.placeId) ?? places[0];
-              return <LiveReportCard key={report.id} report={report} place={place} onOpen={() => onOpenPlace(place)} />;
-            })}
-          </div>
-        </section>
-      )}
-
-      <AnswerableQuestions questions={questions} places={places} />
+      {reports.length > 0 && <AnswerableQuestions questions={questions} places={places} />}
     </div>
   );
 }
@@ -2332,7 +2294,7 @@ function LaunchShareCard({
         </button>
         <button type="button" onClick={onGoReport}>
           <Camera size={15} />
-          현장 리포터 되기
+          사진 올리기
         </button>
       </div>
     </section>
@@ -2358,9 +2320,157 @@ function LaunchInlineEmptyState({
         <p>{body}</p>
       </div>
       <div>
-        <button type="button" onClick={onGoReport}>제보하기</button>
+        <button type="button" onClick={onGoReport}>사진 올리기</button>
         <button type="button" onClick={onShare}>공유하기</button>
       </div>
+    </div>
+  );
+}
+
+function SearchScreen({
+  hashtags,
+  onGoMap,
+  onOpenPlace,
+  onSelectHashtag,
+  places,
+  posts,
+}: {
+  hashtags: PublicHashtag[];
+  onGoMap: () => void;
+  onOpenPlace: (place: Place) => void;
+  onSelectHashtag: (hashtagName: string) => void;
+  places: Place[];
+  posts: PublicPost[];
+}) {
+  const [query, setQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<SearchResultTab>("장소");
+  const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
+  const placeById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
+  const matchingPlaces = useMemo(
+    () =>
+      places
+        .filter((place) => {
+          if (!normalizedQuery) {
+            return true;
+          }
+
+          return `${place.name} ${place.address} ${place.summary}`.toLocaleLowerCase("ko-KR").includes(normalizedQuery);
+        })
+        .slice(0, 8),
+    [normalizedQuery, places],
+  );
+  const matchingHashtags = useMemo(
+    () =>
+      hashtags
+        .filter((tag) => !normalizedQuery || tag.name.toLocaleLowerCase("ko-KR").includes(normalizedQuery))
+        .slice(0, 12),
+    [hashtags, normalizedQuery],
+  );
+  const matchingPosts = useMemo(
+    () =>
+      posts
+        .filter((post) => {
+          const place = placeById.get(post.placeId);
+          const source = `${place?.name ?? ""} ${place?.address ?? ""} ${post.caption ?? ""} ${post.hashtagNames.join(" ")}`.toLocaleLowerCase("ko-KR");
+
+          return !post.hiddenAt && (!normalizedQuery || source.includes(normalizedQuery));
+        })
+        .slice(0, 8),
+    [normalizedQuery, placeById, posts],
+  );
+  const popularHashtags = hashtags.slice(0, 8);
+  const hotRegions = ["성수", "광안리", "황리단길", "해운대", "제주", "부산"];
+
+  return (
+    <div className={styles.screenStack}>
+      <section className={styles.searchHeroCard}>
+        <div className={styles.searchBox}>
+          <Search size={18} />
+          <input
+            aria-label="장소 해시태그 지역 검색"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="장소, 해시태그, 지역 검색"
+          />
+        </div>
+        <p>장소 이름, #주차만차, 광안리처럼 입력해 보세요.</p>
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="인기 해시태그" caption="추천 선택 중심" />
+        <div className={styles.hashtagCloud}>
+          {popularHashtags.map((tag) => (
+            <button key={tag.id} type="button" onClick={() => onSelectHashtag(tag.name)}>
+              <Hash size={13} />
+              {tag.name}
+              <span>{tag.postCount}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="지금 뜨는 지역" caption="바로 지도 확인" />
+        <div className={styles.hotRegionGrid}>
+          {hotRegions.map((region) => (
+            <button key={region} type="button" onClick={onGoMap}>#{region}</button>
+          ))}
+        </div>
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="검색 결과" caption={query ? query : "최근 많이 본 장소"} />
+        <div className={styles.searchResultTabs} role="tablist" aria-label="검색 결과 종류">
+          {(["장소", "해시태그", "사진"] as SearchResultTab[]).map((tab) => (
+            <button key={tab} className={activeTab === tab ? styles.activeFeedTab : ""} type="button" onClick={() => setActiveTab(tab)} aria-pressed={activeTab === tab}>
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "장소" && (
+          <div className={styles.searchResultList}>
+            {matchingPlaces.map((place) => (
+              <button key={place.id} type="button" onClick={() => onOpenPlace(place)}>
+                <MapPin size={16} />
+                <div>
+                  <strong>{place.name}</strong>
+                  <span>{place.address} · {place.signal}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "해시태그" && (
+          <div className={styles.searchResultList}>
+            {matchingHashtags.map((tag) => (
+              <button key={tag.id} type="button" onClick={() => onSelectHashtag(tag.name)}>
+                <Hash size={16} />
+                <div>
+                  <strong>#{tag.name}</strong>
+                  <span>{tag.postCount}개 사진 · {tag.tagType}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "사진" && (
+          <div className={styles.searchPhotoGrid}>
+            {matchingPosts.map((post) => {
+              const place = placeById.get(post.placeId) ?? places[0];
+
+              return (
+                <button key={post.id} className={`${styles.searchPhotoTile} ${styles[place.tone]}`} type="button" onClick={() => onOpenPlace(place)}>
+                  <span>{place.name}</span>
+                  <strong>{post.photoLabel}</strong>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -2674,14 +2784,12 @@ function PlaceScreen({
   onFollowPlace,
   followedPlace,
   helpfulPostIds,
-  savedPostIds,
   onHelpfulPost,
   onPhotoDelete,
   onPhotoClick,
   onPhotoUpload,
   onReport,
   onReportPhoto,
-  onSavePost,
   onSharePost,
   onSelectHashtag,
   workerPhotos,
@@ -2698,14 +2806,12 @@ function PlaceScreen({
   onFollowPlace: () => void;
   followedPlace: boolean;
   helpfulPostIds: Set<string>;
-  savedPostIds: Set<string>;
   onHelpfulPost: (post: PublicPost) => void;
   onPhotoDelete: (place: Place, photo: PlacePhoto) => Promise<void>;
   onPhotoClick: (photo: PlacePhoto) => Promise<void>;
   onPhotoUpload: (place: Place, photo: PreparedPhotoUpload) => Promise<void>;
   onReport: () => void;
   onReportPhoto: (place: Place, photo: PlacePhoto) => void;
-  onSavePost: (post: PublicPost) => void;
   onSharePost: (post: PublicPost) => void;
   onSelectHashtag: (hashtagName: string) => void;
   workerPhotos: WorkerPhoto[];
@@ -2741,10 +2847,10 @@ function PlaceScreen({
         </div>
         <p>{place.summary}</p>
         <div className={styles.placeStatsRow}>
-          <StatBox label="오늘 제보" value={String(todayReports)} />
-          <StatBox label="사진" value={String(photoCount)} />
-          <StatBox label="질문" value={String(questions.filter((question) => question.placeId === place.id).length)} />
-          <StatBox label="팔로워" value={place.id === "busan-gwangalli" ? "1,240" : "320"} />
+          <StatBox label="최근 사진" value={String(photoCount)} />
+          <StatBox label="댓글" value={String(posts.reduce((sum, post) => sum + post.commentCount, 0))} />
+          <StatBox label="좋아요" value={String(posts.reduce((sum, post) => sum + post.helpfulCount, 0))} />
+          <StatBox label="3시간" value={String(todayReports)} />
         </div>
         <div className={styles.statusGrid}>
           <StatusMetric icon={Users} label="사람" value={place.crowd} />
@@ -2797,7 +2903,7 @@ function PlaceScreen({
 
       {(placeActiveTab === "실시간" || placeActiveTab === "사진") && (
         <section className={styles.sectionBlock}>
-          <SectionTitle title={placeActiveTab === "사진" ? "사진 있는 게시물" : "장소별 타임라인"} caption={`${tabPosts.length}건`} />
+        <SectionTitle title={placeActiveTab === "사진" ? "최근 사진" : "실시간 장소 피드"} caption={`${tabPosts.length}장`} />
           <div className={styles.feedList}>
             {tabPosts.map((post) => (
               <FeedPostCard
@@ -2807,14 +2913,12 @@ function PlaceScreen({
                 onFlag={() => onFlagPost(post)}
                 onHelpful={() => onHelpfulPost(post)}
                 onOpenPlace={() => undefined}
-                onSave={() => onSavePost(post)}
                 onShare={() => onSharePost(post)}
                 onSelectHashtag={onSelectHashtag}
                 helpfulActive={helpfulPostIds.has(post.id)}
-                saved={savedPostIds.has(post.id)}
               />
             ))}
-            {tabPosts.length === 0 && <p className={styles.emptyText}>{placeActiveTab === "사진" ? "아직 사진이 있는 게시물이 없습니다." : "아직 장소별 피드가 없습니다. 첫 제보를 남겨주세요."}</p>}
+            {tabPosts.length === 0 && <p className={styles.emptyText}>{placeActiveTab === "사진" ? "아직 사진이 없습니다." : "아직 장소 피드가 없습니다. 첫 사진을 올려주세요."}</p>}
           </div>
         </section>
       )}
@@ -2882,7 +2986,7 @@ function PlaceScreen({
       </section>
 
       <section className={styles.sectionBlock}>
-        <SectionTitle title="현장 인증 제보" caption="최근 3시간" />
+        <SectionTitle title="최근 3시간 요약" caption="사진과 상태 신호" />
         {(reports.length ? reports : [reportsFallback(place)]).map((report) => (
           <LiveReportCard key={report.id} report={report} place={place} />
         ))}
@@ -2898,7 +3002,7 @@ function PlaceScreen({
 
       <div className={styles.stickyActions}>
         <button className={styles.secondaryButton} type="button" onClick={onAsk}>물어보기</button>
-        <button className={styles.primaryButton} type="button" onClick={onReport}>사진/상태 제보</button>
+        <button className={styles.primaryButton} type="button" onClick={onReport}>사진 올리기</button>
       </div>
     </div>
   );
@@ -2908,19 +3012,11 @@ function ReportScreen({
   isSubmitting,
   place,
   sensitiveWarning,
-  pickedCrowd,
-  pickedParking,
-  pickedLine,
-  pickedWeather,
   photoAttached,
   locationVerificationStatus,
   reportText,
   recommendedTags,
   quickReportPresets,
-  setPickedCrowd,
-  setPickedParking,
-  setPickedLine,
-  setPickedWeather,
   setPhotoAttached,
   setReportText,
   onApplyPreset,
@@ -2930,19 +3026,11 @@ function ReportScreen({
   isSubmitting: boolean;
   place: Place;
   sensitiveWarning: string | null;
-  pickedCrowd: string;
-  pickedParking: string;
-  pickedLine: string;
-  pickedWeather: string;
   photoAttached: boolean;
   locationVerificationStatus: LocationVerificationStatus;
   reportText: string;
   recommendedTags: string[];
   quickReportPresets: QuickReportPreset[];
-  setPickedCrowd: (value: string) => void;
-  setPickedParking: (value: string) => void;
-  setPickedLine: (value: string) => void;
-  setPickedWeather: (value: string) => void;
   setPhotoAttached: (value: boolean) => void;
   setReportText: (value: string) => void;
   onApplyPreset: (preset: QuickReportPreset) => void;
@@ -2965,64 +3053,78 @@ function ReportScreen({
   return (
     <div className={styles.screenStack}>
       <section className={styles.formIntroCard}>
-        <BadgeCheck size={22} />
+        <Camera size={22} />
         <div>
-          <h2>{place.name} 현장 제보</h2>
-          <p>사진이 없어도 등록 가능하고, 현장 인증 때만 반경을 확인합니다.</p>
+          <h2>사진 올리기</h2>
+          <p>{place.name} 분위기를 사진, 해시태그, 한 줄로 남깁니다.</p>
         </div>
       </section>
 
-      <section className={styles.quickReportCard}>
-        <SectionTitle title="10초 빠른 제보" caption="버튼으로 자동 입력" />
-        <div className={styles.quickReportGrid}>
-          {quickReportPresets.map((preset) => (
-            <button key={preset.id} type="button" onClick={() => onApplyPreset(preset)}>
-              <strong>{preset.label}</strong>
-              <span>{preset.description}</span>
-            </button>
-          ))}
-        </div>
+      <section className={styles.uploadStepCard} aria-label="사진 올리기 단계">
+        {uploadStepLabels.map((label, index) => (
+          <span key={label}>
+            <strong>{index + 1}</strong>
+            {label}
+          </span>
+        ))}
       </section>
 
       <section className={styles.photoUploadCard}>
         <div className={`${styles.uploadBox} ${photoAttached ? styles.uploadAttached : ""}`}>
           <Camera size={26} />
-          <strong>{photoAttached ? "현장 사진 1장 추가됨" : "사진 없이 상태만 제보"}</strong>
-          <span>EXIF 제거 · 얼굴/차량번호 신고 시 숨김</span>
+          <strong>{photoAttached ? "사진 미리보기 준비됨" : "사진 선택"}</strong>
+          <span>업로드 전 EXIF를 제거합니다.</span>
         </div>
         <button type="button" onClick={() => setPhotoAttached(!photoAttached)}>
-          <ImageIcon size={16} /> {photoAttached ? "사진 빼기" : "사진 추가"}
+          <ImageIcon size={16} /> {photoAttached ? "사진 바꾸기" : "사진 선택"}
         </button>
         {sensitiveWarning && <p className={styles.photoSafetyNotice}>{sensitiveWarning}</p>}
       </section>
 
-      <ChoiceGroup title="사람 상태" options={reportChips} value={pickedCrowd} onChange={setPickedCrowd} />
-      <ChoiceGroup title="주차 상태" options={parkingChips} value={pickedParking} onChange={setPickedParking} />
-      <ChoiceGroup title="줄/대기 상태" options={lineChips} value={pickedLine} onChange={setPickedLine} />
-      <ChoiceGroup title="날씨/환경" options={weatherChips} value={pickedWeather} onChange={setPickedWeather} />
-
-      <section className={styles.textAreaCard}>
-        <label htmlFor="reportText">한 줄 코멘트</label>
-        <textarea
-          id="reportText"
-          value={reportText}
-          onChange={(event) => setReportText(event.target.value)}
-          placeholder="예: 주차장은 만차고, 해변 중앙은 사람이 많아요."
-          maxLength={120}
-        />
-        <span>{reportText.length}/120</span>
+      <section className={styles.selectedPlaceCard}>
+        <MapPin size={18} />
+        <div>
+          <span>어디인가요?</span>
+          <strong>{place.name}</strong>
+          <p>{place.address}</p>
+        </div>
       </section>
 
       <section className={styles.hashtagSuggestCard}>
         <div className={styles.sectionTitle}>
-          <h2>추천 해시태그</h2>
-          <span>{recommendedTags.length}/5</span>
+          <h2>지금 어떤가요?</h2>
+          <span>최대 5개</span>
         </div>
         <div className={styles.hashtagCloud}>
           {recommendedTags.map((tag) => (
             <button key={tag} type="button" onClick={() => toggleRecommendedTag(tag)}><Hash size={13} />{tag}</button>
           ))}
+          {quickReportPresets.slice(0, 5).map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => {
+                onApplyPreset(preset);
+                toggleRecommendedTag(preset.label);
+              }}
+            >
+              <Hash size={13} />
+              {preset.label}
+            </button>
+          ))}
         </div>
+      </section>
+
+      <section className={styles.textAreaCard}>
+        <label htmlFor="reportText">한 줄 남기기</label>
+        <textarea
+          id="reportText"
+          value={reportText}
+          onChange={(event) => setReportText(event.target.value)}
+          placeholder="예: 공영주차장 거의 찼어요."
+          maxLength={120}
+        />
+        <span>{reportText.length}/120</span>
       </section>
 
       <section className={`${styles.verifyCard} ${locationVerificationStatus === "verified" ? styles.verifyCardActive : ""}`}>
@@ -3037,7 +3139,7 @@ function ReportScreen({
       </section>
 
       <button className={styles.submitButton} type="button" onClick={onSubmit} disabled={isSubmitting}>
-        {isSubmitting ? "등록 중..." : "제보 등록하기"}
+        {isSubmitting ? "올리는 중..." : "올리기"}
       </button>
     </div>
   );
@@ -3468,17 +3570,17 @@ function OnboardingSheet({
         </button>
         <div>
           <span>처음 오셨나요?</span>
-          <h2>지도보다 먼저, 지금 상황을 보세요.</h2>
+          <h2>방금 올라온 장소 사진부터 보세요.</h2>
         </div>
         <ol>
-          <li>출발 전 10초로 사람, 주차, 줄을 확인합니다.</li>
-          <li>사진 없이도 상태만 제보할 수 있습니다.</li>
-          <li>현장 인증은 선택이고 정확한 좌표는 저장하지 않습니다.</li>
+          <li>사진으로 오늘 갈 곳의 분위기를 확인합니다.</li>
+          <li>해시태그로 주차, 웨이팅, 한산함을 탐색합니다.</li>
+          <li>올리기는 사진, 장소, 해시태그, 한 줄로 끝납니다.</li>
         </ol>
         <div className={styles.onboardingActions}>
           <button type="button" onClick={onClose}>바로 둘러보기</button>
-          <button type="button" onClick={onGoMap}>내 주변 보기</button>
-          <button type="button" onClick={onGoReport}>사진 없이 제보</button>
+          <button type="button" onClick={onGoReport}>사진 올리기</button>
+          <button type="button" onClick={onGoMap}>지도 보기</button>
         </div>
       </section>
     </div>
@@ -3542,22 +3644,18 @@ function FeedPostCard({
   onFlag,
   onHelpful,
   onOpenPlace,
-  onSave,
   onShare,
   onSelectHashtag,
   helpfulActive,
-  saved,
 }: {
   post: PublicPost;
   place: Place;
   onFlag: () => void;
   onHelpful: () => void;
   onOpenPlace: () => void;
-  onSave: () => void;
   onShare: () => void;
   onSelectHashtag: (hashtagName: string) => void;
   helpfulActive: boolean;
-  saved: boolean;
 }) {
   const verificationTooltip = post.locationVerified
     ? "현장 인증: 실제 GPS와 장소 반경만 검증하고 정확한 좌표는 저장하지 않습니다."
@@ -3573,7 +3671,7 @@ function FeedPostCard({
         <div className={styles.feedPostHeader}>
           <button type="button" onClick={onOpenPlace}>
             <strong>{place.name}</strong>
-            <span>{minutesAgo(post.createdAt)}</span>
+            <span>{minutesAgo(post.createdAt)} · {place.address}</span>
           </button>
           <div className={styles.feedPostChips}>
             <span className={`${styles.statusChip} ${styles[place.tone]}`}>{postStatusText(post)}</span>
@@ -3596,13 +3694,13 @@ function FeedPostCard({
         </div>
         <div className={styles.feedActions}>
           <button className={helpfulActive ? styles.feedActionActive : ""} type="button" onClick={onHelpful}>
-            <Heart size={15} />도움돼요 {post.helpfulCount}
+            <Heart size={15} />좋아요 {post.helpfulCount}
           </button>
-          <button className={saved ? styles.feedActionActive : ""} type="button" onClick={onSave}>
-            <Bookmark size={15} />{saved ? "저장됨" : "저장"}
+          <button type="button" onClick={onOpenPlace}>
+            <MessageCircleQuestion size={15} />댓글 {post.commentCount}
           </button>
           <button type="button" onClick={onShare}><Share2 size={15} />공유</button>
-          <button type="button" onClick={onFlag}><Flag size={15} />신고</button>
+          <button type="button" onClick={onFlag}><MoreHorizontal size={15} />더보기</button>
         </div>
         {post.safetyWarning && (
           <div className={styles.safetyInline}>
@@ -3636,19 +3734,6 @@ function AnswerableQuestions({ places, questions }: { places: Place[]; questions
           );
         })}
         {pendingQuestions.length === 0 && <p className={styles.emptyText}>아직 답변 가능한 질문이 없습니다.</p>}
-      </div>
-    </section>
-  );
-}
-
-function ChoiceGroup({ title, options, value, onChange }: { title: string; options: string[]; value: string; onChange: (value: string) => void }) {
-  return (
-    <section className={styles.choiceGroup}>
-      <h3>{title}</h3>
-      <div>
-        {options.map((option) => (
-          <button key={option} className={value === option ? styles.choiceActive : ""} type="button" onClick={() => onChange(option)}>{option}</button>
-        ))}
       </div>
     </section>
   );
@@ -4154,27 +4239,23 @@ function postMatchesFeedTab(post: PublicPost, place: Place | undefined, tab: Fee
     return true;
   }
 
+  if (tab === "서울") {
+    return place?.address.includes("서울") ?? false;
+  }
+
+  if (tab === "부산") {
+    return place?.region === "busan" || Boolean(place?.address.includes("부산"));
+  }
+
+  if (tab === "제주") {
+    return place?.address.includes("제주") ?? false;
+  }
+
   if (tab === "내 주변") {
     return distanceKmFromLabel(place?.distance) <= 5;
   }
 
-  if (tab === "팔로우") {
-    return post.hashtagNames.some((tag) => followedHashtagNames.has(tag));
-  }
-
-  if (tab === "관광지") {
-    return place?.category === "tourism";
-  }
-
-  if (tab === "맛집") {
-    return place?.category === "restaurant_cafe";
-  }
-
-  if (tab === "주차") {
-    return post.parkingStatus === "full" || post.parkingStatus === "limited" || post.hashtagNames.some((tag) => tag.includes("주차"));
-  }
-
-  return post.hashtagNames.some((tag) => tag.includes("야경"));
+  return post.hashtagNames.some((tag) => followedHashtagNames.has(tag));
 }
 
 function distanceKmFromLabel(distance: string | undefined) {
