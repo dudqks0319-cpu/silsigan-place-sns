@@ -10,6 +10,7 @@ export type SilsiganEventName =
   | "helpful_post"
   | "save_post"
   | "share_post"
+  | "share_launch_card"
   | "submit_post"
   | "submit_report"
   | "like_place"

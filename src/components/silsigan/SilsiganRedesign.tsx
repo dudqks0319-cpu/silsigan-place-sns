@@ -349,6 +349,25 @@ const parkingChips = ["널널", "여유 있음", "거의 없음", "만차"];
 const lineChips = ["없음", "보통", "있음", "매우 김"];
 const weatherChips = ["맑음", "흐림", "비", "실내"];
 const questionExamples = ["주차 자리 있나요?", "줄 많이 긴가요?", "사진으로 볼 수 있나요?", "아이랑 가도 괜찮나요?"];
+const launchFocusPlaces = [
+  "광안리해수욕장",
+  "해운대해수욕장",
+  "전포카페거리",
+  "서면",
+  "남포동/깡통시장",
+  "송정",
+  "황리단길",
+  "첨성대",
+  "동궁과 월지",
+  "태화강 국가정원",
+  "울산 삼산동",
+  "간절곶",
+] as const;
+const launchShareCard = {
+  headline: "도착해서 후회하지 말고, 출발 전에 #실시간",
+  body: "부산·경주·울산 먼저. 주차, 사람, 줄, 사진 제보를 출발 전 10초 안에 확인하세요.",
+  hashtags: ["광안리주차", "황리단길웨이팅", "해운대혼잡", "태화강산책"],
+} as const;
 const mapSearchFocusTargets: MapSearchFocusTarget[] = [
   {
     id: "ulsan-nam-samsan",
@@ -357,6 +376,14 @@ const mapSearchFocusTargets: MapSearchFocusTarget[] = [
     longitude: 129.3387,
     zoom: 14,
     keywords: ["울산 남구 삼산동", "울산남구삼산동", "삼산동", "삼산"],
+  },
+  {
+    id: "ulsan-ganjeolgot",
+    label: "울산 간절곶",
+    latitude: 35.359,
+    longitude: 129.36,
+    zoom: 14,
+    keywords: ["간절곶", "울산 간절곶"],
   },
   {
     id: "ulsan-nam",
@@ -383,12 +410,84 @@ const mapSearchFocusTargets: MapSearchFocusTarget[] = [
     keywords: ["부산 광안리", "광안리", "광안리해수욕장"],
   },
   {
+    id: "busan-haeundae",
+    label: "부산 해운대해수욕장",
+    latitude: 35.1587,
+    longitude: 129.1604,
+    zoom: 14,
+    keywords: ["해운대", "해운대해수욕장", "부산 해운대"],
+  },
+  {
+    id: "busan-jeonpo",
+    label: "부산 전포카페거리",
+    latitude: 35.1577,
+    longitude: 129.064,
+    zoom: 15,
+    keywords: ["전포", "전포카페거리", "부산 전포"],
+  },
+  {
+    id: "busan-seomyeon",
+    label: "부산 서면",
+    latitude: 35.1579,
+    longitude: 129.0592,
+    zoom: 14,
+    keywords: ["서면", "부산 서면"],
+  },
+  {
+    id: "busan-nampo",
+    label: "부산 남포동/깡통시장",
+    latitude: 35.1028,
+    longitude: 129.0287,
+    zoom: 14,
+    keywords: ["남포동", "깡통시장", "부평깡통시장", "부산 남포"],
+  },
+  {
+    id: "busan-songjeong",
+    label: "부산 송정",
+    latitude: 35.1786,
+    longitude: 129.1997,
+    zoom: 14,
+    keywords: ["송정", "송정해수욕장", "부산 송정"],
+  },
+  {
     id: "busan",
     label: "부산",
     latitude: 35.1796,
     longitude: 129.0756,
     zoom: 11,
     keywords: ["부산", "부산광역시"],
+  },
+  {
+    id: "gyeongju-hwangridan",
+    label: "경주 황리단길",
+    latitude: 35.8382,
+    longitude: 129.2098,
+    zoom: 15,
+    keywords: ["황리단길", "경주 황리단길"],
+  },
+  {
+    id: "gyeongju-cheomseongdae",
+    label: "경주 첨성대",
+    latitude: 35.8347,
+    longitude: 129.2189,
+    zoom: 15,
+    keywords: ["첨성대", "경주 첨성대"],
+  },
+  {
+    id: "gyeongju-donggung",
+    label: "경주 동궁과 월지",
+    latitude: 35.8346,
+    longitude: 129.2265,
+    zoom: 15,
+    keywords: ["동궁과월지", "동궁과 월지", "안압지", "경주 동궁"],
+  },
+  {
+    id: "gyeongju",
+    label: "경주",
+    latitude: 35.8562,
+    longitude: 129.2247,
+    zoom: 12,
+    keywords: ["경주", "경주시"],
   },
 ];
 const quickReportPresets: QuickReportPreset[] = [
@@ -441,6 +540,41 @@ const notificationEnabledKey = "silsigan.notificationEnabled.v1";
 const firstVisitSeenKey = "silsigan.firstVisitSeen.v1";
 const workerPhotoPlaceScopeLimit = 20;
 const workerPhotoLimitPerPlace = 12;
+
+async function copyTextToClipboard(text: string, clipboard?: Clipboard): Promise<"clipboard" | "exec_command"> {
+  if (clipboard) {
+    try {
+      await clipboard.writeText(text);
+      return "clipboard";
+    } catch {
+      return copyTextWithSelection(text);
+    }
+  }
+
+  return copyTextWithSelection(text);
+}
+
+function copyTextWithSelection(text: string): "exec_command" {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    const copied = document.execCommand("copy");
+    if (!copied) {
+      throw new Error("Clipboard copy command failed");
+    }
+    return "exec_command";
+  } finally {
+    textarea.remove();
+  }
+}
 const challenges: Challenge[] = [
   {
     id: "gwangalli-parking-help",
@@ -1568,12 +1702,8 @@ export default function SilsiganRedesign() {
         return;
       }
 
-      if (!browserNavigator.clipboard) {
-        throw new Error("Clipboard API unavailable");
-      }
-
-      await browserNavigator.clipboard.writeText(shareText);
-      trackEvent("share_post", { postId: post.id, method: "clipboard" });
+      const copyMethod = await copyTextToClipboard(shareText, browserNavigator.clipboard);
+      trackEvent("share_post", { postId: post.id, method: copyMethod });
       setToast("공유 카드 페이지 링크를 복사했습니다.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -1582,15 +1712,50 @@ export default function SilsiganRedesign() {
       }
 
       try {
-        if (!browserNavigator.clipboard) {
-          throw new Error("Clipboard API unavailable");
-        }
-
-        await browserNavigator.clipboard.writeText(shareText);
+        await copyTextToClipboard(shareText, browserNavigator.clipboard);
         trackEvent("share_post", { postId: post.id, method: "clipboard_fallback" });
         setToast("공유가 어려워 링크를 복사했습니다.");
       } catch {
-        setToast(shareText);
+        setToast("브라우저가 공유와 복사를 모두 막았습니다. 잠시 뒤 다시 시도해 주세요.");
+      }
+    }
+  };
+
+  const shareLaunchCard = async () => {
+    const shareUrl = getSiteUrl();
+    const shareText = `${launchShareCard.headline}\n${launchShareCard.body}\n${launchShareCard.hashtags.map((tag) => `#${tag}`).join(" ")}\n${shareUrl}`;
+    const browserNavigator = navigator as Navigator & {
+      clipboard?: Clipboard;
+      share?: (data: ShareData) => Promise<void>;
+    };
+
+    try {
+      if (browserNavigator.share) {
+        await browserNavigator.share({
+          title: launchShareCard.headline,
+          text: `${launchShareCard.body}\n${launchShareCard.hashtags.map((tag) => `#${tag}`).join(" ")}`,
+          url: shareUrl,
+        });
+        trackEvent("share_launch_card", { method: "native" });
+        setToast("부산·경주·울산 공유 카드를 열었습니다.");
+        return;
+      }
+
+      const copyMethod = await copyTextToClipboard(shareText, browserNavigator.clipboard);
+      trackEvent("share_launch_card", { method: copyMethod });
+      setToast("출발 전 10초 공유 문구를 복사했습니다.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setToast("공유를 취소했습니다.");
+        return;
+      }
+
+      try {
+        await copyTextToClipboard(shareText, browserNavigator.clipboard);
+        trackEvent("share_launch_card", { method: "clipboard_fallback" });
+        setToast("공유 시트 대신 문구를 복사했습니다.");
+      } catch {
+        setToast("브라우저가 공유와 복사를 모두 막았습니다. 잠시 뒤 다시 시도해 주세요.");
       }
     }
   };
@@ -1619,7 +1784,16 @@ export default function SilsiganRedesign() {
           <div className={styles.phoneBody} ref={phoneBodyRef}>
             {loading && <SharedEmptyState title="실시간 데이터를 불러오는 중입니다" body="최근 제보와 질문을 확인하고 있어요." />}
             {!loading && activeView !== "map" && places.length === 0 && (
-              <SharedEmptyState title="아직 이 지역 제보가 없습니다" body="다른 지역 탭을 선택하거나 첫 제보가 올라오면 최근 3시간 기준으로 랭킹과 지도에 반영됩니다." />
+              <SharedEmptyState
+                title="부산·경주·울산 첫 제보를 기다리는 중입니다"
+                body="광안리 주차, 황리단길 웨이팅, 태화강 산책처럼 출발 전 판단에 필요한 제보가 올라오면 바로 랭킹과 지도에 반영됩니다."
+                action={
+                  <div className={styles.emptyActionRow}>
+                    <button type="button" onClick={() => setActiveView("report")}>첫 제보 남기기</button>
+                    <button type="button" onClick={shareLaunchCard}>공유 카드 복사</button>
+                  </div>
+                }
+              />
             )}
             {!loading && (
               <>
@@ -1642,6 +1816,7 @@ export default function SilsiganRedesign() {
                     onOpenPlace={openPlace}
                     onSavePost={toggleSavePost}
                     onSelectChallenge={selectChallenge}
+                    onShareLaunchCard={shareLaunchCard}
                     onSharePost={sharePost}
                     onSelectHashtag={selectHashtag}
                     onGoMap={() => setActiveView("map")}
@@ -1848,7 +2023,7 @@ function TopHeader({
           {isDetail ? <X size={18} /> : <ShieldCheck size={18} />}
         </button>
         <div>
-          <p className={styles.eyebrow}>전국 실시간 베타</p>
+          <p className={styles.eyebrow}>부산·경주·울산 베타</p>
           <h1>{titleMap[activeView]}</h1>
         </div>
         <button
@@ -1884,6 +2059,7 @@ function HomeScreen({
   onOpenPlace,
   onSavePost,
   onSelectChallenge,
+  onShareLaunchCard,
   onSharePost,
   onSelectHashtag,
   onGoMap,
@@ -1907,6 +2083,7 @@ function HomeScreen({
   onOpenPlace: (place: Place) => void;
   onSavePost: (post: PublicPost) => void;
   onSelectChallenge: (challenge: Challenge) => void;
+  onShareLaunchCard: () => void;
   onSharePost: (post: PublicPost) => void;
   onSelectHashtag: (hashtagName: string) => void;
   onGoMap: () => void;
@@ -1944,14 +2121,16 @@ function HomeScreen({
 
       <section className={`${styles.heroCard} ${styles.busyHero}`}>
         <div>
-          <span className={styles.badge}>장소 기반 실시간 SNS</span>
-          <h2>예쁜 사진보다, 지금 가도 되는지 먼저.</h2>
-          <p>사진, 현장 인증, 주차, 줄, 질문을 장소별 피드로 모읍니다.</p>
+          <span className={styles.badge}>부산·경주·울산 주말 베타</span>
+          <h2>도착해서 후회하지 말고, 출발 전에 #실시간.</h2>
+          <p>광안리 주차, 황리단길 웨이팅, 해운대 혼잡도를 현장 제보로 먼저 확인합니다.</p>
         </div>
         <button type="button" onClick={() => featured && onOpenPlace(featured)} disabled={!featured}>
           대표 현장 보기 <ChevronRight size={16} />
         </button>
       </section>
+
+      <LaunchShareCard onGoMap={onGoMap} onGoReport={onGoReport} onShare={onShareLaunchCard} />
 
       <section className={styles.decisionRail} aria-label="현재 판단 요약">
         <button type="button" onClick={() => onGoMapWithFilter("전체")}>
@@ -2017,7 +2196,14 @@ function HomeScreen({
               />
             );
           })}
-          {filteredPosts.length === 0 && <p className={styles.emptyText}>{activeFeedTab} 조건에 맞는 현장 게시물이 없습니다.</p>}
+          {filteredPosts.length === 0 && (
+            <LaunchInlineEmptyState
+              title={`${activeFeedTab} 조건에 맞는 현장 게시물이 없습니다`}
+              body="첫 2주는 운영자가 직접 제보를 시드하고 현장 리포터 20명을 모으는 단계입니다."
+              onGoReport={onGoReport}
+              onShare={onShareLaunchCard}
+            />
+          )}
         </div>
       </section>
 
@@ -2082,6 +2268,77 @@ function HomeScreen({
       )}
 
       <AnswerableQuestions questions={questions} places={places} />
+    </div>
+  );
+}
+
+function LaunchShareCard({
+  onGoMap,
+  onGoReport,
+  onShare,
+}: {
+  onGoMap: () => void;
+  onGoReport: () => void;
+  onShare: () => void;
+}) {
+  return (
+    <section className={styles.launchShareCard} aria-label="첫 출시 지역 공유 카드">
+      <div className={styles.launchShareHeader}>
+        <span>출발 전 10초 공유 카드</span>
+        <strong>부산·경주·울산</strong>
+      </div>
+      <h2>{launchShareCard.headline}</h2>
+      <p>{launchShareCard.body}</p>
+      <div className={styles.launchMessageList} aria-label="핵심 확인 메시지">
+        <span>광안리 지금 주차 만차인지</span>
+        <span>황리단길 웨이팅 얼마나 긴지</span>
+        <span>해운대 사람 터졌는지 사진으로</span>
+      </div>
+      <div className={styles.launchPlaceGrid} aria-label="1차 집중 장소">
+        {launchFocusPlaces.map((placeName) => (
+          <span key={placeName}>{placeName}</span>
+        ))}
+      </div>
+      <div className={styles.launchShareActions}>
+        <button type="button" onClick={onShare}>
+          <Share2 size={15} />
+          공유 카드 복사
+        </button>
+        <button type="button" onClick={onGoMap}>
+          <MapPin size={15} />
+          지도에서 보기
+        </button>
+        <button type="button" onClick={onGoReport}>
+          <Camera size={15} />
+          현장 리포터 되기
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function LaunchInlineEmptyState({
+  body,
+  onGoReport,
+  onShare,
+  title,
+}: {
+  body: string;
+  onGoReport: () => void;
+  onShare: () => void;
+  title: string;
+}) {
+  return (
+    <div className={styles.launchInlineEmptyState}>
+      <Sparkles size={17} />
+      <div>
+        <strong>{title}</strong>
+        <p>{body}</p>
+      </div>
+      <div>
+        <button type="button" onClick={onGoReport}>제보하기</button>
+        <button type="button" onClick={onShare}>공유하기</button>
+      </div>
     </div>
   );
 }
@@ -2209,8 +2466,8 @@ function MapScreen({
     <div className={styles.mapScreen}>
       <section className={styles.mapHeroControls} aria-label="지도 탐색 컨트롤">
         <div>
-          <p className={styles.eyebrow}>전국 실시간 장소</p>
-          <h2>지도에서 보고, 바로 랭킹으로 좁히세요</h2>
+          <p className={styles.eyebrow}>부산·경주·울산 실시간 장소</p>
+          <h2>첫 출시 지역을 지도에서 보고, 바로 랭킹으로 좁히세요</h2>
         </div>
         <span className={styles.liveBadge}>{visibleLiveConnection === "live" ? "실시간 연결" : "Polling 갱신"}</span>
       </section>
@@ -2338,13 +2595,13 @@ function MapScreen({
 
       <section className={styles.rankingGrid} aria-label="실시간 장소 랭킹">
         <RankingPanel
-          title="전국 TOP 10"
+          title="첫 출시 TOP 10"
           places={nationwideTop}
           onOpenPlace={(place) => {
             const fullPlace = places.find((candidate) => candidate.id === place.id);
             if (fullPlace) onPreviewPlace(fullPlace, "ranking");
           }}
-          emptyBody="전국 후보 장소를 불러오는 중입니다. 데이터가 도착하면 즉시 순위가 채워집니다."
+          emptyBody="부산·경주·울산 후보 장소를 불러오는 중입니다. 데이터가 도착하면 즉시 순위가 채워집니다."
         />
         <RankingPanel
           title={`${regionLabel(activeRegion)} TOP 10`}
@@ -3090,7 +3347,7 @@ function OperatorPanel({
       <div className={styles.operatorHeader}>
         <div>
           <p className={styles.eyebrow}>Desktop Preview</p>
-          <h2>전국 현장 요약</h2>
+          <h2>부산·경주·울산 현장 요약</h2>
         </div>
       </div>
 
@@ -3827,10 +4084,10 @@ function locationPermissionCopy(permission: LocationPermissionState) {
 }
 
 function regionLabel(region: RegionTabId) {
-  if (region === "seoul") return "서울";
   if (region === "busan") return "부산";
-  if (region === "jeju") return "제주";
-  return "전국";
+  if (region === "gyeongju") return "경주";
+  if (region === "ulsan") return "울산";
+  return "첫 지역";
 }
 
 function postStatusText(post: Pick<PublicPost, "crowdLevel" | "parkingStatus">) {

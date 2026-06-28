@@ -2,13 +2,13 @@
 
 import styles from "./SilsiganRedesign.module.css";
 
-export type RegionTabId = "nationwide" | "seoul" | "busan" | "jeju";
+export type RegionTabId = "nationwide" | "busan" | "gyeongju" | "ulsan";
 
 const regionTabs: Array<{ id: RegionTabId; label: string; caption: string }> = [
-  { id: "nationwide", label: "전국", caption: "전체 랭킹" },
-  { id: "seoul", label: "서울", caption: "수도권 준비" },
-  { id: "busan", label: "부산", caption: "해안/축제" },
-  { id: "jeju", label: "제주", caption: "여행지" },
+  { id: "nationwide", label: "첫 지역", caption: "부산·경주·울산" },
+  { id: "busan", label: "부산", caption: "주차/해변" },
+  { id: "gyeongju", label: "경주", caption: "웨이팅/관광" },
+  { id: "ulsan", label: "울산", caption: "산책/도심" },
 ];
 
 export function RegionTabs({ activeRegion, onChange }: { activeRegion: RegionTabId; onChange: (region: RegionTabId) => void }) {

@@ -379,7 +379,7 @@ export function NaverMap<TPlace extends MapPlace>({
         className={`naver-map naver-map--live${mapHealthy ? "" : " naver-map--checking"}`}
         ref={mapRef}
         role="img"
-        aria-label="네이버 지도 기반 전국 실시간 장소 지도"
+        aria-label="네이버 지도 기반 부산·경주·울산 실시간 장소 지도"
         aria-busy={!mapHealthy}
       />
       {!mapHealthy && (
@@ -425,7 +425,7 @@ function FallbackMap<TPlace extends MapPlace>({
   return (
     <div
       className={`naver-map naver-map--fallback naver-map__fallback${overlay ? " naver-map--fallback-overlay" : ""}`}
-      aria-label="클릭 가능한 전국 실시간 장소 지도"
+      aria-label="클릭 가능한 부산·경주·울산 실시간 장소 지도"
     >
       <div className="naver-map__fallback-status">
         <strong>{fallbackStatusTitle({ empty, failureReason, loading })}</strong>
@@ -463,7 +463,7 @@ function FallbackMap<TPlace extends MapPlace>({
         <span className="naver-map__land naver-map__land--south" />
         <span className="naver-map__route naver-map__route--one" />
         <span className="naver-map__route naver-map__route--two" />
-        <span className="naver-map__label naver-map__label--seoul">서울</span>
+        <span className="naver-map__label naver-map__label--ulsan">울산</span>
         <span className="naver-map__label naver-map__label--gyeongju">경주</span>
         <span className="naver-map__label naver-map__label--busan">부산</span>
         {places.map((place, index) => {
@@ -561,7 +561,7 @@ function fallbackStatusTitle({
   if (loading) return "실제 지도 연결 중";
   if (failureReason === "timeout") return "지도 인증 확인 중";
   if (failureReason) return "지도 타일 표시 중";
-  return "전국 실시간 지도";
+  return "부산·경주·울산 실시간 지도";
 }
 
 function fallbackStatusBody({
