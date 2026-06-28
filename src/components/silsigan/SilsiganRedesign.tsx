@@ -52,6 +52,7 @@ import type {
   ParkingStatus,
   Place as ApiPlace,
   QuestionType,
+  RegionId,
   ReportCategory,
   ShareCard,
   UserReputation,
@@ -328,10 +329,19 @@ type MapSearchFocusTarget = MapFocusTarget & {
 };
 
 const presentationByPlaceId: Record<string, Pick<Place, "distance" | "x" | "y">> = {
-  "ulsan-taehwagang": { distance: "1.2km", x: 31, y: 47 },
-  "busan-gwangalli": { distance: "38km", x: 65, y: 39 },
-  "gyeongju-hwangridan": { distance: "29km", x: 52, y: 62 },
-  "ulsan-city-hall": { distance: "2.1km", x: 37, y: 74 },
+  "busan-gwangalli": { distance: "38km", x: 58, y: 44 },
+  "busan-haeundae": { distance: "42km", x: 68, y: 42 },
+  "busan-jeonpo-cafe": { distance: "39km", x: 54, y: 50 },
+  "busan-seomyeon": { distance: "39km", x: 51, y: 53 },
+  "busan-nampo-kkangtong": { distance: "45km", x: 47, y: 62 },
+  "busan-songjeong": { distance: "47km", x: 74, y: 38 },
+  "gyeongju-hwangridan": { distance: "29km", x: 43, y: 33 },
+  "gyeongju-cheomseongdae": { distance: "30km", x: 48, y: 35 },
+  "gyeongju-donggung-wolji": { distance: "31km", x: 52, y: 37 },
+  "ulsan-taehwagang": { distance: "1.2km", x: 32, y: 57 },
+  "ulsan-samsan": { distance: "2.4km", x: 37, y: 64 },
+  "ulsan-ganjeolgot": { distance: "28km", x: 66, y: 72 },
+  "ulsan-city-hall": { distance: "2.1km", x: 35, y: 69 },
 };
 
 const navItems: Array<{ id: View; label: string; icon: LucideIcon }> = [
@@ -349,6 +359,7 @@ const parkingChips = ["널널", "여유 있음", "거의 없음", "만차"];
 const lineChips = ["없음", "보통", "있음", "매우 김"];
 const weatherChips = ["맑음", "흐림", "비", "실내"];
 const questionExamples = ["주차 자리 있나요?", "줄 많이 긴가요?", "사진으로 볼 수 있나요?", "아이랑 가도 괜찮나요?"];
+const launchRegionIds = new Set<RegionId>(["busan", "gyeongju", "ulsan"]);
 const launchFocusPlaces = [
   "광안리해수욕장",
   "해운대해수욕장",
@@ -418,7 +429,7 @@ const mapSearchFocusTargets: MapSearchFocusTarget[] = [
     keywords: ["해운대", "해운대해수욕장", "부산 해운대"],
   },
   {
-    id: "busan-jeonpo",
+    id: "busan-jeonpo-cafe",
     label: "부산 전포카페거리",
     latitude: 35.1577,
     longitude: 129.064,
@@ -474,7 +485,7 @@ const mapSearchFocusTargets: MapSearchFocusTarget[] = [
     keywords: ["첨성대", "경주 첨성대"],
   },
   {
-    id: "gyeongju-donggung",
+    id: "gyeongju-donggung-wolji",
     label: "경주 동궁과 월지",
     latitude: 35.8346,
     longitude: 129.2265,
@@ -833,18 +844,22 @@ export default function SilsiganRedesign() {
       const mappedQuestions = mapQuestions(apiQuestions);
       const mappedBasePlaces = mapPlaces(apiPlaces, mappedReports, mappedQuestions);
       const mappedTourismPlaces = mapPlaces(uniqueApiPlacesById(apiTourismPlaces, new Set(apiPlaces.map((place) => place.id))), [], []);
-      const mappedPlaces = mergePlaceLists(mappedBasePlaces, mappedTourismPlaces);
+      const mappedPlaces = mergePlaceLists(filterPlacesByRegion(mappedBasePlaces, activeRegion), filterPlacesByRegion(mappedTourismPlaces, activeRegion));
       const scopedPlaceIds = mappedPlaces.map((place) => place.id);
+      const scopedPlaceIdSet = new Set(scopedPlaceIds);
+      const scopedReports = mappedReports.filter((report) => scopedPlaceIdSet.has(report.placeId));
+      const scopedPosts = apiPosts.filter((post) => scopedPlaceIdSet.has(post.placeId));
+      const scopedQuestions = mappedQuestions.filter((question) => scopedPlaceIdSet.has(question.placeId));
       const apiWorkerPhotos = cloudflareApiConfigured ? await fetchWorkerPhotosForPlaces(scopedPlaceIds) : [];
 
       setPlaces(mappedPlaces);
-      setTourismPlaces(mappedTourismPlaces);
-      setReports(mappedReports);
-      setPosts(apiPosts);
-      setAllPosts(apiPosts);
+      setTourismPlaces(filterPlacesByRegion(mappedTourismPlaces, activeRegion));
+      setReports(scopedReports);
+      setPosts(scopedPosts);
+      setAllPosts(scopedPosts);
       setWorkerPhotos((current) => mergeWorkerPhotos(apiWorkerPhotos, filterWorkerPhotosByPlaceIds(current, scopedPlaceIds)).slice(0, 80));
-      setHashtags(apiHashtags);
-      setQuestions(mappedQuestions);
+      setHashtags(filterHashtagsByPosts(apiHashtags, scopedPosts));
+      setQuestions(scopedQuestions);
       setMyQuestions(apiMyQuestions);
       setSelectedPlaceId((current) => mappedPlaces.find((place) => place.id === current)?.id ?? mappedPlaces[0]?.id ?? "");
     } catch (error) {
@@ -856,7 +871,7 @@ export default function SilsiganRedesign() {
         setLoading(false);
       }
     }
-  }, [activeDataRegionId, cloudflareApiConfigured]);
+  }, [activeDataRegionId, activeRegion, cloudflareApiConfigured]);
 
   useEffect(() => {
     if (phoneBodyRef.current) {
@@ -3901,10 +3916,16 @@ function normalizePlaceSearchQuery(query: string | null | undefined) {
 
 function filterPlacesByRegion(places: Place[], region: RegionTabId) {
   if (region === "nationwide") {
-    return places;
+    return places.filter((place) => launchRegionIds.has(place.region));
   }
 
   return places.filter((place) => place.region === region);
+}
+
+function filterHashtagsByPosts(hashtags: PublicHashtag[], posts: PublicPost[]) {
+  const visibleHashtagNames = new Set(posts.flatMap((post) => post.hashtagNames));
+
+  return hashtags.filter((hashtag) => visibleHashtagNames.has(hashtag.name));
 }
 
 function rankPlaces(places: Place[]) {

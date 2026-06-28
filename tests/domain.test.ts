@@ -335,6 +335,26 @@ test("local demo lists support region-scoped bounded reads", () => {
   assert.equal(listQuestions({ regionId: "busan", limit: 100 }).every((question: { placeId: string }) => busanPlaceIds.has(question.placeId)), true);
 });
 
+test("local demo includes the Busan Gyeongju Ulsan first-launch focus places", () => {
+  const expectedPlaceIds = new Set([
+    "busan-gwangalli",
+    "busan-haeundae",
+    "busan-jeonpo-cafe",
+    "busan-seomyeon",
+    "busan-nampo-kkangtong",
+    "busan-songjeong",
+    "gyeongju-hwangridan",
+    "gyeongju-cheomseongdae",
+    "gyeongju-donggung-wolji",
+    "ulsan-taehwagang",
+    "ulsan-samsan",
+    "ulsan-ganjeolgot",
+  ]);
+  const placeIds = new Set(listPlaces({ limit: 100 }).map((place: { id: string }) => place.id));
+
+  assert.deepEqual([...expectedPlaceIds].filter((placeId) => !placeIds.has(placeId)), []);
+});
+
 test("shared post lookup reads from Worker API when configured", async () => {
   const requests: Request[] = [];
   const workerPost = {

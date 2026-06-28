@@ -19,8 +19,12 @@ INSERT INTO areas (id, region_id, name)
 VALUES
   ('seoul-yeongdeungpo', 'seoul', '영등포구'),
   ('busan-suyeong', 'busan', '수영구'),
+  ('busan-haeundae', 'busan', '해운대구'),
+  ('busan-busanjin', 'busan', '부산진구'),
+  ('busan-jung', 'busan', '중구'),
   ('ulsan-jung', 'ulsan', '중구'),
   ('ulsan-nam', 'ulsan', '남구'),
+  ('ulsan-ulju', 'ulsan', '울주군'),
   ('gyeongju-hwango', 'gyeongju', '황오동'),
   ('jeju-jeju', 'jeju', '제주시')
 ON CONFLICT(id) DO UPDATE SET
@@ -39,8 +43,17 @@ ON CONFLICT(id) DO UPDATE SET
 INSERT INTO places (id, area_id, region_id, category_id, name, address, latitude, longitude, coordinate_status, launch_stage, is_active)
 VALUES
   ('busan-gwangalli', 'busan-suyeong', 'busan', 'tourism', '광안리해수욕장', '부산 수영구 광안해변로', 35.1532, 129.1186, 'verified', 'active', 1),
+  ('busan-haeundae', 'busan-haeundae', 'busan', 'tourism', '해운대해수욕장', '부산 해운대구 우동', 35.1587, 129.1604, 'verified', 'active', 1),
+  ('busan-jeonpo-cafe', 'busan-busanjin', 'busan', 'restaurant_cafe', '전포카페거리', '부산 부산진구 전포대로', 35.1577, 129.0640, 'verified', 'active', 1),
+  ('busan-seomyeon', 'busan-busanjin', 'busan', 'restaurant_cafe', '서면', '부산 부산진구 중앙대로', 35.1579, 129.0592, 'verified', 'active', 1),
+  ('busan-nampo-kkangtong', 'busan-jung', 'busan', 'restaurant_cafe', '남포동/깡통시장', '부산 중구 부평1길', 35.1028, 129.0287, 'verified', 'active', 1),
+  ('busan-songjeong', 'busan-haeundae', 'busan', 'tourism', '송정', '부산 해운대구 송정동', 35.1786, 129.1997, 'verified', 'active', 1),
   ('ulsan-taehwagang', 'ulsan-jung', 'ulsan', 'tourism', '태화강 국가정원', '울산 중구 태화강국가정원길', 35.5486, 129.3005, 'verified', 'active', 1),
+  ('ulsan-samsan', 'ulsan-nam', 'ulsan', 'restaurant_cafe', '울산 삼산동', '울산 남구 삼산동', 35.5396, 129.3387, 'verified', 'active', 1),
+  ('ulsan-ganjeolgot', 'ulsan-ulju', 'ulsan', 'tourism', '간절곶', '울산 울주군 서생면 대송리', 35.3590, 129.3600, 'verified', 'active', 1),
   ('gyeongju-hwangridan', 'gyeongju-hwango', 'gyeongju', 'restaurant_cafe', '황리단길', '경북 경주시 포석로', 35.8382, 129.2098, 'verified', 'active', 1),
+  ('gyeongju-cheomseongdae', 'gyeongju-hwango', 'gyeongju', 'tourism', '첨성대', '경북 경주시 인왕동', 35.8347, 129.2189, 'verified', 'active', 1),
+  ('gyeongju-donggung-wolji', 'gyeongju-hwango', 'gyeongju', 'tourism', '동궁과 월지', '경북 경주시 원화로 102', 35.8346, 129.2265, 'verified', 'active', 1),
   ('ulsan-city-hall', 'ulsan-nam', 'ulsan', 'public_office', '울산광역시청', '울산 남구 중앙로 201', 35.5396, 129.3114, 'verified', 'beta', 1),
   ('seoul-yeouido', 'seoul-yeongdeungpo', 'seoul', 'tourism', '여의도 한강공원', '서울 영등포구 여의동로 330', 37.5265, 126.9349, 'verified', 'beta', 1),
   ('jeju-coordinate-review', 'jeju-jeju', 'jeju', 'tourism', '제주 좌표 검토 장소', '제주 좌표 검증 필요', NULL, NULL, 'TODO_COORDINATE_VERIFY', 'seed', 1)
@@ -60,10 +73,19 @@ ON CONFLICT(id) DO UPDATE SET
 INSERT INTO place_rankings (id, place_id, region_id, score, rank, window_hours)
 VALUES
   ('rank_24_busan-gwangalli', 'busan-gwangalli', 'busan', 98, 1, 24),
-  ('rank_24_gyeongju-hwangridan', 'gyeongju-hwangridan', 'gyeongju', 91, 1, 24),
+  ('rank_24_busan-haeundae', 'busan-haeundae', 'busan', 96, 2, 24),
+  ('rank_24_busan-jeonpo-cafe', 'busan-jeonpo-cafe', 'busan', 89, 3, 24),
+  ('rank_24_busan-seomyeon', 'busan-seomyeon', 'busan', 87, 4, 24),
+  ('rank_24_busan-songjeong', 'busan-songjeong', 'busan', 83, 5, 24),
+  ('rank_24_busan-nampo-kkangtong', 'busan-nampo-kkangtong', 'busan', 80, 6, 24),
+  ('rank_24_gyeongju-hwangridan', 'gyeongju-hwangridan', 'gyeongju', 94, 1, 24),
+  ('rank_24_gyeongju-donggung-wolji', 'gyeongju-donggung-wolji', 'gyeongju', 85, 2, 24),
+  ('rank_24_gyeongju-cheomseongdae', 'gyeongju-cheomseongdae', 'gyeongju', 82, 3, 24),
   ('rank_24_seoul-yeouido', 'seoul-yeouido', 'seoul', 88, 1, 24),
-  ('rank_24_ulsan-taehwagang', 'ulsan-taehwagang', 'ulsan', 84, 1, 24),
-  ('rank_24_ulsan-city-hall', 'ulsan-city-hall', 'ulsan', 72, 2, 24),
+  ('rank_24_ulsan-taehwagang', 'ulsan-taehwagang', 'ulsan', 92, 1, 24),
+  ('rank_24_ulsan-samsan', 'ulsan-samsan', 'ulsan', 78, 2, 24),
+  ('rank_24_ulsan-ganjeolgot', 'ulsan-ganjeolgot', 'ulsan', 76, 3, 24),
+  ('rank_24_ulsan-city-hall', 'ulsan-city-hall', 'ulsan', 72, 4, 24),
   ('rank_24_jeju-coordinate-review', 'jeju-coordinate-review', 'jeju', 999, 1, 24)
 ON CONFLICT(region_id, place_id, window_hours) DO UPDATE SET
   score = excluded.score,

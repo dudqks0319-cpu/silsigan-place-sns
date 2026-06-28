@@ -2625,7 +2625,7 @@ test("GET /api/tourism/attractions falls back to seed tourism places without a s
   assert.equal(payload.meta?.configured, false);
   assert.deepEqual(
     payload.data.map((place) => place.id),
-    ["busan-gwangalli"],
+    ["busan-gwangalli", "busan-haeundae", "busan-songjeong"],
   );
 });
 
@@ -3380,8 +3380,8 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
       `,
     });
 
-    assert.match(output, /places=6/);
-    assert.match(output, /rankings=6/);
+    assert.match(output, /places=15/);
+    assert.match(output, /rankings=15/);
     assert.match(output, /posts=4/);
     assert.match(output, /questions=3/);
     assert.match(output, /todo=1/);
@@ -3419,8 +3419,8 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
     assert.match(output, /tables=6/);
     assert.match(output, /post_indexes=2/);
     assert.match(output, /question_indexes=2/);
-    assert.match(output, /places=6/);
-    assert.match(output, /rankings=6/);
+    assert.match(output, /places=15/);
+    assert.match(output, /rankings=15/);
     assert.match(output, /posts=4/);
     assert.match(output, /questions=3/);
   } finally {

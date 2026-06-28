@@ -20,8 +20,12 @@ export type CloudflarePlaceForApp = Place & {
 
 const areaLabels: Record<string, string> = {
   "busan-suyeong": "부산 수영구",
+  "busan-haeundae": "부산 해운대구",
+  "busan-busanjin": "부산 부산진구",
+  "busan-jung": "부산 중구",
   "ulsan-jung": "울산 중구",
   "ulsan-nam": "울산 남구",
+  "ulsan-ulju": "울산 울주군",
   "gyeongju-hwango": "경북 경주시",
   "seoul-yeongdeungpo": "서울 영등포구",
 };
