@@ -1,6 +1,6 @@
 # Cloudflare staging operator packet
 
-Updated: 2026-06-27
+Updated: 2026-06-28
 Scope: Cloudflare-backed TestFlight MVP evidence, not App Store production submission.
 
 ## Current Block
@@ -17,6 +17,13 @@ Staging and production web Workers are already deployed and have passed read-onl
 
 - Staging web: `https://silsigan-web-staging.dudqks0319.workers.dev`
 - Production web: `https://silsigan-web-production.dudqks0319.workers.dev`
+
+Configured API URL values are now fixed in `.env.example` and this packet:
+
+- Staging API: `https://silsigan-api-staging.dudqks0319.workers.dev`
+- Production API: `https://silsigan-api-production.dudqks0319.workers.dev`
+
+These URL values are deployment-shaped, but they are not live staging evidence until the configured API Workers are deployed and `pnpm smoke:staging` passes. Current external blockers remain R2 enablement, API Worker deployments, and real staging smoke.
 
 Cloudflare requires adding the R2 subscription through Dashboard checkout before bucket evidence can pass:
 
@@ -54,14 +61,15 @@ Keep production bucket creation separate from the staging MVP unblock unless pro
 After R2 is enabled, set the staging URLs in the shell that will run the release evidence:
 
 ```bash
-export SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker-api>
+export SILSIGAN_STAGING_API_BASE_URL=https://silsigan-api-staging.dudqks0319.workers.dev
 export SILSIGAN_STAGING_PAGES_URL=https://silsigan-web-staging.dudqks0319.workers.dev
 export SILSIGAN_PRODUCTION_PAGES_URL=https://silsigan-web-production.dudqks0319.workers.dev
+export SILSIGAN_PRODUCTION_API_BASE_URL=https://silsigan-api-production.dudqks0319.workers.dev
 export SILSIGAN_PRIVACY_POLICY_URL=https://silsigan-web-staging.dudqks0319.workers.dev/privacy
 export SILSIGAN_SUPPORT_URL=https://silsigan-web-staging.dudqks0319.workers.dev/support
 ```
 
-`SILSIGAN_PRODUCTION_API_BASE_URL` is intentionally left unset until the production API Worker is deployed. Do not use the staging API URL for production-candidate smoke.
+Do not use the staging API URL for production-candidate smoke. Keep `SILSIGAN_STAGING_API_BASE_URL` and `SILSIGAN_PRODUCTION_API_BASE_URL` pointed at their matching configured Workers, and treat smoke failures as deployment blockers until the API Workers are live.
 
 For mutation/admin smoke, also set:
 
@@ -83,9 +91,9 @@ pnpm cf:external-state
 pnpm cf:preflight
 ```
 
-Run `cf:external-state` and `cf:preflight` in the same shell where the public URL exports above are set. A plain shell currently fails the Pages URL checks even though the web Workers are deployed, because `SILSIGAN_STAGING_PAGES_URL` and `SILSIGAN_PRODUCTION_PAGES_URL` are not automatically loaded from `.env.example`.
+Run `cf:external-state` and `cf:preflight` in the same shell where the public URL exports above are set. A plain shell can still fail URL checks because the release scripts do not automatically load `.env.example`.
 
-Expected before API URL setup: R2/D1/web Worker checks are separated, Pages URL checks pass only when the public URL values are exported, and API URL checks fail until the API Workers are deployed. Expected after R2 and API URL setup: R2, D1, and URL checks pass.
+Expected before API Worker deploy: R2/D1/web Worker checks are separated, Pages/API URL shape checks pass only when the public URL values are exported, and API deployment/smoke checks fail until the API Workers are deployed. Expected after R2 and API Worker deploy: R2, D1, URL, deployment, and smoke checks pass.
 
 ## Staging Smoke
 
@@ -137,7 +145,7 @@ Stop before App Store production submission.
 Stop and document the exact blocker if any of these remain true:
 
 - R2 still returns `R2_NOT_ENABLED`
-- `SILSIGAN_STAGING_API_BASE_URL` is missing or non-HTTPS
+- `SILSIGAN_STAGING_API_BASE_URL` is missing, non-HTTPS, or not the configured staging API Worker URL
 - `SILSIGAN_STAGING_PAGES_URL` is missing or non-HTTPS
 - `SILSIGAN_STAGING_ADMIN_TOKEN` is missing for mutation/admin smoke
 - captured Workers tail log is missing for release-candidate evidence
