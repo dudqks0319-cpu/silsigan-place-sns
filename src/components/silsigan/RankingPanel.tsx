@@ -16,11 +16,13 @@ export type RankingPlace = {
 };
 
 export function RankingPanel({
+  emptyAction,
   emptyBody,
   onOpenPlace,
   places,
   title,
 }: {
+  emptyAction?: React.ReactNode;
   emptyBody: string;
   onOpenPlace: (place: RankingPlace) => void;
   places: RankingPlace[];
@@ -36,7 +38,7 @@ export function RankingPanel({
         <Trophy size={19} aria-hidden />
       </div>
       {places.length === 0 ? (
-        <EmptyState title="랭킹을 준비하고 있어요" body={emptyBody} />
+        <EmptyState title="랭킹을 준비하고 있어요" body={emptyBody} action={emptyAction} />
       ) : (
         <div className={styles.rankingList}>
           {places.slice(0, 10).map((place, index) => (

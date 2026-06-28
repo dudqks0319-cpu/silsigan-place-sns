@@ -360,6 +360,11 @@ const lineChips = ["없음", "보통", "있음", "매우 김"];
 const weatherChips = ["맑음", "흐림", "비", "실내"];
 const questionExamples = ["주차 자리 있나요?", "줄 많이 긴가요?", "사진으로 볼 수 있나요?", "아이랑 가도 괜찮나요?"];
 const launchRegionIds = new Set<RegionId>(["busan", "gyeongju", "ulsan"]);
+const launchRegionBounds: Partial<Record<RegionId, MapBounds>> = {
+  busan: { north: 35.24, south: 35.05, east: 129.25, west: 128.96 },
+  gyeongju: { north: 35.9, south: 35.78, east: 129.29, west: 129.16 },
+  ulsan: { north: 35.62, south: 35.3, east: 129.46, west: 129.24 },
+};
 const launchFocusPlaces = [
   "광안리해수욕장",
   "해운대해수욕장",
@@ -1866,11 +1871,13 @@ export default function SilsiganRedesign() {
                     onReport={startReportForPlace}
                     onReportPlace={reportMapPlace}
                     onSearchQueryChange={setMapSearchQuery}
+                    onGoReport={() => setActiveView("report")}
                     onPhotoDelete={deletePlacePhoto}
                     onPhotoClick={clickPlacePhoto}
                     onPhotoUpload={uploadPlacePhoto}
                     onReportComment={openCommentReport}
                     onReportPhoto={openPhotoReport}
+                    onShareLaunchCard={shareLaunchCard}
                     places={places}
                     posts={rankedPosts}
                     reports={reports}
@@ -2367,6 +2374,7 @@ function MapScreen({
   locationPermission,
   mapBounds,
   onFilterChange,
+  onGoReport,
   onClosePreview,
   onCommentSubmit,
   onLikeComment,
@@ -2384,6 +2392,7 @@ function MapScreen({
   onReportPhoto,
   onReportPlace,
   onSearchQueryChange,
+  onShareLaunchCard,
   onToast,
   places,
   posts,
@@ -2403,6 +2412,7 @@ function MapScreen({
   locationPermission: LocationPermissionState;
   mapBounds: MapBounds | null;
   onFilterChange: (filter: string) => void;
+  onGoReport: () => void;
   onClosePreview: () => void;
   onCommentSubmit: (place: Place, body: string) => Promise<void>;
   onLikeComment: (place: Place, comment: PlaceComment) => Promise<void>;
@@ -2420,6 +2430,7 @@ function MapScreen({
   onReportPhoto: (place: Place, photo: PlacePhoto) => void;
   onReportPlace: (place: Place) => void;
   onSearchQueryChange: (query: string) => void;
+  onShareLaunchCard: () => void;
   onToast: (message: string) => void;
   places: Place[];
   posts: PublicPost[];
@@ -2450,6 +2461,12 @@ function MapScreen({
   const locationMessage = locationPermissionCopy(locationPermission);
   const detailSheetRef = useRef<HTMLDivElement>(null);
   const visibleLiveConnection = detailPlace ? liveConnection : "polling";
+  const rankingEmptyAction = (
+    <div className={styles.emptyActionRow}>
+      <button type="button" onClick={onGoReport}>현장 리포터 되기</button>
+      <button type="button" onClick={onShareLaunchCard}>공유 카드 복사</button>
+    </div>
+  );
 
   useEffect(() => {
     if (!detailPlace) {
@@ -2537,7 +2554,7 @@ function MapScreen({
       <section className={styles.tourismApiPanel} aria-label="관광 API 장소">
         <div>
           <p className={styles.eyebrow}>관광 API</p>
-          <strong>{tourismPlaces.length > 0 ? `${regionLabel(activeRegion)} 관광지 ${tourismPlaces.length}곳` : "관광지 불러오는 중"}</strong>
+          <strong>{tourismPlaces.length > 0 ? `${regionLabel(activeRegion)} 관광지 ${tourismPlaces.length}곳` : "첫 지역 추천 장소"}</strong>
         </div>
         <div className={styles.tourismApiList}>
           {(tourismPlaces.length > 0 ? tourismPlaces.slice(0, 3) : mapTop.slice(0, 3)).map((place) => (
@@ -2617,6 +2634,7 @@ function MapScreen({
             if (fullPlace) onPreviewPlace(fullPlace, "ranking");
           }}
           emptyBody="부산·경주·울산 후보 장소를 불러오는 중입니다. 데이터가 도착하면 즉시 순위가 채워집니다."
+          emptyAction={rankingEmptyAction}
         />
         <RankingPanel
           title={`${regionLabel(activeRegion)} TOP 10`}
@@ -2625,7 +2643,8 @@ function MapScreen({
             const fullPlace = places.find((candidate) => candidate.id === place.id);
             if (fullPlace) onPreviewPlace(fullPlace, "ranking");
           }}
-          emptyBody="이 지역은 스테이징 중입니다. 주변 핵심 장소가 활성화되면 먼저 표시됩니다."
+          emptyBody="이 지역은 첫 현장 리포터 20명 모집 중입니다. 광안리·황리단길·태화강처럼 방문 전 판단에 필요한 제보를 먼저 모읍니다."
+          emptyAction={rankingEmptyAction}
         />
         <RankingPanel
           title="지도 화면 안 TOP 10"
@@ -2634,7 +2653,8 @@ function MapScreen({
             const fullPlace = places.find((candidate) => candidate.id === place.id);
             if (fullPlace) onPreviewPlace(fullPlace, "ranking");
           }}
-          emptyBody="지도를 움직이거나 지역 탭을 바꾸면 화면 안 후보가 다시 계산됩니다."
+          emptyBody="검색 결과가 없으면 장소 이름을 바꾸거나, 현장 리포터로 첫 제보를 남겨 주세요."
+          emptyAction={rankingEmptyAction}
         />
       </section>
     </div>
@@ -3916,10 +3936,10 @@ function normalizePlaceSearchQuery(query: string | null | undefined) {
 
 function filterPlacesByRegion(places: Place[], region: RegionTabId) {
   if (region === "nationwide") {
-    return places.filter((place) => launchRegionIds.has(place.region));
+    return places.filter((place) => launchRegionIds.has(place.region) && isPlaceInLaunchRegionScope(place, place.region));
   }
 
-  return places.filter((place) => place.region === region);
+  return places.filter((place) => place.region === region && isPlaceInLaunchRegionScope(place, region));
 }
 
 function filterHashtagsByPosts(hashtags: PublicHashtag[], posts: PublicPost[]) {
@@ -3930,6 +3950,12 @@ function filterHashtagsByPosts(hashtags: PublicHashtag[], posts: PublicPost[]) {
 
 function rankPlaces(places: Place[]) {
   return [...places].sort((left, right) => right.score - left.score || left.name.localeCompare(right.name, "ko")).slice(0, 10);
+}
+
+function isPlaceInLaunchRegionScope(place: Place, region: RegionId) {
+  const bounds = launchRegionBounds[region];
+
+  return bounds ? isPlaceInBounds(place, bounds) : true;
 }
 
 function isPlaceInBounds(place: Place, bounds: MapBounds) {
