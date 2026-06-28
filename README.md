@@ -54,6 +54,8 @@ Cloudflare Worker 로컬 API는 `workers/api/wrangler.jsonc`를 기준으로 실
 wrangler dev --config workers/api/wrangler.jsonc
 ```
 
+실제 지도는 `NEXT_PUBLIC_NAVER_MAP_CLIENT_ID`가 있을 때 Naver Maps JavaScript SDK를 사용하고, 없거나 도메인 인증이 실패하면 클릭 가능한 fallback 지도를 유지합니다. 관광지는 Worker의 `/api/tourism/attractions`가 한국관광공사 TourAPI `KorService2`를 서버 쪽에서 호출해 지도 장소 목록에 합칩니다. 로컬 Worker에서는 `workers/api/.dev.vars`에 `TOUR_API_SERVICE_KEY` 또는 `DATA_GO_KR_API_KEY`를 넣고, staging/production은 `wrangler secret put TOUR_API_SERVICE_KEY --env staging|production`으로 등록합니다. 서비스 키는 클라이언트 번들에 넣지 않습니다.
+
 `workers/api/wrangler.jsonc`는 development, staging, production binding을 분리합니다. 기본 development Worker dry-run은 local config sanity check이며, root config의 D1/KV ID는 development 리소스를 만들기 전까지 placeholder로 남습니다. release evidence는 staging/production dry-run만 사용합니다. 현재 staging/production D1/KV ID는 실제 Cloudflare 리소스로 반영되어 있으며, 리소스를 재생성할 때만 해당 environment ID를 새 값으로 교체합니다. environment별 secret은 `wrangler secret put <KEY> --env staging|production`으로 등록합니다. 신고 큐 알림은 `MODERATION_ALERT_WEBHOOK_URL`과 선택값 `MODERATION_ALERT_WEBHOOK_TOKEN`을 Worker secret으로 등록합니다.
 
 남은 외부 배포 blocker는 Cloudflare Dashboard의 R2 활성화와 staging/production API HTTPS URL 설정입니다. Staging/production web Workers는 배포되어 read-only browser smoke를 통과했으며, R2가 활성화되기 전에는 API Worker `wrangler deploy --env staging`이 Cloudflare code `10042`로 실패합니다.

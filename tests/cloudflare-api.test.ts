@@ -36,6 +36,7 @@ type FailurePayload = {
 
 type Place = {
   id: string;
+  name?: string;
   regionId: string;
   latitude: number;
   longitude: number;
@@ -2614,6 +2615,77 @@ test("GET /api/places applies search query policy", async () => {
   );
 });
 
+test("GET /api/tourism/attractions falls back to seed tourism places without a service key", async () => {
+  const response = await worker.handleRequest(new Request("https://api.test/api/tourism/attractions?regionId=busan&limit=5"));
+  const payload = (await response.json()) as SuccessPayload<Array<Place & { source?: string }>>;
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.success, true);
+  assert.equal(payload.meta?.provider, "tourapi-fallback");
+  assert.equal(payload.meta?.configured, false);
+  assert.deepEqual(
+    payload.data.map((place) => place.id),
+    ["busan-gwangalli"],
+  );
+});
+
+test("GET /api/tourism/attractions maps TourAPI results to public map places", async () => {
+  const originalFetch = globalThis.fetch;
+  const mockFetch: typeof fetch = async (input) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+
+    assert.equal(url.pathname, "/B551011/KorService2/areaBasedList2");
+    assert.equal(url.searchParams.get("areaCode"), "6");
+    assert.equal(url.searchParams.get("MobileApp"), "Silsigan");
+    assert.equal(url.searchParams.get("_type"), "json");
+
+    return new Response(
+      JSON.stringify({
+        response: {
+          header: { resultCode: "0000", resultMsg: "OK" },
+          body: {
+            totalCount: 1,
+            items: {
+              item: [
+                {
+                  contentid: "999",
+                  title: "해운대해수욕장",
+                  addr1: "부산 해운대구 우동",
+                  mapx: "129.1603",
+                  mapy: "35.1587",
+                  contenttypeid: "12",
+                  areacode: "6",
+                },
+              ],
+            },
+          },
+        },
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+  };
+  globalThis.fetch = mockFetch;
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/tourism/attractions?regionId=busan&limit=5"),
+      { TOUR_API_SERVICE_KEY: "encoded%2Bkey" },
+    );
+    const payload = (await response.json()) as SuccessPayload<Array<Place & { address?: string; source?: string }>>;
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.success, true);
+    assert.equal(payload.meta?.provider, "tourapi");
+    assert.equal(payload.data[0]?.id, "tourapi-999");
+    assert.equal(payload.data[0]?.name, "해운대해수욕장");
+    assert.equal(payload.data[0]?.regionId, "busan");
+    assert.equal(payload.data[0]?.address, "부산 해운대구 우동");
+    assert.equal(payload.data[0]?.source, "tourapi");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("GET /api/places applies radius query without echoing client coordinates", async () => {
   const response = await worker.handleRequest(new Request("https://api.test/api/places?lat=35.1532&lng=129.1186&radius=800&limit=10"));
   const payload = (await response.json()) as SuccessPayload<Place[]>;
@@ -4156,6 +4228,73 @@ test("D1 ranking smoke counts repeated click and like signals once per anonymous
     assert.equal(gwangalli?.likeCount, 1);
     assert.equal(gwangalli?.uniqueUserCount, 1);
     assert.equal(gwangalli?.score, 101);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 place click upserts TourAPI places before recording events", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const anonymousId = "anon_d1_tourapi_click";
+    const firstClick = await d1Post<SuccessPayload<{ placeId: string; clickCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/tourapi-999/click",
+      anonymousId,
+      {
+        source: "map_marker",
+        place: {
+          id: "tourapi-999",
+          name: "테스트 관광지",
+          categoryId: "tourism",
+          regionId: "busan",
+          latitude: 35.17,
+          longitude: 129.13,
+          address: "부산광역시 테스트로 1",
+          score: 77,
+        },
+      },
+    );
+    const secondClick = await d1Post<SuccessPayload<{ placeId: string; clickCount: number; created: boolean }>>(
+      db,
+      "https://api.test/api/places/tourapi-999/click",
+      anonymousId,
+      {
+        source: "map_marker",
+        place: {
+          id: "tourapi-999",
+          name: "테스트 관광지",
+          categoryId: "tourism",
+          regionId: "busan",
+          latitude: 35.17,
+          longitude: 129.13,
+          address: "부산광역시 테스트로 1",
+        },
+      },
+    );
+
+    assert.equal(firstClick.data.placeId, "tourapi-999");
+    assert.equal(firstClick.data.created, true);
+    assert.equal(secondClick.data.created, false);
+    assert.equal(secondClick.data.clickCount, 1);
+
+    const storedPlace = await db
+      .prepare("SELECT id, area_id AS areaId, region_id AS regionId, name FROM places WHERE id = ?")
+      .bind("tourapi-999")
+      .first<{ id: string; areaId: string; regionId: string; name: string }>();
+    assert.deepEqual(storedPlace, {
+      id: "tourapi-999",
+      areaId: "busan-tourapi",
+      regionId: "busan",
+      name: "테스트 관광지",
+    });
+
+    const storedSignals = await db
+      .prepare("SELECT COUNT(*) AS count FROM place_events WHERE place_id = ? AND event_type = 'click'")
+      .bind("tourapi-999")
+      .first<{ count: number }>();
+    assert.equal(storedSignals?.count, 1);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

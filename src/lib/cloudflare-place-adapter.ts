@@ -3,6 +3,7 @@ import type { Place, PlaceLaunchStage, RegionId, ReportCategory } from "./domain
 export type WorkerPlace = {
   id: string;
   name: string;
+  address?: string;
   categoryId: string;
   areaId: string;
   regionId: string;
@@ -87,6 +88,10 @@ function launchStageFromWorker(status: WorkerPlace["status"]): PlaceLaunchStage 
 }
 
 function addressFromWorker(place: WorkerPlace): string {
+  if (place.address?.trim()) {
+    return place.address.trim();
+  }
+
   return `${areaLabels[place.areaId] ?? regionLabel(regionFromWorker(place.regionId))} · ${place.name}`;
 }
 

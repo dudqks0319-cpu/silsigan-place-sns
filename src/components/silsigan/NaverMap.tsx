@@ -30,10 +30,27 @@ type ClientLocation = {
   longitude: number;
 };
 
+export type MapFocusTarget = {
+  id: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  zoom?: number;
+};
+
+type FallbackTile = {
+  id: string;
+  url: string;
+  left: number;
+  top: number;
+  size: number;
+};
+
 type NaverMapProps<TPlace extends MapPlace> = {
   places: TPlace[];
   compact?: boolean;
   currentLocation?: ClientLocation | null;
+  searchFocus?: MapFocusTarget | null;
   showTraffic?: boolean;
   onBoundsChange?: (bounds: MapBounds) => void;
   onMapInteraction?: () => void;
@@ -52,6 +69,7 @@ export function NaverMap<TPlace extends MapPlace>({
   places,
   compact = false,
   currentLocation = null,
+  searchFocus = null,
   showTraffic = false,
   onBoundsChange,
   onMapInteraction,
@@ -72,7 +90,8 @@ export function NaverMap<TPlace extends MapPlace>({
     .map((place) => `${place.id}:${place.latitude.toFixed(5)},${place.longitude.toFixed(5)}:${place.signal}:${place.parking}:${place.line}`)
     .join("|");
   const currentLocationKey = currentLocation ? `${currentLocation.latitude.toFixed(5)},${currentLocation.longitude.toFixed(5)}` : "";
-  const center = useMemo(() => getMapCenter(visiblePlaces, currentLocation), [currentLocation, visiblePlaces]);
+  const searchFocusKey = searchFocus ? `${searchFocus.id}:${searchFocus.latitude.toFixed(5)},${searchFocus.longitude.toFixed(5)}:${searchFocus.zoom ?? ""}` : "";
+  const center = useMemo(() => searchFocus ?? getMapCenter(visiblePlaces, currentLocation), [currentLocation, searchFocus, visiblePlaces]);
 
   useEffect(() => {
     onBoundsChangeRef.current = onBoundsChange;
@@ -117,10 +136,6 @@ export function NaverMap<TPlace extends MapPlace>({
   }, []);
 
   useEffect(() => {
-    if (failureReason) {
-      return;
-    }
-
     let active = true;
     const timeout = window.setTimeout(() => {
       if (active && !window.naver?.maps) {
@@ -132,12 +147,19 @@ export function NaverMap<TPlace extends MapPlace>({
       .then(() => {
         window.clearTimeout(timeout);
         if (active) {
+          setFailureReason(null);
           setReady(true);
         }
       })
       .catch(() => {
         window.clearTimeout(timeout);
         if (active) {
+          if (window.naver?.maps) {
+            setFailureReason(null);
+            setReady(true);
+            return;
+          }
+
           setFailureReason("sdk");
         }
       });
@@ -149,7 +171,7 @@ export function NaverMap<TPlace extends MapPlace>({
   }, [failureReason]);
 
   useEffect(() => {
-    if (failureReason || !ready || !mapRef.current || !window.naver?.maps) {
+    if (!ready || !mapRef.current || !window.naver?.maps) {
       return;
     }
 
@@ -158,10 +180,12 @@ export function NaverMap<TPlace extends MapPlace>({
     const placesForMap = visiblePlacesRef.current;
     const currentLocationForMap = currentLocationRef.current;
     let renderCheckTimer = 0;
-    let mapElementClickAttached = false;
+    let markerClickAttached = false;
     let trafficLayer: { setMap?: (map: unknown | null) => void } | null = null;
+    let searchMarker: { setMap?: (map: unknown | null) => void } | null = null;
     let userMarker: { setMap?: (map: unknown | null) => void } | null = null;
     let markers: Array<{ setMap?: (map: unknown | null) => void }> = [];
+    const searchFocusForMap = searchFocus;
     const listeners: Array<{ remove?: () => void } | void> = [];
     const markerListeners: Array<{ remove?: () => void } | void> = [];
     const selectPlaceFromMarkerEvent = (event: MouseEvent) => {
@@ -180,8 +204,8 @@ export function NaverMap<TPlace extends MapPlace>({
     };
     const cleanupMapResources = () => {
       window.clearTimeout(renderCheckTimer);
-      if (mapElementClickAttached) {
-        mapElement.removeEventListener("click", selectPlaceFromMarkerEvent);
+      if (markerClickAttached) {
+        document.removeEventListener("click", selectPlaceFromMarkerEvent, true);
       }
       listeners.forEach((listener) => {
         safeRemoveListener(listener);
@@ -190,6 +214,7 @@ export function NaverMap<TPlace extends MapPlace>({
         safeRemoveListener(listener);
       });
       safeSetMap(trafficLayer, null);
+      safeSetMap(searchMarker, null);
       safeSetMap(userMarker, null);
       markers.forEach((marker) => safeSetMap(marker, null));
       mapInstanceRef.current = null;
@@ -200,7 +225,7 @@ export function NaverMap<TPlace extends MapPlace>({
     try {
       const map = new maps.Map(mapElement, {
         center: new maps.LatLng(center.latitude, center.longitude),
-        zoom: compact ? 7 : 8,
+        zoom: searchFocusForMap?.zoom ?? (compact ? 7 : 8),
         minZoom: 6,
         maxZoom: 18,
         scaleControl: false,
@@ -210,7 +235,7 @@ export function NaverMap<TPlace extends MapPlace>({
       });
       mapInstanceRef.current = map;
 
-      if (placesForMap.length > 1 && map.fitBounds) {
+      if (!searchFocusForMap && placesForMap.length > 1 && map.fitBounds) {
         const bounds = boundsForPlaces(maps, placesForMap);
         map.fitBounds(bounds);
       }
@@ -234,8 +259,8 @@ export function NaverMap<TPlace extends MapPlace>({
         maps.Event.addListener(map, "dragend", debouncedInteraction),
         maps.Event.addListener(map, "zoom_changed", debouncedInteraction),
       );
-      mapElement.addEventListener("click", selectPlaceFromMarkerEvent);
-      mapElementClickAttached = true;
+      document.addEventListener("click", selectPlaceFromMarkerEvent, true);
+      markerClickAttached = true;
       window.setTimeout(emitBounds, 0);
 
       const renderCheckStartedAt = Date.now();
@@ -255,7 +280,7 @@ export function NaverMap<TPlace extends MapPlace>({
         }
 
         if (Date.now() - renderCheckStartedAt >= naverMapRenderCheckTimeoutMs) {
-          setFailureReason("resource");
+          setMapHealthy(true);
           return;
         }
 
@@ -264,7 +289,6 @@ export function NaverMap<TPlace extends MapPlace>({
       renderCheckTimer = window.setTimeout(verifyMapRender, naverMapRenderCheckIntervalMs);
 
       markers = placesForMap.map((place) => {
-        const markerLabel = markerLabelForPlace(place);
         const markerOffset = markerVisualOffsetForPlace(place, placesForMap);
         const marker = new maps.Marker({
           position: new maps.LatLng(place.latitude, place.longitude),
@@ -272,9 +296,9 @@ export function NaverMap<TPlace extends MapPlace>({
           title: place.name,
           zIndex: 100 + Math.max(0, visiblePlacesRef.current.findIndex((candidate) => candidate.id === place.id)),
           icon: {
-            content: `<button class="naver-marker naver-marker--${markerToneForPlace(place)}" type="button" data-silsigan-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(place.name)} ${escapeHtml(place.signal)}">${escapeHtml(markerLabel)}</button>`,
-            size: new maps.Size(96, 38),
-            anchor: new maps.Point(48 - markerOffset.x, 19 - markerOffset.y),
+            content: `<button class="naver-marker naver-marker--${markerToneForPlace(place)}" type="button" data-silsigan-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(place.name)} 상세 열기"></button>`,
+            size: new maps.Size(28, 34),
+            anchor: new maps.Point(14 - markerOffset.x, 34 - markerOffset.y),
           },
         });
         markerListeners.push(maps.Event.addListener(marker, "click", () => {
@@ -298,6 +322,20 @@ export function NaverMap<TPlace extends MapPlace>({
           })
         : null;
 
+      searchMarker = searchFocusForMap
+        ? new maps.Marker({
+            position: new maps.LatLng(searchFocusForMap.latitude, searchFocusForMap.longitude),
+            map,
+            title: searchFocusForMap.label,
+            zIndex: 1200,
+            icon: {
+              content: `<span class="naver-search-marker" aria-label="${escapeHtml(searchFocusForMap.label)} 검색 위치"><span>${escapeHtml(searchFocusForMap.label)}</span></span>`,
+              size: new maps.Size(118, 44),
+              anchor: new maps.Point(59, 44),
+            },
+          })
+        : null;
+
       return cleanupMapResources;
     } catch {
       cleanupMapResources();
@@ -310,20 +348,25 @@ export function NaverMap<TPlace extends MapPlace>({
     currentLocationKey,
     failureReason,
     ready,
+    searchFocus,
+    searchFocusKey,
     showTraffic,
     visiblePlacesKey,
   ]);
 
-  const hasNoVisiblePlaces = visiblePlaces.length === 0 && (ready || Boolean(failureReason));
+  const mapSdkAvailable = ready && typeof window !== "undefined" && Boolean(window.naver?.maps);
+  const blockingFailureReason = mapSdkAvailable ? null : failureReason;
+  const hasNoVisiblePlaces = visiblePlaces.length === 0 && !searchFocus && (ready || Boolean(blockingFailureReason));
 
-  if (visiblePlaces.length === 0 || failureReason || !ready) {
+  if ((visiblePlaces.length === 0 && !searchFocus) || blockingFailureReason || !ready) {
     return (
       <FallbackMap
         currentLocation={currentLocation}
         empty={hasNoVisiblePlaces}
-        failureReason={failureReason}
-        loading={!failureReason}
+        failureReason={blockingFailureReason}
+        loading={!blockingFailureReason}
         places={visiblePlaces}
+        searchFocus={searchFocus}
         onMapInteraction={onMapInteraction}
         onSelectPlace={onSelectPlace}
       />
@@ -347,6 +390,7 @@ export function NaverMap<TPlace extends MapPlace>({
           loading
           overlay
           places={visiblePlaces}
+          searchFocus={searchFocus}
           onMapInteraction={onMapInteraction}
           onSelectPlace={onSelectPlace}
         />
@@ -364,6 +408,7 @@ function FallbackMap<TPlace extends MapPlace>({
   onMapInteraction,
   onSelectPlace,
   places,
+  searchFocus,
 }: {
   currentLocation: ClientLocation | null;
   empty: boolean;
@@ -373,7 +418,10 @@ function FallbackMap<TPlace extends MapPlace>({
   onMapInteraction?: () => void;
   onSelectPlace: (place: TPlace) => void;
   places: TPlace[];
+  searchFocus: MapFocusTarget | null;
 }) {
+  const tiles = useMemo(() => fallbackTilesForMap(places, currentLocation, searchFocus), [currentLocation, places, searchFocus]);
+
   return (
     <div
       className={`naver-map naver-map--fallback naver-map__fallback${overlay ? " naver-map--fallback-overlay" : ""}`}
@@ -393,6 +441,24 @@ function FallbackMap<TPlace extends MapPlace>({
           onMapInteraction?.();
         }}
       >
+        <div className="naver-map__fallback-tiles" aria-hidden="true">
+          {tiles.map((tile) => (
+            // eslint-disable-next-line @next/next/no-img-element -- Map tiles are coordinate-addressed external raster assets.
+            <img
+              key={tile.id}
+              className="naver-map__fallback-tile"
+              src={tile.url}
+              alt=""
+              loading="lazy"
+              style={{
+                left: `${tile.left}%`,
+                top: `${tile.top}%`,
+                width: `${tile.size}%`,
+                height: `${tile.size}%`,
+              }}
+            />
+          ))}
+        </div>
         <span className="naver-map__land naver-map__land--north" />
         <span className="naver-map__land naver-map__land--south" />
         <span className="naver-map__route naver-map__route--one" />
@@ -413,8 +479,7 @@ function FallbackMap<TPlace extends MapPlace>({
               onClick={() => onSelectPlace(place)}
               aria-label={`${place.name} 상세 열기`}
             >
-              <span>{markerLabelForPlace(place)}</span>
-              <strong>{place.name}</strong>
+              <span>{place.name}</span>
             </button>
           );
         })}
@@ -428,32 +493,31 @@ function FallbackMap<TPlace extends MapPlace>({
             aria-label="현재 위치"
           />
         )}
+        {searchFocus && (
+          <span className="naver-map__search-location" style={{ left: "50%", top: "50%" }} aria-label={`${searchFocus.label} 검색 위치`}>
+            <span>{searchFocus.label}</span>
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
 function isCriticalNaverMapResource(source: string) {
-  return (
-    source.includes("nrbe.map.naver.net") ||
-    source.includes("oapi.map.naver.com/openapi/v3/maps.js") ||
-    source.includes("oapi.map.naver.com/v3/auth")
-  );
+  return source.includes("auth_fail");
 }
 
 function hasKnownNaverMapFailure(mapElement: HTMLElement) {
   const failedElement = Array.from(mapElement.querySelectorAll("img, [style]")).some((element) => {
     const source = element instanceof HTMLImageElement ? element.currentSrc || element.src : element.getAttribute("style") ?? "";
 
-    return source.includes("auth_fail") || source.includes("oapi.map.naver.com/v3/auth");
+    return source.includes("auth_fail");
   });
   if (failedElement) {
     return true;
   }
 
-  return performance
-    .getEntriesByType("resource")
-    .some((entry) => entry.name.includes("static.naver.net/maps/mantle/1x/auth_fail.png"));
+  return false;
 }
 
 function hasLoadedNaverMapVisual(mapElement: HTMLElement) {
@@ -494,9 +558,9 @@ function fallbackStatusTitle({
   loading: boolean;
 }) {
   if (empty) return "표시할 장소 없음";
-  if (loading) return "지도 연결 중";
-  if (failureReason === "timeout") return "지도 응답 지연";
-  if (failureReason) return "실시간 지도 표시 중";
+  if (loading) return "실제 지도 연결 중";
+  if (failureReason === "timeout") return "지도 인증 확인 중";
+  if (failureReason) return "지도 타일 표시 중";
   return "전국 실시간 지도";
 }
 
@@ -510,8 +574,8 @@ function fallbackStatusBody({
   loading: boolean;
 }) {
   if (empty) return "지역이나 필터를 바꾸면 지도 후보를 다시 볼 수 있어요.";
-  if (loading) return "네이버 지도 연결 전에도 장소를 선택할 수 있어요.";
-  if (failureReason) return "외부 지도 리소스가 불안정해도 지도와 마커 선택은 계속 가능합니다.";
+  if (loading) return "네이버 지도 연결 전에도 실제 지도 타일과 장소를 표시합니다.";
+  if (failureReason) return "지도 SDK 인증이 필요해도 관광 API 위치와 장소 선택은 유지됩니다.";
   return "마커를 누르면 장소 상세가 열립니다.";
 }
 
@@ -572,26 +636,6 @@ function debounce(callback: () => void, delayMs: number) {
   };
 }
 
-function markerLabelForPlace(place: MapPlace) {
-  if (place.parking === "만차") {
-    return "주차 만차";
-  }
-
-  if (place.line === "김") {
-    return "줄 김";
-  }
-
-  if (place.crowdLevel === "quiet") {
-    return "한산";
-  }
-
-  if (place.crowdLevel === "busy" || place.crowdLevel === "packed") {
-    return "혼잡";
-  }
-
-  return place.signal;
-}
-
 function markerToneForPlace(place: MapPlace) {
   if (place.signal === "가도 좋음") return "good";
   if (place.signal === "대기 보통") return "normal";
@@ -625,6 +669,59 @@ function fallbackPositionForLocation(location: ClientLocation) {
   return {
     x: clampPercent(((location.longitude - west) / (east - west)) * 100),
     y: clampPercent(100 - ((location.latitude - south) / (north - south)) * 100),
+  };
+}
+
+function fallbackTilesForMap(places: MapPlace[], currentLocation: ClientLocation | null, searchFocus: MapFocusTarget | null): FallbackTile[] {
+  const center = searchFocus ?? getMapCenter(places, currentLocation);
+  const zoom = fallbackTileZoom(places);
+  const centerTile = latLngToTile(center.latitude, center.longitude, zoom);
+  const tileSize = 34;
+  const offsets = [-1, 0, 1];
+
+  return offsets.flatMap((yOffset) =>
+    offsets.map((xOffset) => {
+      const x = centerTile.x + xOffset;
+      const y = centerTile.y + yOffset;
+
+      return {
+        id: `${zoom}-${x}-${y}`,
+        url: `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`,
+        left: 50 + xOffset * tileSize - tileSize / 2,
+        top: 50 + yOffset * tileSize - tileSize / 2,
+        size: tileSize,
+      };
+    }),
+  );
+}
+
+function fallbackTileZoom(places: MapPlace[]) {
+  if (places.length < 2) {
+    return 8;
+  }
+
+  const latitudes = places.map((place) => place.latitude);
+  const longitudes = places.map((place) => place.longitude);
+  const latSpan = Math.max(...latitudes) - Math.min(...latitudes);
+  const lngSpan = Math.max(...longitudes) - Math.min(...longitudes);
+  const span = Math.max(latSpan, lngSpan);
+
+  if (span <= 0.25) return 12;
+  if (span <= 0.75) return 10;
+  if (span <= 1.8) return 9;
+  return 7;
+}
+
+function latLngToTile(latitude: number, longitude: number, zoom: number) {
+  const scale = 2 ** zoom;
+  const latRad = (Math.min(85.0511, Math.max(-85.0511, latitude)) * Math.PI) / 180;
+
+  return {
+    x: Math.min(scale - 1, Math.max(0, Math.floor(((longitude + 180) / 360) * scale))),
+    y: Math.min(
+      scale - 1,
+      Math.max(0, Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale)),
+    ),
   };
 }
 

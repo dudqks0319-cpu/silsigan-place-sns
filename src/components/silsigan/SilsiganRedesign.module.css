@@ -980,6 +980,13 @@
   font-weight: 900;
 }
 
+.mapSearchFocus {
+  margin: -2px 2px 0;
+  color: #0369a1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .locationNotice {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1104,6 +1111,49 @@
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
+}
+
+.tourismApiPanel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.tourismApiPanel strong {
+  display: block;
+  margin-top: 2px;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.tourismApiList {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tourismApiList::-webkit-scrollbar {
+  display: none;
+}
+
+.tourismApiList button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 118px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgba(22, 163, 74, 0.18);
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #14532d;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .activeFilter,
@@ -1257,13 +1307,37 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
+  background: #dbeafe;
+}
+
+.realMapFrame :global(.naver-map__fallback-canvas::after) {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.04), rgba(15, 23, 42, 0.08)),
+    radial-gradient(circle at 50% 50%, transparent 0 45%, rgba(255, 255, 255, 0.14) 100%);
+}
+
+.realMapFrame :global(.naver-map__fallback-tiles) {
+  position: absolute;
+  inset: -3%;
+  z-index: 0;
+  opacity: 0.9;
+  filter: saturate(0.88) contrast(0.98);
+}
+
+.realMapFrame :global(.naver-map__fallback-tile) {
+  position: absolute;
+  display: block;
+  object-fit: cover;
+  border: 0;
 }
 
 .realMapFrame :global(.naver-map__land) {
-  position: absolute;
-  border: 1px solid rgba(21, 128, 61, 0.18);
-  background: linear-gradient(135deg, rgba(220, 252, 231, 0.86), rgba(240, 253, 250, 0.76));
-  box-shadow: inset 0 0 22px rgba(21, 128, 61, 0.06);
+  display: none;
 }
 
 .realMapFrame :global(.naver-map__land--north) {
@@ -1285,11 +1359,7 @@
 }
 
 .realMapFrame :global(.naver-map__route) {
-  position: absolute;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.22);
-  transform-origin: left center;
+  display: none;
 }
 
 .realMapFrame :global(.naver-map__route--one) {
@@ -1307,11 +1377,7 @@
 }
 
 .realMapFrame :global(.naver-map__label) {
-  position: absolute;
-  color: #0f766e;
-  font-size: 11px;
-  font-weight: 950;
-  opacity: 0.72;
+  display: none;
 }
 
 .realMapFrame :global(.naver-map__label--seoul) {
@@ -1333,33 +1399,24 @@
   position: absolute;
   z-index: 4;
   transform: translate(-50%, -50%);
-  max-width: 112px;
-  min-height: 42px;
+  max-width: 96px;
+  min-height: 30px;
   border: 2px solid rgba(255, 255, 255, 0.92);
   border-radius: 999px;
   box-shadow: 0 14px 24px rgba(15, 23, 42, 0.2);
-  display: grid;
-  gap: 1px;
-  padding: 7px 10px;
+  display: block;
+  padding: 6px 9px;
   color: #fff;
-  text-align: left;
-}
-
-.realMapFrame :global(.naver-map__fallback-marker span),
-.realMapFrame :global(.naver-map__fallback-marker strong) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: center;
 }
 
 .realMapFrame :global(.naver-map__fallback-marker span) {
-  font-size: 10px;
-  font-weight: 950;
-}
-
-.realMapFrame :global(.naver-map__fallback-marker strong) {
+  display: block;
+  overflow: hidden;
   font-size: 11px;
   font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .realMapFrame :global(.naver-map__fallback-marker:focus-visible) {
@@ -1395,15 +1452,86 @@
   transform: translate(-50%, -50%);
 }
 
-.realMapFrame :global(.naver-marker) {
-  min-width: 74px;
-  min-height: 34px;
+.realMapFrame :global(.naver-map__search-location) {
+  position: absolute;
+  z-index: 4;
+  min-width: 92px;
+  max-width: 136px;
   border: 2px solid #ffffff;
   border-radius: 999px;
+  background: #0369a1;
+  box-shadow: 0 14px 24px rgba(15, 23, 42, 0.24);
   color: #ffffff;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.2);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 950;
+  line-height: 1.2;
+  padding: 8px 11px;
+  pointer-events: none;
+  text-align: center;
+  transform: translate(-50%, -100%);
+}
+
+.realMapFrame :global(.naver-map__search-location::after) {
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  background: #0369a1;
+  content: "";
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.realMapFrame :global(.naver-map__search-location span) {
+  display: block;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.realMapFrame :global(.naver-marker) {
+  position: relative;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  color: transparent;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.2);
+  cursor: pointer;
+  font-size: 0;
+  padding: 0;
+}
+
+.realMapFrame :global(.naver-marker::after) {
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  background: inherit;
+  content: "";
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.realMapFrame :global(.naver-marker::before) {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #ffffff;
+  content: "";
+  transform: translate(-50%, -50%);
 }
 
 .realMapFrame :global(.naver-marker--good) {
@@ -1430,6 +1558,45 @@
   border-radius: 50%;
   background: #2563eb;
   box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.18), 0 8px 18px rgba(15, 23, 42, 0.24);
+}
+
+.realMapFrame :global(.naver-search-marker) {
+  display: block;
+  min-width: 92px;
+  max-width: 136px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #0369a1;
+  box-shadow: 0 14px 24px rgba(15, 23, 42, 0.24);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 950;
+  line-height: 1.2;
+  padding: 8px 11px;
+  pointer-events: none;
+  text-align: center;
+}
+
+.realMapFrame :global(.naver-search-marker::after) {
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  background: #0369a1;
+  content: "";
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.realMapFrame :global(.naver-search-marker span) {
+  display: block;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rankingGrid {

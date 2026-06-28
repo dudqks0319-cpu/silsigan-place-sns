@@ -130,6 +130,8 @@ type Env = {
   ADMIN_TOKENS?: string;
   MODERATION_ALERT_WEBHOOK_URL?: string;
   MODERATION_ALERT_WEBHOOK_TOKEN?: string;
+  TOUR_API_SERVICE_KEY?: string;
+  DATA_GO_KR_API_KEY?: string;
   ENVIRONMENT?: string;
 };
 
@@ -491,6 +493,46 @@ type RoomBroadcast = {
   createdAt: string;
 };
 
+type TourApiItem = {
+  contentid?: string;
+  title?: string;
+  addr1?: string;
+  firstimage?: string;
+  firstimage2?: string;
+  mapx?: string;
+  mapy?: string;
+  tel?: string;
+  contenttypeid?: string;
+  areacode?: string;
+};
+
+type TourApiPayload = {
+  response?: {
+    header?: {
+      resultCode?: string;
+      resultMsg?: string;
+    };
+    body?: {
+      items?: {
+        item?: TourApiItem | TourApiItem[];
+      };
+      totalCount?: number;
+    };
+  };
+};
+
+type TourismPlaceRecord = PlaceRecord & {
+  address?: string;
+  contentId?: string;
+  imageUrl?: string | null;
+  source: "tourapi" | "tourapi-fallback";
+  tel?: string | null;
+};
+
+type DynamicPlaceRecord = PlaceRecord & {
+  address: string;
+};
+
 const seedPlaces: PlaceRecord[] = [
   {
     id: "busan-gwangalli",
@@ -648,6 +690,35 @@ const placeClickCounts = new Map<string, number>();
 const placeClickWindowsByAnon = new Map<string, Map<string, number>>();
 const roomEvents = new Map<string, RoomBroadcast[]>();
 const photoContentHashes = new Map<string, string>();
+const TOUR_API_BASE_URL = "https://apis.data.go.kr/B551011/KorService2";
+const tourApiRegionAreaCodes: Record<string, string> = {
+  seoul: "1",
+  busan: "6",
+  ulsan: "7",
+  gyeongju: "35",
+  daegu: "4",
+  changwon: "36",
+  gimhae: "36",
+  yangsan: "36",
+  pohang: "35",
+  jeju: "39",
+  gangneung: "32",
+  jeonju: "37",
+  yeosu: "38",
+  sokcho: "32",
+};
+const tourApiAreaRegions: Record<string, string> = {
+  "1": "seoul",
+  "4": "daegu",
+  "6": "busan",
+  "7": "ulsan",
+  "32": "gangneung",
+  "35": "gyeongju",
+  "36": "changwon",
+  "37": "jeonju",
+  "38": "yeosu",
+  "39": "jeju",
+};
 const commentCreateMinuteLimit = 5;
 const commentCreateDailyLimit = 100;
 const commentBodyMaxLength = 280;
@@ -700,6 +771,10 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
 
     if (request.method === "GET" && path === "/api/places") {
       return withHeaders(await listPlaces(url, env), sessionHeaders);
+    }
+
+    if (request.method === "GET" && path === "/api/tourism/attractions") {
+      return withHeaders(await listTourismAttractions(url, env), sessionHeaders);
     }
 
     const placeRouteMatch = path.match(/^\/api\/places\/([^/]+)(?:\/([^/]+))?$/);
@@ -1083,6 +1158,74 @@ async function listPlaces(url: URL, env: Env): Promise<Response> {
   });
 }
 
+async function listTourismAttractions(url: URL, env: Env): Promise<Response> {
+  const serviceKey = tourApiServiceKey(env);
+  const limit = clampLimit(url.searchParams.get("limit"), 20, 12);
+  const regionId = url.searchParams.get("region") ?? url.searchParams.get("regionId");
+  const bbox = parseBBox(url.searchParams.get("bbox"));
+
+  if (!serviceKey) {
+    return json(seedTourismPlaces(regionId, limit), {
+      limit,
+      provider: "tourapi-fallback",
+      configured: false,
+      reason: "TOUR_API_SERVICE_KEY_REQUIRED",
+    });
+  }
+
+  const tourUrl = tourismRequestUrl(serviceKey, {
+    bbox,
+    contentTypeId: url.searchParams.get("contentTypeId") ?? "12",
+    limit,
+    page: url.searchParams.get("page"),
+    regionId,
+  });
+
+  try {
+    const response = await fetch(tourUrl.toString(), {
+      headers: { accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      throw new HttpError(502, "TOUR_API_UNAVAILABLE", "관광 API 응답이 불안정합니다.");
+    }
+
+    const payload = (await response.json()) as TourApiPayload;
+    const resultCode = payload.response?.header?.resultCode;
+    if (resultCode && resultCode !== "0000") {
+      throw new HttpError(502, "TOUR_API_RESULT_ERROR", "관광 API 결과를 불러오지 못했습니다.", { resultCode });
+    }
+
+    const places = tourApiItems(payload)
+      .map((item, index) => tourApiItemToPlace(item, regionId, index))
+      .filter((place): place is TourismPlaceRecord => Boolean(place))
+      .slice(0, limit);
+
+    return json(places.length > 0 ? places : seedTourismPlaces(regionId, limit), {
+      limit,
+      provider: places.length > 0 ? "tourapi" : "tourapi-empty-fallback",
+      configured: true,
+      totalCount: payload.response?.body?.totalCount ?? places.length,
+    });
+  } catch (error) {
+    if (error instanceof HttpError) {
+      return json(seedTourismPlaces(regionId, limit), {
+        limit,
+        provider: "tourapi-error-fallback",
+        configured: true,
+        errorCode: error.code,
+      });
+    }
+
+    return json(seedTourismPlaces(regionId, limit), {
+      limit,
+      provider: "tourapi-error-fallback",
+      configured: true,
+      errorCode: "TOUR_API_FETCH_FAILED",
+    });
+  }
+}
+
 async function getPlace(placeId: string, env: Env): Promise<Response> {
   if (env.DB) {
     const row = await env.DB
@@ -1102,6 +1245,163 @@ async function getPlace(placeId: string, env: Env): Promise<Response> {
   }
 
   return json(findPlaceRecord(placeId), { source: "memory-fallback" });
+}
+
+function tourApiServiceKey(env: Env): string {
+  return (env.TOUR_API_SERVICE_KEY ?? env.DATA_GO_KR_API_KEY ?? "").trim();
+}
+
+function tourismRequestUrl(
+  serviceKey: string,
+  options: {
+    bbox: BBox | null;
+    contentTypeId: string;
+    limit: number;
+    page: string | null;
+    regionId: string | null;
+  },
+): URL {
+  const center = options.bbox ? bboxCenter(options.bbox) : null;
+  const endpoint = center ? "locationBasedList2" : "areaBasedList2";
+  const url = new URL(`${TOUR_API_BASE_URL}/${endpoint}`);
+
+  url.searchParams.set("serviceKey", normalizeTourApiServiceKey(serviceKey));
+  url.searchParams.set("numOfRows", String(options.limit));
+  url.searchParams.set("pageNo", String(pageNumber(options.page)));
+  url.searchParams.set("MobileOS", "ETC");
+  url.searchParams.set("MobileApp", "Silsigan");
+  url.searchParams.set("_type", "json");
+  url.searchParams.set("arrange", "P");
+  url.searchParams.set("contentTypeId", options.contentTypeId);
+
+  if (center) {
+    url.searchParams.set("mapX", center.longitude.toFixed(6));
+    url.searchParams.set("mapY", center.latitude.toFixed(6));
+    url.searchParams.set("radius", String(radiusMetersForBBox(options.bbox)));
+  } else {
+    const areaCode = options.regionId ? tourApiRegionAreaCodes[options.regionId] : undefined;
+    if (areaCode) {
+      url.searchParams.set("areaCode", areaCode);
+    }
+  }
+
+  return url;
+}
+
+function normalizeTourApiServiceKey(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function pageNumber(raw: string | null): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 1;
+}
+
+function bboxCenter(bbox: BBox) {
+  return {
+    latitude: (bbox.minLat + bbox.maxLat) / 2,
+    longitude: (bbox.minLng + bbox.maxLng) / 2,
+  };
+}
+
+function radiusMetersForBBox(bbox: BBox | null): number {
+  if (!bbox) {
+    return 20000;
+  }
+
+  const center = bboxCenter(bbox);
+  const diagonal = distanceMeters(center, { latitude: bbox.maxLat, longitude: bbox.maxLng });
+
+  return Math.min(20000, Math.max(1000, Math.ceil(diagonal)));
+}
+
+function tourApiItems(payload: TourApiPayload): TourApiItem[] {
+  const item = payload.response?.body?.items?.item;
+  if (!item) {
+    return [];
+  }
+
+  return Array.isArray(item) ? item : [item];
+}
+
+function tourApiItemToPlace(item: TourApiItem, requestedRegionId: string | null, index: number): TourismPlaceRecord | null {
+  const latitude = Number(item.mapy);
+  const longitude = Number(item.mapx);
+  const contentId = item.contentid?.trim();
+  const title = sanitizeTourApiText(item.title);
+
+  if (!contentId || !title || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  const regionId = regionIdForTourApiItem(item, requestedRegionId);
+
+  return {
+    id: `tourapi-${contentId}`,
+    name: title,
+    categoryId: categoryIdForTourContentType(item.contenttypeid),
+    areaId: `${regionId}-tourapi`,
+    regionId,
+    latitude,
+    longitude,
+    score: Math.max(30, 76 - index),
+    status: "active",
+    coordinateStatus: "verified",
+    address: sanitizeTourApiText(item.addr1) || `${regionLabelForWorker(regionId)} 관광지`,
+    contentId,
+    imageUrl: sanitizeTourApiText(item.firstimage) || sanitizeTourApiText(item.firstimage2) || null,
+    source: "tourapi",
+    tel: sanitizeTourApiText(item.tel) || null,
+  };
+}
+
+function regionIdForTourApiItem(item: TourApiItem, requestedRegionId: string | null): string {
+  if (requestedRegionId && requestedRegionId in tourApiRegionAreaCodes) {
+    return requestedRegionId;
+  }
+
+  const areaRegion = item.areacode ? tourApiAreaRegions[item.areacode] : undefined;
+
+  return areaRegion ?? "seoul";
+}
+
+function categoryIdForTourContentType(contentTypeId: string | undefined): string {
+  if (contentTypeId === "15") return "festival";
+  if (contentTypeId === "39") return "restaurant_cafe";
+  return "tourism";
+}
+
+function sanitizeTourApiText(value: string | undefined): string {
+  return (value ?? "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+function seedTourismPlaces(regionId: string | null, limit: number): TourismPlaceRecord[] {
+  return seedPlaces
+    .filter((place) => place.categoryId === "tourism")
+    .filter((place) => !regionId || place.regionId === regionId)
+    .slice(0, limit)
+    .map((place) => ({ ...place, source: "tourapi-fallback" }));
+}
+
+function regionLabelForWorker(regionId: string): string {
+  if (regionId === "busan") return "부산";
+  if (regionId === "ulsan") return "울산";
+  if (regionId === "gyeongju") return "경주";
+  if (regionId === "daegu") return "대구";
+  if (regionId === "changwon") return "창원";
+  if (regionId === "gimhae") return "김해";
+  if (regionId === "yangsan") return "양산";
+  if (regionId === "pohang") return "포항";
+  if (regionId === "jeju") return "제주";
+  if (regionId === "gangneung") return "강릉";
+  if (regionId === "jeonju") return "전주";
+  if (regionId === "yeosu") return "여수";
+  if (regionId === "sokcho") return "속초";
+  return "서울";
 }
 
 async function getPlaceLive(placeId: string, env: Env): Promise<Response> {
@@ -1149,8 +1449,10 @@ async function getPlaceLive(placeId: string, env: Env): Promise<Response> {
 }
 
 async function clickPlace(request: Request, placeId: string, session: AnonymousSession, env: Env): Promise<Response> {
-  const place = await resolvePlaceRecord(placeId, env);
-  const source = await placeClickSource(request);
+  const payload = await placeClickPayload(request);
+  const source = placeClickSource(payload);
+  const dynamicPlace = dynamicPlaceFromClickPayload(payload?.place, placeId);
+  const place = await resolvePlaceRecordForClick(placeId, env, dynamicPlace);
   if (env.DB) {
     const anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
     await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
@@ -1190,20 +1492,153 @@ async function clickPlace(request: Request, placeId: string, session: AnonymousS
   );
 }
 
-async function placeClickSource(request: Request): Promise<PlaceClickSource> {
+async function placeClickPayload(request: Request): Promise<Record<string, unknown> | null> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
-    return "worker_api";
+    return null;
   }
 
   const body = await readJson(request);
-  const source = body.source;
+  return isRecord(body) ? body : null;
+}
+
+function placeClickSource(payload: Record<string, unknown> | null): PlaceClickSource {
+  const source = payload?.source;
 
   return isPlaceClickSource(source) ? source : "worker_api";
 }
 
 function isPlaceClickSource(value: unknown): value is PlaceClickSource {
   return value === "worker_api" || value === "detail" || value === "map_marker" || value === "ranking" || value === "search_result";
+}
+
+async function resolvePlaceRecordForClick(placeId: string, env: Env, dynamicPlace: DynamicPlaceRecord | null): Promise<PlaceRecord> {
+  try {
+    return await resolvePlaceRecord(placeId, env);
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 404 || !dynamicPlace) {
+      throw error;
+    }
+  }
+
+  if (env.DB) {
+    await ensureD1DynamicPlace(env.DB, dynamicPlace);
+  }
+
+  return dynamicPlace;
+}
+
+function dynamicPlaceFromClickPayload(value: unknown, expectedPlaceId: string): DynamicPlaceRecord | null {
+  if (!isRecord(value) || typeof value.id !== "string" || value.id !== expectedPlaceId || !value.id.startsWith("tourapi-")) {
+    return null;
+  }
+
+  const latitude = numericCoordinate(value.latitude);
+  const longitude = numericCoordinate(value.longitude);
+  if (latitude === null || longitude === null || latitude < 33 || latitude > 39 || longitude < 124 || longitude > 132) {
+    return null;
+  }
+
+  const name = sanitizeTourApiText(typeof value.name === "string" ? value.name : undefined);
+  if (!name) {
+    return null;
+  }
+
+  const regionId = dynamicTourismRegionId(value.regionId);
+  const categoryId = dynamicTourismCategoryId(value.categoryId);
+  const score = typeof value.score === "number" && Number.isFinite(value.score) ? Math.min(1000, Math.max(0, Math.round(value.score))) : 50;
+
+  return {
+    id: value.id,
+    name,
+    categoryId,
+    areaId: `${regionId}-tourapi`,
+    regionId,
+    latitude,
+    longitude,
+    score,
+    status: "active",
+    coordinateStatus: "verified",
+    address: sanitizeTourApiText(typeof value.address === "string" ? value.address : undefined) || `${regionLabelForWorker(regionId)} 관광지`,
+  };
+}
+
+function numericCoordinate(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function dynamicTourismRegionId(value: unknown): string {
+  const regionId = typeof value === "string" ? value : "";
+  return Object.values(tourApiAreaRegions).includes(regionId) || regionId === "seoul" ? regionId : "seoul";
+}
+
+function dynamicTourismCategoryId(value: unknown): string {
+  if (value === "festival") return "festival";
+  if (value === "restaurant_cafe") return "restaurant_cafe";
+  return "tourism";
+}
+
+async function ensureD1DynamicPlace(db: D1Database, place: DynamicPlaceRecord): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO regions (id, name, level, parent_region_id, launch_stage, is_active)
+       VALUES (?, ?, 'city', NULL, 'seed', 1)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         is_active = 1,
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+    )
+    .bind(place.regionId, regionLabelForWorker(place.regionId))
+    .run();
+
+  await db
+    .prepare(
+      `INSERT INTO areas (id, region_id, name)
+       VALUES (?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         region_id = excluded.region_id,
+         name = excluded.name`,
+    )
+    .bind(place.areaId, place.regionId, `${regionLabelForWorker(place.regionId)} 관광 API`)
+    .run();
+
+  await db
+    .prepare(
+      `INSERT INTO categories (id, name, is_sensitive)
+       VALUES (?, ?, 0)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         is_sensitive = excluded.is_sensitive`,
+    )
+    .bind(place.categoryId, dynamicCategoryName(place.categoryId))
+    .run();
+
+  await db
+    .prepare(
+      `INSERT INTO places (id, area_id, region_id, category_id, name, address, latitude, longitude, coordinate_status, launch_stage, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', 'active', 1)
+       ON CONFLICT(id) DO UPDATE SET
+         area_id = excluded.area_id,
+         region_id = excluded.region_id,
+         category_id = excluded.category_id,
+         name = excluded.name,
+         address = excluded.address,
+         latitude = excluded.latitude,
+         longitude = excluded.longitude,
+         coordinate_status = 'verified',
+         launch_stage = 'active',
+         is_active = 1,
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+    )
+    .bind(place.id, place.areaId, place.regionId, place.categoryId, place.name, place.address, place.latitude, place.longitude)
+    .run();
+}
+
+function dynamicCategoryName(categoryId: string): string {
+  if (categoryId === "festival") return "축제";
+  if (categoryId === "restaurant_cafe") return "맛집/카페";
+  return "관광지";
 }
 
 async function likePlace(placeId: string, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {

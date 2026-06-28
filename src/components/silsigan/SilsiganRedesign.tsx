@@ -61,7 +61,7 @@ import { getSiteUrl } from "@/lib/site-url";
 import { CurrentLocationButton, type LocationPermissionState, type UiLocation } from "./CurrentLocationButton";
 import { EmptyState as SharedEmptyState } from "./EmptyState";
 import { crowdLabels, lineLabels, parkingLabels, weatherLabels } from "./labels";
-import { NaverMap, type MapBounds } from "./NaverMap";
+import { NaverMap, type MapBounds, type MapFocusTarget } from "./NaverMap";
 import { PlaceDetailSheet } from "./PlaceDetailSheet";
 import type { PlaceComment } from "./CommentFeed";
 import { PhotoUploader, type PlacePhoto, type PreparedPhotoUpload } from "./PhotoUploader";
@@ -74,6 +74,10 @@ type StatusTone = "calm" | "normal" | "busy" | "danger";
 type Category = ReportCategory;
 type ApiPlaceInput = ApiPlace & {
   rankingScore?: number;
+};
+
+type TourismWorkerPlace = WorkerPlace & {
+  source?: "tourapi" | "tourapi-fallback";
 };
 
 type Place = {
@@ -319,6 +323,10 @@ type QuickReportPreset = {
 
 type PlaceTab = "실시간" | "사진" | "질문" | "해시태그" | "근처";
 
+type MapSearchFocusTarget = MapFocusTarget & {
+  keywords: string[];
+};
+
 const presentationByPlaceId: Record<string, Pick<Place, "distance" | "x" | "y">> = {
   "ulsan-taehwagang": { distance: "1.2km", x: 31, y: 47 },
   "busan-gwangalli": { distance: "38km", x: 65, y: 39 },
@@ -341,6 +349,48 @@ const parkingChips = ["널널", "여유 있음", "거의 없음", "만차"];
 const lineChips = ["없음", "보통", "있음", "매우 김"];
 const weatherChips = ["맑음", "흐림", "비", "실내"];
 const questionExamples = ["주차 자리 있나요?", "줄 많이 긴가요?", "사진으로 볼 수 있나요?", "아이랑 가도 괜찮나요?"];
+const mapSearchFocusTargets: MapSearchFocusTarget[] = [
+  {
+    id: "ulsan-nam-samsan",
+    label: "울산 남구 삼산동",
+    latitude: 35.5396,
+    longitude: 129.3387,
+    zoom: 14,
+    keywords: ["울산 남구 삼산동", "울산남구삼산동", "삼산동", "삼산"],
+  },
+  {
+    id: "ulsan-nam",
+    label: "울산 남구",
+    latitude: 35.5438,
+    longitude: 129.3309,
+    zoom: 12,
+    keywords: ["울산 남구", "울산남구"],
+  },
+  {
+    id: "ulsan",
+    label: "울산",
+    latitude: 35.5384,
+    longitude: 129.3114,
+    zoom: 11,
+    keywords: ["울산", "울산광역시"],
+  },
+  {
+    id: "busan-gwangalli",
+    label: "부산 광안리",
+    latitude: 35.1532,
+    longitude: 129.1186,
+    zoom: 14,
+    keywords: ["부산 광안리", "광안리", "광안리해수욕장"],
+  },
+  {
+    id: "busan",
+    label: "부산",
+    latitude: 35.1796,
+    longitude: 129.0756,
+    zoom: 11,
+    keywords: ["부산", "부산광역시"],
+  },
+];
 const quickReportPresets: QuickReportPreset[] = [
   {
     id: "parking-full",
@@ -462,6 +512,7 @@ export default function SilsiganRedesign() {
   const [activeView, setActiveView] = useState<View>("map");
   const phoneBodyRef = useRef<HTMLDivElement>(null);
   const [places, setPlaces] = useState<Place[]>([]);
+  const [tourismPlaces, setTourismPlaces] = useState<Place[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [posts, setPosts] = useState<PublicPost[]>([]);
   const [allPosts, setAllPosts] = useState<PublicPost[]>([]);
@@ -610,6 +661,19 @@ export default function SilsiganRedesign() {
       const reportsRequest = cloudflareApiConfigured
         ? fetchJson<PublicReport[]>(cloudflareApiUrl(buildScopedApiPath("/api/reports", listScope)))
         : fetchJson<PublicReport[]>(buildScopedApiPath("/api/reports", listScope));
+      const tourismRequest = cloudflareApiConfigured
+        ? fetchJson<TourismWorkerPlace[]>(
+            cloudflareApiUrl(
+              buildScopedApiPath("/api/tourism/attractions", {
+                regionId: activeDataRegionId,
+                limit: 20,
+                bbox: options.bounds ? mapBoundsToBboxParam(options.bounds) : undefined,
+              }),
+            ),
+          )
+            .then(workerPlacesToAppPlaces)
+            .catch(() => [])
+        : Promise.resolve<ApiPlaceInput[]>([]);
       const postsRequest = cloudflareApiConfigured
         ? fetchJson<PublicPost[]>(cloudflareApiUrl(buildScopedApiPath("/api/posts", listScope)))
         : fetchJson<PublicPost[]>(buildScopedApiPath("/api/posts", listScope));
@@ -622,9 +686,10 @@ export default function SilsiganRedesign() {
       const myQuestionsRequest = cloudflareApiConfigured
         ? fetchJson<MyQuestion[]>(cloudflareApiUrl("/api/my-questions")).catch(() => [])
         : fetchJson<MyQuestion[]>("/api/my-questions").catch(() => []);
-      const [apiPlaces, apiReports, apiPosts, apiHashtags, apiQuestions, apiMyQuestions] = await Promise.all([
+      const [apiPlaces, apiReports, apiTourismPlaces, apiPosts, apiHashtags, apiQuestions, apiMyQuestions] = await Promise.all([
         placesRequest,
         reportsRequest,
+        tourismRequest,
         postsRequest,
         hashtagsRequest,
         questionsRequest,
@@ -632,11 +697,14 @@ export default function SilsiganRedesign() {
       ]);
       const mappedReports = mapReports(apiReports, apiPlaces);
       const mappedQuestions = mapQuestions(apiQuestions);
-      const mappedPlaces = mapPlaces(apiPlaces, mappedReports, mappedQuestions);
+      const mappedBasePlaces = mapPlaces(apiPlaces, mappedReports, mappedQuestions);
+      const mappedTourismPlaces = mapPlaces(uniqueApiPlacesById(apiTourismPlaces, new Set(apiPlaces.map((place) => place.id))), [], []);
+      const mappedPlaces = mergePlaceLists(mappedBasePlaces, mappedTourismPlaces);
       const scopedPlaceIds = mappedPlaces.map((place) => place.id);
       const apiWorkerPhotos = cloudflareApiConfigured ? await fetchWorkerPhotosForPlaces(scopedPlaceIds) : [];
 
       setPlaces(mappedPlaces);
+      setTourismPlaces(mappedTourismPlaces);
       setReports(mappedReports);
       setPosts(apiPosts);
       setAllPosts(apiPosts);
@@ -872,7 +940,7 @@ export default function SilsiganRedesign() {
     try {
       await fetchJson<PlaceClickResult>(cloudflareApiUrl(`/api/places/${encodeURIComponent(place.id)}/click`), {
         method: "POST",
-        body: JSON.stringify({ source }),
+        body: JSON.stringify({ source, place: placeClickPayload(place) }),
       });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "장소 클릭 기록에 실패했습니다.");
@@ -1620,6 +1688,7 @@ export default function SilsiganRedesign() {
                     workerPhotos={workerPhotos}
                     locationPermission={mapLocationPermission}
                     onToast={setToast}
+                    tourismPlaces={tourismPlaces}
                   />
                 )}
                 {activeView === "place" && selectedPlace && (
@@ -2050,6 +2119,7 @@ function MapScreen({
   realtimeEventsByPlaceId,
   reports,
   searchQuery,
+  tourismPlaces,
   workerCommentsByPlaceId,
   workerPhotos,
 }: {
@@ -2085,14 +2155,18 @@ function MapScreen({
   realtimeEventsByPlaceId: Record<string, CloudflareRealtimeEvent[]>;
   reports: Report[];
   searchQuery: string;
+  tourismPlaces: Place[];
   workerCommentsByPlaceId: Record<string, PlaceComment[]>;
   workerPhotos: WorkerPhoto[];
 }) {
   const [trafficEnabled, setTrafficEnabled] = useState(false);
   const [requeryHintVisible, setRequeryHintVisible] = useState(false);
-  const filteredPlaces = searchPlaces(filterPlaces(filterPlacesByRegion(places, activeRegion), activeFilter), searchQuery);
+  const searchFocus = useMemo(() => mapSearchFocusForQuery(searchQuery), [searchQuery]);
+  const baseFilteredPlaces = searchPlaces(filterPlaces(filterPlacesByRegion(places, activeRegion), activeFilter), searchQuery);
+  const nearbySearchPlaces = useMemo(() => (searchFocus ? placesNearSearchFocus(places, searchFocus) : []), [places, searchFocus]);
+  const filteredPlaces = searchFocus && baseFilteredPlaces.length === 0 ? nearbySearchPlaces : baseFilteredPlaces;
   const mapAreaPlaces = mapBounds ? filteredPlaces.filter((place) => isPlaceInBounds(place, mapBounds)) : filteredPlaces;
-  const nationwideTop = rankPlaces(searchPlaces(places, searchQuery));
+  const nationwideTop = rankPlaces(searchFocus && searchPlaces(places, searchQuery).length === 0 ? nearbySearchPlaces : searchPlaces(places, searchQuery));
   const regionTop = rankPlaces(filteredPlaces);
   const mapTop = rankPlaces(mapAreaPlaces);
   const detailPlace = previewPlace;
@@ -2146,6 +2220,7 @@ function MapScreen({
           places={filteredPlaces}
           compact
           currentLocation={currentLocation}
+          searchFocus={searchFocus}
           showTraffic={trafficEnabled}
           onBoundsChange={onMapBoundsChange}
           onMapInteraction={() => setRequeryHintVisible(true)}
@@ -2168,6 +2243,7 @@ function MapScreen({
           <Filter size={16} /> 필터
         </button>
       </div>
+      {searchFocus && <p className={styles.mapSearchFocus}>{searchFocus.label} 중심으로 지도를 표시합니다.</p>}
 
       <div className={styles.mapToolRow}>
         <button className={trafficEnabled ? styles.mapToolActive : ""} type="button" onClick={toggleTraffic} aria-pressed={trafficEnabled}>
@@ -2185,6 +2261,21 @@ function MapScreen({
         </button>
       </div>
       {requeryHintVisible && <p className={styles.mapRequeryHint}>지도를 움직였습니다. 이 지역 기준으로 다시 검색할 수 있어요.</p>}
+
+      <section className={styles.tourismApiPanel} aria-label="관광 API 장소">
+        <div>
+          <p className={styles.eyebrow}>관광 API</p>
+          <strong>{tourismPlaces.length > 0 ? `${regionLabel(activeRegion)} 관광지 ${tourismPlaces.length}곳` : "관광지 불러오는 중"}</strong>
+        </div>
+        <div className={styles.tourismApiList}>
+          {(tourismPlaces.length > 0 ? tourismPlaces.slice(0, 3) : mapTop.slice(0, 3)).map((place) => (
+            <button key={`tourism-${place.id}`} type="button" onClick={() => onPreviewPlace(place, "map_marker")}>
+              <MapPin size={14} aria-hidden="true" />
+              <span>{place.name}</span>
+            </button>
+          ))}
+        </div>
+      </section>
 
       <div className={styles.locationNotice}>
         <div>
@@ -3419,6 +3510,28 @@ function mapPlaces(apiPlaces: ApiPlaceInput[], reports: Report[], questions: Que
   });
 }
 
+function uniqueApiPlacesById(places: ApiPlaceInput[], excludedIds = new Set<string>()): ApiPlaceInput[] {
+  const seen = new Set(excludedIds);
+  const unique: ApiPlaceInput[] = [];
+
+  places.forEach((place) => {
+    if (seen.has(place.id)) {
+      return;
+    }
+
+    seen.add(place.id);
+    unique.push(place);
+  });
+
+  return unique;
+}
+
+function mergePlaceLists(primary: Place[], secondary: Place[]): Place[] {
+  const seen = new Set(primary.map((place) => place.id));
+
+  return [...primary, ...secondary.filter((place) => !seen.has(place.id))];
+}
+
 function mapReports(reports: PublicReport[], apiPlaces: ApiPlace[]): Report[] {
   return [...reports]
     .filter((report) => !report.hiddenAt)
@@ -3479,6 +3592,33 @@ function filterPlaces(places: Place[], filter: string) {
   }
 
   return places;
+}
+
+function mapSearchFocusForQuery(query: string): MapFocusTarget | null {
+  const normalizedQuery = normalizeMapSearchText(query);
+
+  if (!normalizedQuery) {
+    return null;
+  }
+
+  return mapSearchFocusTargets.find((target) => target.keywords.some((keyword) => normalizedQuery.includes(normalizeMapSearchText(keyword)))) ?? null;
+}
+
+function placesNearSearchFocus(places: Place[], searchFocus: MapFocusTarget) {
+  return [...places]
+    .sort((left, right) => distanceScore(left, searchFocus) - distanceScore(right, searchFocus))
+    .slice(0, 10);
+}
+
+function distanceScore(place: Pick<Place, "latitude" | "longitude">, target: Pick<MapFocusTarget, "latitude" | "longitude">) {
+  const latitudeDelta = place.latitude - target.latitude;
+  const longitudeDelta = place.longitude - target.longitude;
+
+  return latitudeDelta * latitudeDelta + longitudeDelta * longitudeDelta;
+}
+
+function normalizeMapSearchText(query: string) {
+  return query.trim().toLocaleLowerCase("ko-KR").replace(/[\s·,._-]/g, "");
 }
 
 function searchPlaces(places: Place[], query: string) {
@@ -3774,6 +3914,20 @@ function signalFromTone(tone: StatusTone) {
   if (tone === "normal") return "대기 보통";
   if (tone === "busy") return "혼잡 주의";
   return "출발 전 확인";
+}
+
+function placeClickPayload(place: Place) {
+  return {
+    id: place.id,
+    name: place.name,
+    categoryId: place.category,
+    areaId: `${place.region}-tourapi`,
+    regionId: place.region,
+    latitude: place.latitude,
+    longitude: place.longitude,
+    address: place.address,
+    score: place.score,
+  };
 }
 
 function scrollNearestContainerToChild(child: HTMLElement | null) {

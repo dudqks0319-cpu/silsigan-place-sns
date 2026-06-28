@@ -1,5 +1,7 @@
 .next
 .open-next
+.wrangler
+**/.wrangler
 cloudflare-env.d.ts
 worker-configuration.d.ts
 node_modules
@@ -8,6 +10,8 @@ node_modules
 .env.local
 .env.*.local
 coverage
+.dev.vars
+**/.dev.vars
 playwright-report
 test-results
 tsconfig.tsbuildinfo
