@@ -1454,7 +1454,7 @@
 
 .realMapFrame :global(.naver-map__search-location) {
   position: absolute;
-  z-index: 4;
+  z-index: 3;
   min-width: 92px;
   max-width: 136px;
   border: 2px solid #ffffff;

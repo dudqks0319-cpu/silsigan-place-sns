@@ -327,7 +327,7 @@ export function NaverMap<TPlace extends MapPlace>({
             position: new maps.LatLng(searchFocusForMap.latitude, searchFocusForMap.longitude),
             map,
             title: searchFocusForMap.label,
-            zIndex: 1200,
+            zIndex: 80,
             icon: {
               content: `<span class="naver-search-marker" aria-label="${escapeHtml(searchFocusForMap.label)} 검색 위치"><span>${escapeHtml(searchFocusForMap.label)}</span></span>`,
               size: new maps.Size(118, 44),
