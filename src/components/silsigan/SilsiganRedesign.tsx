@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cloudflareApiUrl, fetchJson, isCloudflareApiConfigured } from "@/lib/api-client";
+import { cloudflareApiUrl, fetchJson, isCloudflareApiConfigured, isLocalCloudflareApiConfigured } from "@/lib/api-client";
 import { buildScopedApiPath, normalizeRegionScope } from "@/lib/api-scope";
 import type { CloudflareRealtimeEvent, CloudflareRealtimeRoom } from "@/lib/cloudflare-api";
 import { workerPlacesToAppPlaces, type WorkerPlace } from "@/lib/cloudflare-place-adapter";
@@ -706,6 +706,7 @@ export default function SilsiganRedesign() {
   const [liveConnection, setLiveConnection] = useState<"connecting" | "live" | "polling">("polling");
   const [realtimeEventsByPlaceId, setRealtimeEventsByPlaceId] = useState<Record<string, CloudflareRealtimeEvent[]>>({});
   const cloudflareApiConfigured = useMemo(() => isCloudflareApiConfigured(), []);
+  const localCloudflareApiConfigured = useMemo(() => isLocalCloudflareApiConfigured(), []);
   const activeDataRegionId = useMemo(() => normalizeRegionScope(activeRegion), [activeRegion]);
   const mapBoundsKey = mapBounds ? mapBoundsToBboxParam(mapBounds) : "";
   const normalizedMapSearchQuery = useMemo(() => normalizePlaceSearchQuery(mapSearchQuery) ?? "", [mapSearchQuery]);
@@ -803,37 +804,51 @@ export default function SilsiganRedesign() {
         bbox: options.bounds ? mapBoundsToBboxParam(options.bounds) : undefined,
         q: normalizePlaceSearchQuery(options.query),
       };
+      const readConfiguredJson = <T,>(path: string) =>
+        cloudflareApiConfigured
+          ? fetchJson<T>(cloudflareApiUrl(path)).catch((error) => {
+              if (!localCloudflareApiConfigured) {
+                throw error;
+              }
+
+              return fetchJson<T>(path);
+            })
+          : fetchJson<T>(path);
+      const placesPath = buildScopedApiPath("/api/places", placesScope);
       const placesRequest: Promise<ApiPlaceInput[]> = cloudflareApiConfigured
-        ? fetchJson<WorkerPlace[]>(cloudflareApiUrl(buildScopedApiPath("/api/places", placesScope))).then(workerPlacesToAppPlaces)
-        : fetchJson<ApiPlace[]>(buildScopedApiPath("/api/places", placesScope));
-      const reportsRequest = cloudflareApiConfigured
-        ? fetchJson<PublicReport[]>(cloudflareApiUrl(buildScopedApiPath("/api/reports", listScope)))
-        : fetchJson<PublicReport[]>(buildScopedApiPath("/api/reports", listScope));
-      const tourismRequest = cloudflareApiConfigured
+        ? fetchJson<WorkerPlace[]>(cloudflareApiUrl(placesPath))
+            .then(workerPlacesToAppPlaces)
+            .catch((error) => {
+              if (!localCloudflareApiConfigured) {
+                throw error;
+              }
+
+              return fetchJson<ApiPlace[]>(placesPath);
+            })
+        : fetchJson<ApiPlace[]>(placesPath);
+      const reportsRequest = readConfiguredJson<PublicReport[]>(buildScopedApiPath("/api/reports", listScope));
+      const tourismPath = buildScopedApiPath("/api/tourism/attractions", {
+        regionId: activeDataRegionId,
+        limit: 20,
+        bbox: options.bounds ? mapBoundsToBboxParam(options.bounds) : undefined,
+      });
+      const tourismRequest: Promise<ApiPlaceInput[]> = cloudflareApiConfigured
         ? fetchJson<TourismWorkerPlace[]>(
-            cloudflareApiUrl(
-              buildScopedApiPath("/api/tourism/attractions", {
-                regionId: activeDataRegionId,
-                limit: 20,
-                bbox: options.bounds ? mapBoundsToBboxParam(options.bounds) : undefined,
-              }),
-            ),
+            cloudflareApiUrl(tourismPath),
           )
             .then(workerPlacesToAppPlaces)
-            .catch(() => [])
-        : Promise.resolve<ApiPlaceInput[]>([]);
-      const postsRequest = cloudflareApiConfigured
-        ? fetchJson<PublicPost[]>(cloudflareApiUrl(buildScopedApiPath("/api/posts", listScope)))
-        : fetchJson<PublicPost[]>(buildScopedApiPath("/api/posts", listScope));
-      const hashtagsRequest = cloudflareApiConfigured
-        ? fetchJson<PublicHashtag[]>(cloudflareApiUrl("/api/hashtags"))
-        : fetchJson<PublicHashtag[]>("/api/hashtags");
-      const questionsRequest = cloudflareApiConfigured
-        ? fetchJson<PublicQuestion[]>(cloudflareApiUrl(buildScopedApiPath("/api/questions", listScope)))
-        : fetchJson<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope));
-      const myQuestionsRequest = cloudflareApiConfigured
-        ? fetchJson<MyQuestion[]>(cloudflareApiUrl("/api/my-questions")).catch(() => [])
-        : fetchJson<MyQuestion[]>("/api/my-questions").catch(() => []);
+            .catch(() => {
+              if (!localCloudflareApiConfigured) {
+                return [];
+              }
+
+              return fetchJson<ApiPlace[]>(tourismPath).catch(() => []);
+            })
+        : fetchJson<ApiPlace[]>(tourismPath).catch(() => []);
+      const postsRequest = readConfiguredJson<PublicPost[]>(buildScopedApiPath("/api/posts", listScope));
+      const hashtagsRequest = readConfiguredJson<PublicHashtag[]>("/api/hashtags");
+      const questionsRequest = readConfiguredJson<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope));
+      const myQuestionsRequest = readConfiguredJson<MyQuestion[]>("/api/my-questions").catch(() => []);
       const [apiPlaces, apiReports, apiTourismPlaces, apiPosts, apiHashtags, apiQuestions, apiMyQuestions] = await Promise.all([
         placesRequest,
         reportsRequest,
@@ -874,7 +889,7 @@ export default function SilsiganRedesign() {
         setLoading(false);
       }
     }
-  }, [activeDataRegionId, activeRegion, cloudflareApiConfigured]);
+  }, [activeDataRegionId, activeRegion, cloudflareApiConfigured, localCloudflareApiConfigured]);
 
   useEffect(() => {
     if (phoneBodyRef.current) {
@@ -1095,6 +1110,10 @@ export default function SilsiganRedesign() {
         body: JSON.stringify({ source, place: placeClickPayload(place) }),
       });
     } catch (error) {
+      if (localCloudflareApiConfigured) {
+        return;
+      }
+
       setToast(error instanceof Error ? error.message : "장소 클릭 기록에 실패했습니다.");
     }
   };
@@ -1121,6 +1140,14 @@ export default function SilsiganRedesign() {
       }
       setToast(wasLiked ? `${place.name} 좋아요 해제 완료 · 누적 ${result.likeCount}` : `${place.name} 좋아요 반영 완료 · 누적 ${result.likeCount}`);
     } catch (error) {
+      if (localCloudflareApiConfigured) {
+        if (!wasLiked) {
+          appendRealtimeEvent(place.id, "place.liked", new Date().toISOString(), { placeId: place.id, source: "local-preview" });
+        }
+        setToast(wasLiked ? `${place.name} 좋아요를 해제했습니다.` : `${place.name} 좋아요가 로컬 미리보기로 반영됐습니다.`);
+        return;
+      }
+
       setLikedPlaceIds((current) => toggleSetValue(current, place.id));
       setToast(error instanceof Error ? error.message : "좋아요 반영에 실패했습니다.");
     }
@@ -1148,6 +1175,12 @@ export default function SilsiganRedesign() {
       appendRealtimeEvent(place.id, "report.created", report.createdAt, { id: report.id, placeId: place.id, targetType: report.targetType });
       setToast(`${place.name} 신고가 운영 검토 큐에 접수됐습니다.`);
     } catch (error) {
+      if (localCloudflareApiConfigured) {
+        appendRealtimeEvent(place.id, "report.created", new Date().toISOString(), { placeId: place.id, targetType: "place", source: "local-preview" });
+        setToast(`${place.name} 신고가 로컬 미리보기로 기록됐습니다. staging에서는 운영 검토 큐에 연결됩니다.`);
+        return;
+      }
+
       setToast(error instanceof Error ? error.message : "장소 신고 접수에 실패했습니다.");
     }
   };
@@ -1867,7 +1900,16 @@ export default function SilsiganRedesign() {
                     onReport={startReportForPlace}
                     onReportPlace={reportMapPlace}
                     onSearchQueryChange={setMapSearchQuery}
+                    onGoSearch={() => setActiveView("search")}
                     onGoReport={() => setActiveView("report")}
+                    onRetryMapData={() => {
+                      setMapBounds(null);
+                      setMapSearchQuery("");
+                      setActiveFilter("전체");
+                      lastMapBoundsFetchKeyRef.current = "";
+                      setToast("지도 데이터를 다시 불러옵니다.");
+                      void loadData({ bounds: null, query: null });
+                    }}
                     onPhotoDelete={deletePlacePhoto}
                     onPhotoClick={clickPlacePhoto}
                     onPhotoUpload={uploadPlacePhoto}
@@ -2380,6 +2422,8 @@ function SearchScreen({
   );
   const popularHashtags = hashtags.slice(0, 8);
   const hotRegions = ["성수", "광안리", "황리단길", "해운대", "제주", "부산"];
+  const recommendedSearches = ["광안리", "해운대", "황리단길"];
+  const recommendedTags = ["주차만차", "웨이팅", "사진스팟"];
 
   return (
     <div className={styles.screenStack}>
@@ -2439,6 +2483,16 @@ function SearchScreen({
                 </div>
               </button>
             ))}
+            {matchingPlaces.length === 0 && (
+              <SearchEmptyRecommendations
+                query={query}
+                recommendedSearches={recommendedSearches}
+                recommendedTags={recommendedTags}
+                onGoMap={onGoMap}
+                onSearch={setQuery}
+                onSelectHashtag={onSelectHashtag}
+              />
+            )}
           </div>
         )}
 
@@ -2453,6 +2507,16 @@ function SearchScreen({
                 </div>
               </button>
             ))}
+            {matchingHashtags.length === 0 && (
+              <SearchEmptyRecommendations
+                query={query}
+                recommendedSearches={recommendedSearches}
+                recommendedTags={recommendedTags}
+                onGoMap={onGoMap}
+                onSearch={setQuery}
+                onSelectHashtag={onSelectHashtag}
+              />
+            )}
           </div>
         )}
 
@@ -2468,9 +2532,60 @@ function SearchScreen({
                 </button>
               );
             })}
+            {matchingPosts.length === 0 && (
+              <SearchEmptyRecommendations
+                query={query}
+                recommendedSearches={recommendedSearches}
+                recommendedTags={recommendedTags}
+                onGoMap={onGoMap}
+                onSearch={setQuery}
+                onSelectHashtag={onSelectHashtag}
+              />
+            )}
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function SearchEmptyRecommendations({
+  onGoMap,
+  onSearch,
+  onSelectHashtag,
+  query,
+  recommendedSearches,
+  recommendedTags,
+}: {
+  onGoMap: () => void;
+  onSearch: (query: string) => void;
+  onSelectHashtag: (hashtagName: string) => void;
+  query: string;
+  recommendedSearches: string[];
+  recommendedTags: string[];
+}) {
+  return (
+    <div className={styles.searchEmptyRecommendations}>
+      <Search size={17} aria-hidden="true" />
+      <div>
+        <strong>{query.trim() ? `"${query.trim()}" 결과가 아직 없습니다` : "검색어를 입력해 주세요"}</strong>
+        <p>추천 지역이나 해시태그로 바로 다시 찾아볼 수 있어요.</p>
+      </div>
+      <div className={styles.searchRecommendationGroup} aria-label="추천 지역">
+        {recommendedSearches.map((item) => (
+          <button key={item} type="button" onClick={() => onSearch(item)}>
+            {item}
+          </button>
+        ))}
+      </div>
+      <div className={styles.searchRecommendationGroup} aria-label="추천 해시태그">
+        {recommendedTags.map((tag) => (
+          <button key={tag} type="button" onClick={() => onSelectHashtag(tag)}>
+            #{tag}
+          </button>
+        ))}
+        <button type="button" onClick={onGoMap}>지도에서 보기</button>
+      </div>
     </div>
   );
 }
@@ -2502,8 +2617,10 @@ function MapScreen({
   onReportPhoto,
   onReportPlace,
   onSearchQueryChange,
+  onGoSearch,
   onShareLaunchCard,
   onToast,
+  onRetryMapData,
   places,
   posts,
   previewPlace,
@@ -2540,8 +2657,10 @@ function MapScreen({
   onReportPhoto: (place: Place, photo: PlacePhoto) => void;
   onReportPlace: (place: Place) => void;
   onSearchQueryChange: (query: string) => void;
+  onGoSearch: () => void;
   onShareLaunchCard: () => void;
   onToast: (message: string) => void;
+  onRetryMapData: () => void;
   places: Place[];
   posts: PublicPost[];
   previewPlace: Place | null;
@@ -2577,6 +2696,7 @@ function MapScreen({
       <button type="button" onClick={onShareLaunchCard}>공유 카드 복사</button>
     </div>
   );
+  const showMapRecovery = filteredPlaces.length === 0;
 
   useEffect(() => {
     if (!detailPlace) {
@@ -2626,6 +2746,20 @@ function MapScreen({
           onSelectPlace={selectMapPlace}
         />
       </section>
+      {showMapRecovery && (
+        <section className={styles.mapRecoveryCard} aria-label="지도 데이터 복구">
+          <MapIcon size={18} aria-hidden="true" />
+          <div>
+            <strong>지도 데이터를 불러오지 못했어요</strong>
+            <p>필터나 검색 조건을 바꾸거나, 첫 현장 사진을 올려 이 지역 후보를 만들 수 있어요.</p>
+          </div>
+          <div className={styles.mapRecoveryActions}>
+            <button type="button" onClick={onRetryMapData}>재시도</button>
+            <button type="button" onClick={onGoSearch}>검색으로 이동</button>
+            <button type="button" onClick={onGoReport}>사진 올리기</button>
+          </div>
+        </section>
+      )}
 
       <div className={styles.mapSearchRow}>
         <label className={styles.searchBox}>

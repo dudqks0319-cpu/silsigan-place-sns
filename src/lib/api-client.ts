@@ -54,6 +54,21 @@ export function isCloudflareApiConfigured() {
   return Boolean(cloudflareApiBaseUrl());
 }
 
+export function isLocalCloudflareApiConfigured() {
+  const baseUrl = cloudflareApiBaseUrl();
+  if (!baseUrl) {
+    return false;
+  }
+
+  try {
+    const hostname = new URL(baseUrl).hostname;
+
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 function cloudflareApiBaseUrl() {
   return process.env.NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
 }

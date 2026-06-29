@@ -737,11 +737,16 @@ function markerVisualOffsetForPlace(place: MapPlace, places: MapPlace[]) {
   }
 
   const offsets = [
-    { x: -34, y: -14 },
-    { x: 34, y: 14 },
-    { x: -28, y: 22 },
-    { x: 28, y: -22 },
+    { x: -38, y: -18 },
+    { x: 38, y: 18 },
+    { x: -32, y: 26 },
+    { x: 32, y: -26 },
     { x: 0, y: 0 },
+    { x: -46, y: 18 },
+    { x: 46, y: -18 },
+    { x: -14, y: -42 },
+    { x: 14, y: 42 },
+    { x: 52, y: 4 },
   ];
   const clusterIndex = cluster.findIndex((candidate) => candidate.id === place.id);
 
@@ -749,7 +754,7 @@ function markerVisualOffsetForPlace(place: MapPlace, places: MapPlace[]) {
 }
 
 function arePlacesVisuallyClose(place: MapPlace, candidate: MapPlace) {
-  return Math.abs(place.latitude - candidate.latitude) <= 0.35 && Math.abs(place.longitude - candidate.longitude) <= 0.45;
+  return Math.abs(place.latitude - candidate.latitude) <= 0.08 && Math.abs(place.longitude - candidate.longitude) <= 0.12;
 }
 
 function escapeHtml(value: string) {
