@@ -1304,34 +1304,51 @@ export default function SilsiganRedesign() {
         ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
       };
 
-      if (cloudflareApiConfigured) {
-        const result = await fetchJson<FieldReportSubmitResult>(cloudflareApiUrl("/api/reports"), {
-          method: "POST",
-          body: JSON.stringify({
-            placeId: payload.placeId,
-            category: selectedPlace.category,
-            crowdLevel: payload.crowdLevel,
-            lineStatus: payload.lineStatus,
-            parkingStatus: payload.parkingStatus,
-            weatherFeel: payload.weatherFeel,
-            comment: payload.caption,
-            ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
-          }),
-        });
-        const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
-        const badge = result.report.verifiedRadiusM ? "현장 인증" : "상태 제보";
-        const safetyNotice = result.safetyWarning ? ` · ${result.safetyWarning}` : "";
-        trackEvent("submit_report", { placeId: selectedPlace.id, locationVerified: Boolean(result.report.verifiedRadiusM) });
-        setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}${safetyNotice}`);
-      } else {
+      const submitLocalPost = async () => {
         const result = await fetchJson<{ post: PublicPost; credits: { amount: number }[] }>("/api/posts", {
           method: "POST",
           body: JSON.stringify(payload),
         });
         const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
         const badge = result.post.locationVerified ? "현장 인증" : "상태 제보";
+        const optimisticReport = reportFromPost(result.post, selectedPlace);
+
+        setPosts((current) => mergePublicPosts([result.post], current));
+        setAllPosts((current) => mergePublicPosts([result.post], current));
+        setReports((current) => mergeReports([optimisticReport], current));
         trackEvent("submit_post", { placeId: selectedPlace.id, locationVerified: result.post.locationVerified });
-        setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}`);
+        setToast(`${badge} 완료! 방금 올린 사진이 ${selectedPlace.name} 피드에 반영됐습니다. 물어보기권 +${earned}`);
+      };
+
+      if (cloudflareApiConfigured) {
+        try {
+          const result = await fetchJson<FieldReportSubmitResult>(cloudflareApiUrl("/api/reports"), {
+            method: "POST",
+            body: JSON.stringify({
+              placeId: payload.placeId,
+              category: selectedPlace.category,
+              crowdLevel: payload.crowdLevel,
+              lineStatus: payload.lineStatus,
+              parkingStatus: payload.parkingStatus,
+              weatherFeel: payload.weatherFeel,
+              comment: payload.caption,
+              ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
+            }),
+          });
+          const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
+          const badge = result.report.verifiedRadiusM ? "현장 인증" : "상태 제보";
+          const safetyNotice = result.safetyWarning ? ` · ${result.safetyWarning}` : "";
+          trackEvent("submit_report", { placeId: selectedPlace.id, locationVerified: Boolean(result.report.verifiedRadiusM) });
+          setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}${safetyNotice}`);
+        } catch (error) {
+          if (!localCloudflareApiConfigured) {
+            throw error;
+          }
+
+          await submitLocalPost();
+        }
+      } else {
+        await submitLocalPost();
       }
       setReportText("");
       setLocationVerificationStatus("idle");
@@ -4069,6 +4086,57 @@ function mapReports(reports: PublicReport[], apiPlaces: ApiPlace[]): Report[] {
         weatherFeel,
       } satisfies Report & Pick<PublicReport, "crowdLevel" | "lineStatus" | "parkingStatus">;
     });
+}
+
+function reportFromPost(post: PublicPost, place: Place): Report {
+  const tone = toneFromStatus(post.crowdLevel, post.parkingStatus);
+
+  return {
+    id: `post-report:${post.id}`,
+    placeId: post.placeId,
+    title: place.name,
+    body: post.caption ?? `${crowdLabels[post.crowdLevel]} · 주차 ${parkingLabels[post.parkingStatus]}`,
+    meta: `${minutesAgo(post.createdAt)} · ${post.locationVerified ? "현장 인증" : "상태 제보"} · ${post.photoCount > 0 ? "사진 있음" : "사진 없음"}`,
+    tone,
+    verified: post.locationVerified,
+    hasPhoto: post.photoCount > 0,
+    createdAt: post.createdAt,
+    hiddenAt: post.hiddenAt,
+    crowdLevel: post.crowdLevel,
+    lineStatus: post.lineStatus,
+    parkingStatus: post.parkingStatus,
+    weatherFeel: post.weatherFeel,
+  };
+}
+
+function mergePublicPosts(incoming: PublicPost[], current: PublicPost[]) {
+  const seen = new Set<string>();
+
+  return [...incoming, ...current]
+    .filter((post) => {
+      if (seen.has(post.id)) {
+        return false;
+      }
+
+      seen.add(post.id);
+      return true;
+    })
+    .slice(0, 100);
+}
+
+function mergeReports(incoming: Report[], current: Report[]) {
+  const seen = new Set<string>();
+
+  return [...incoming, ...current]
+    .filter((report) => {
+      if (seen.has(report.id)) {
+        return false;
+      }
+
+      seen.add(report.id);
+      return true;
+    })
+    .slice(0, 100);
 }
 
 function mapQuestions(questions: PublicQuestion[]): Question[] {
