@@ -1,0 +1,702 @@
+[
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/_next/static/css/app/layout.css?v=1782802660519"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/_next/static/css/app/page.css?v=1782802660519"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/_next/static/chunks/webpack.js?v=1782802660519"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/_next/static/chunks/main-app.js?v=1782802660519"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/_next/static/chunks/app-pages-internals.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/_next/static/chunks/app/page.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/manifest.webmanifest"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/_next/static/css/app/layout.css?v=1782802660519"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/_next/static/css/app/page.css?v=1782802660519"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/manifest.webmanifest"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/_next/static/chunks/webpack.js?v=1782802660519"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/_next/static/chunks/app-pages-internals.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/_next/static/chunks/app/page.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/_next/static/chunks/main-app.js?v=1782802660519"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/favicon.svg"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/favicon.svg"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/places?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/reports?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/tourism/attractions?limit=20"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/posts?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/hashtags"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/questions?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/my-questions"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/api/places?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/api/reports?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/api/tourism/attractions?limit=20"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/api/posts?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/api/hashtags"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/api/questions?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:3000/api/my-questions"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/api/places?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/api/reports?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/api/tourism/attractions?limit=20"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/api/my-questions"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/places?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/reports?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/tourism/attractions?limit=20"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/posts?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/hashtags"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/questions?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/my-questions"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/api/posts?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/api/hashtags"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://127.0.0.1:3000/api/questions?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-gwangalli&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-haeundae&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-jeonpo-cafe&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-gwangalli&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-haeundae&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-jeonpo-cafe&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-seomyeon&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-nampo-kkangtong&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-songjeong&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=gyeongju-hwangridan&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=gyeongju-cheomseongdae&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=gyeongju-donggung-wolji&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=ulsan-taehwagang&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-seomyeon&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=ulsan-samsan&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=ulsan-ganjeolgot&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=ulsan-city-hall&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-nampo-kkangtong&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=busan-songjeong&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=gyeongju-hwangridan&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=gyeongju-cheomseongdae&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=gyeongju-donggung-wolji&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=ulsan-taehwagang&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=ulsan-samsan&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=ulsan-ganjeolgot&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/photos?placeId=ulsan-city-hall&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=5coqaq388h&callback=__silsiganNaverMapReady"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/878/403.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/879/403.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/880/403.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/878/404.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/879/404.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/880/404.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/878/405.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/879/405.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/880/405.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/878/402.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/879/402.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://tile.openstreetmap.org/10/880/402.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/879/403.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/879/404.png"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "http://127.0.0.1:8787/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/878/405.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/878/404.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=5coqaq388h&callback=__silsiganNaverMapReady"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/880/403.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/878/403.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://oapi.map.naver.com/v3/auth?ncpKeyId=5coqaq388h&url=http%3A%2F%2F127.0.0.1%3A3000%2F&time=1782802661654&callback=__naver_maps_callback__0"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic@2x.json?fmt=png&callback=__naver_maps_callback__1"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/terrain@2x.json?fmt=png&callback=__naver_maps_callback__2"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/satellite@2x.json?fmt=png&callback=__naver_maps_callback__3"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://static.naver.net/maps/mantle/2x/openhand.cur"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://kr-col-ext.nelo.navercorp.com/_store"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/880/405.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/879/405.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/880/404.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/878/402.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/879/402.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://tile.openstreetmap.org/10/880/402.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://kr-col-ext.nelo.navercorp.com/_store"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://oapi.map.naver.com/v3/auth?ncpKeyId=5coqaq388h&url=http%3A%2F%2F127.0.0.1%3A3000%2F&time=1782802661654&callback=__naver_maps_callback__0"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://static.naver.net/maps/mantle/2x/openhand.cur"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/terrain@2x.json?fmt=png&callback=__naver_maps_callback__2"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/basic@2x.json?fmt=png&callback=__naver_maps_callback__1"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/satellite@2x.json?fmt=png&callback=__naver_maps_callback__3"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/110/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/109/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/110/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/109/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/110/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/109/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/111/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/108/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/111/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/108/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/111/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/108/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://static.naver.net/maps/mantle/2x/new-naver-logo-normal.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://static.naver.net/maps/mantle/2x/new-naver-logo-normal.png"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://static.naver.net/maps/mantle/2x/closedhand.cur"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "http://127.0.0.1:8787/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "http://127.0.0.1:8787/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://127.0.0.1:8787/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/110/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/110/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/109/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/109/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/110/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://nrbe.map.naver.net/styles/basic/1782439410/7/109/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://static.naver.net/maps/mantle/2x/closedhand.cur"
+  }
+]

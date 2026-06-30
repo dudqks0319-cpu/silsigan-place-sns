@@ -29,8 +29,16 @@ export const createReportSchema = z.object({
 
 export type CreateReportInput = z.infer<typeof createReportSchema>;
 
+export const listPlacesSchema = z.object({
+  regionId: z.string().trim().min(1).max(40).optional(),
+  q: z.string().trim().min(1).max(80).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+});
+
 export const listReportsSchema = z.object({
   placeId: z.string().min(1).max(80).optional(),
+  regionId: z.string().trim().min(1).max(40).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
   includeExpired: z.coerce.boolean().optional().default(false),
 });
 
@@ -58,8 +66,16 @@ export type CreatePostInput = z.infer<typeof createPostSchema>;
 
 export const listPostsSchema = z.object({
   placeId: z.string().min(1).max(80).optional(),
+  regionId: z.string().trim().min(1).max(40).optional(),
   hashtagName: hashtagNameSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
   includeHidden: z.coerce.boolean().optional().default(false),
+});
+
+export const listQuestionsSchema = z.object({
+  placeId: z.string().min(1).max(80).optional(),
+  regionId: z.string().trim().min(1).max(40).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
 });
 
 export const createQuestionSchema = z.object({
@@ -86,3 +102,12 @@ export const flagPostSchema = z.object({
 });
 
 export type FlagPostInput = z.infer<typeof flagPostSchema>;
+
+export const moderatePostActions = ["keep", "hide", "delete", "restrict_author"] as const;
+
+export const moderatePostSchema = z.object({
+  postId: z.string().trim().min(1).max(80),
+  action: z.enum(moderatePostActions),
+});
+
+export type ModeratePostInput = z.infer<typeof moderatePostSchema>;

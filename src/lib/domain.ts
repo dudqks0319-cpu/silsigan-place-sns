@@ -1,4 +1,5 @@
 export const REPORT_TTL_HOURS = 3;
+const defaultPublicSiteUrl = "https://silsigan.pages.dev";
 
 export const reportCategories = [
   "tourism",
@@ -43,6 +44,73 @@ export type FlagReason = (typeof flagReasons)[number];
 export const hashtagTypes = ["place", "status", "purpose", "time", "region"] as const;
 export type HashtagType = (typeof hashtagTypes)[number];
 
+export const regionLevels = ["province", "city", "district"] as const;
+export type RegionLevel = (typeof regionLevels)[number];
+
+export const regionLaunchStages = ["seed", "beta", "active", "paused"] as const;
+export type RegionLaunchStage = (typeof regionLaunchStages)[number];
+
+export const placeLaunchStages = ["seed", "beta", "active"] as const;
+export type PlaceLaunchStage = (typeof placeLaunchStages)[number];
+
+export type RegionId =
+  | "busan"
+  | "ulsan"
+  | "gyeongju"
+  | "daegu"
+  | "changwon"
+  | "gimhae"
+  | "yangsan"
+  | "pohang"
+  | "seoul"
+  | "jeju"
+  | "gangneung"
+  | "jeonju"
+  | "yeosu"
+  | "sokcho";
+
+export type Region = {
+  id: RegionId;
+  name: string;
+  level: RegionLevel;
+  parentId?: RegionId;
+  isActive: boolean;
+  isFeatured: boolean;
+  launchStage: RegionLaunchStage;
+};
+
+export type RegionActivationMetrics = {
+  seedPlaceCount: number;
+  reportsLast7Days: number;
+  verifiedReportsLast7Days: number;
+  photoReportsLast7Days: number;
+  moderationFlowReady: boolean;
+};
+
+export const regionActivationThresholds = {
+  seedPlaceCount: 30,
+  reportsLast7Days: 100,
+  verifiedReportsLast7Days: 30,
+  photoReportsLast7Days: 30,
+  moderationFlowReady: true,
+} satisfies RegionActivationMetrics;
+
+export type RegionActivationCheck = {
+  key: keyof RegionActivationMetrics;
+  label: string;
+  current: number | boolean;
+  required: number | boolean;
+  passed: boolean;
+  unit: "places" | "reports" | "photos" | "ready";
+};
+
+export type RegionActivationStatus = {
+  canActivate: boolean;
+  checks: RegionActivationCheck[];
+  passedCount: number;
+  totalCount: number;
+};
+
 export type CreditEventType =
   | "signup_bonus"
   | "verified_report"
@@ -64,7 +132,9 @@ export type Place = {
   category: ReportCategory;
   latitude: number;
   longitude: number;
-  region: "ulsan" | "busan" | "gyeongju";
+  region: RegionId;
+  regionId: RegionId;
+  launchStage: PlaceLaunchStage;
 };
 
 export type UserReputation = {
@@ -236,6 +306,63 @@ export function calculateTrustScore(input: {
   return Math.max(0, Math.min(100, score));
 }
 
+export function canActivateRegion(metrics: RegionActivationMetrics): boolean {
+  return evaluateRegionActivation(metrics).canActivate;
+}
+
+export function evaluateRegionActivation(metrics: RegionActivationMetrics): RegionActivationStatus {
+  const checks: RegionActivationCheck[] = [
+    {
+      key: "seedPlaceCount",
+      label: "검증 seed 장소",
+      current: metrics.seedPlaceCount,
+      required: regionActivationThresholds.seedPlaceCount,
+      passed: metrics.seedPlaceCount >= regionActivationThresholds.seedPlaceCount,
+      unit: "places",
+    },
+    {
+      key: "reportsLast7Days",
+      label: "7일 제보",
+      current: metrics.reportsLast7Days,
+      required: regionActivationThresholds.reportsLast7Days,
+      passed: metrics.reportsLast7Days >= regionActivationThresholds.reportsLast7Days,
+      unit: "reports",
+    },
+    {
+      key: "verifiedReportsLast7Days",
+      label: "7일 현장 인증",
+      current: metrics.verifiedReportsLast7Days,
+      required: regionActivationThresholds.verifiedReportsLast7Days,
+      passed: metrics.verifiedReportsLast7Days >= regionActivationThresholds.verifiedReportsLast7Days,
+      unit: "reports",
+    },
+    {
+      key: "photoReportsLast7Days",
+      label: "7일 사진 제보",
+      current: metrics.photoReportsLast7Days,
+      required: regionActivationThresholds.photoReportsLast7Days,
+      passed: metrics.photoReportsLast7Days >= regionActivationThresholds.photoReportsLast7Days,
+      unit: "photos",
+    },
+    {
+      key: "moderationFlowReady",
+      label: "운영/신고 흐름",
+      current: metrics.moderationFlowReady,
+      required: regionActivationThresholds.moderationFlowReady,
+      passed: metrics.moderationFlowReady === regionActivationThresholds.moderationFlowReady,
+      unit: "ready",
+    },
+  ];
+  const passedCount = checks.filter((check) => check.passed).length;
+
+  return {
+    canActivate: passedCount === checks.length,
+    checks,
+    passedCount,
+    totalCount: checks.length,
+  };
+}
+
 export function shouldHideForFlags(flagReasonsToReview: FlagReason[]): boolean {
   const privacyFlags = flagReasonsToReview.filter((reason) =>
     ["privacy_face", "privacy_plate", "sensitive_info"].includes(reason),
@@ -266,7 +393,7 @@ export function classifyHashtag(name: string): HashtagType {
     return "time";
   }
 
-  if (/울산|부산|경주/.test(name)) {
+  if (/울산|부산|경주|대구|창원|김해|양산|포항|서울|제주|강릉|전주|여수|속초/.test(name)) {
     return "region";
   }
 
@@ -332,7 +459,7 @@ export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" |
   return {
     headline: `${place.name} ${judgement}`,
     body: `${statusText}\n${minutesAgoLabel(post.createdAt)} 현장 인증 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
-    url: `https://silsigan.vercel.app/place/${place.id}`,
+    url: `${defaultPublicSiteUrl}/place/${place.id}`,
     hashtags: post.hashtagNames.slice(0, 5),
     variant,
   };
@@ -407,9 +534,24 @@ function purposeHashtag(placeName: string, weatherFeel: WeatherFeel): string {
 }
 
 function regionHashtag(region: Place["region"]): string {
-  if (region === "busan") return "부산";
-  if (region === "gyeongju") return "경주";
-  return "울산";
+  const labels: Record<RegionId, string> = {
+    busan: "부산",
+    ulsan: "울산",
+    gyeongju: "경주",
+    daegu: "대구",
+    changwon: "창원",
+    gimhae: "김해",
+    yangsan: "양산",
+    pohang: "포항",
+    seoul: "서울",
+    jeju: "제주",
+    gangneung: "강릉",
+    jeonju: "전주",
+    yeosu: "여수",
+    sokcho: "속초",
+  };
+
+  return labels[region];
 }
 
 function scorePost(post: Pick<StoredPost, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount">): number {

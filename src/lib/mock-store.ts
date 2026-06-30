@@ -1,6 +1,9 @@
 import {
   type FlagReason,
   type Place,
+  type RegionActivationMetrics,
+  type RegionActivationStatus,
+  type RegionId,
   type StoredHashtag,
   type StoredPost,
   type StoredQuestion,
@@ -10,6 +13,7 @@ import {
   creditEventForQuestion,
   creditEventsForReport,
   distanceMeters,
+  evaluateRegionActivation,
   getCategorySafetyWarning,
   getQuestionCost,
   getReportExpiry,
@@ -23,16 +27,24 @@ import {
 import { ApiError } from "./errors.ts";
 import type { CreatePostInput, CreateQuestionInput, CreateReportInput, FlagPostInput, FlagReportInput } from "./validators.ts";
 
+export type RegionActivationDashboardRow = {
+  regionId: RegionId;
+  regionName: string;
+  areaId: string;
+  areaName: string;
+  owner: string;
+  metrics: RegionActivationMetrics;
+  status: RegionActivationStatus;
+  updatedAt: string;
+};
+
+type ScopedListFilters = {
+  placeId?: string;
+  regionId?: string;
+  limit?: number;
+};
+
 export const mockPlaces: Place[] = [
-  {
-    id: "ulsan-taehwagang",
-    name: "태화강 국가정원",
-    address: "울산 중구 태화강국가정원길",
-    category: "tourism",
-    latitude: 35.5486,
-    longitude: 129.3005,
-    region: "ulsan",
-  },
   {
     id: "busan-gwangalli",
     name: "광안리해수욕장",
@@ -41,6 +53,63 @@ export const mockPlaces: Place[] = [
     latitude: 35.1532,
     longitude: 129.1186,
     region: "busan",
+    regionId: "busan",
+    launchStage: "active",
+  },
+  {
+    id: "busan-haeundae",
+    name: "해운대해수욕장",
+    address: "부산 해운대구 우동",
+    category: "tourism",
+    latitude: 35.1587,
+    longitude: 129.1604,
+    region: "busan",
+    regionId: "busan",
+    launchStage: "active",
+  },
+  {
+    id: "busan-jeonpo-cafe",
+    name: "전포카페거리",
+    address: "부산 부산진구 전포대로",
+    category: "restaurant_cafe",
+    latitude: 35.1577,
+    longitude: 129.064,
+    region: "busan",
+    regionId: "busan",
+    launchStage: "active",
+  },
+  {
+    id: "busan-seomyeon",
+    name: "서면",
+    address: "부산 부산진구 중앙대로",
+    category: "restaurant_cafe",
+    latitude: 35.1579,
+    longitude: 129.0592,
+    region: "busan",
+    regionId: "busan",
+    launchStage: "active",
+  },
+  {
+    id: "busan-nampo-kkangtong",
+    name: "남포동/깡통시장",
+    address: "부산 중구 부평1길",
+    category: "restaurant_cafe",
+    latitude: 35.1028,
+    longitude: 129.0287,
+    region: "busan",
+    regionId: "busan",
+    launchStage: "active",
+  },
+  {
+    id: "busan-songjeong",
+    name: "송정",
+    address: "부산 해운대구 송정동",
+    category: "tourism",
+    latitude: 35.1786,
+    longitude: 129.1997,
+    region: "busan",
+    regionId: "busan",
+    launchStage: "active",
   },
   {
     id: "gyeongju-hwangridan",
@@ -50,6 +119,63 @@ export const mockPlaces: Place[] = [
     latitude: 35.8382,
     longitude: 129.2098,
     region: "gyeongju",
+    regionId: "gyeongju",
+    launchStage: "active",
+  },
+  {
+    id: "gyeongju-cheomseongdae",
+    name: "첨성대",
+    address: "경북 경주시 인왕동",
+    category: "tourism",
+    latitude: 35.8347,
+    longitude: 129.2189,
+    region: "gyeongju",
+    regionId: "gyeongju",
+    launchStage: "active",
+  },
+  {
+    id: "gyeongju-donggung-wolji",
+    name: "동궁과 월지",
+    address: "경북 경주시 원화로 102",
+    category: "tourism",
+    latitude: 35.8346,
+    longitude: 129.2265,
+    region: "gyeongju",
+    regionId: "gyeongju",
+    launchStage: "active",
+  },
+  {
+    id: "ulsan-taehwagang",
+    name: "태화강 국가정원",
+    address: "울산 중구 태화강국가정원길",
+    category: "tourism",
+    latitude: 35.5486,
+    longitude: 129.3005,
+    region: "ulsan",
+    regionId: "ulsan",
+    launchStage: "active",
+  },
+  {
+    id: "ulsan-samsan",
+    name: "울산 삼산동",
+    address: "울산 남구 삼산동",
+    category: "restaurant_cafe",
+    latitude: 35.5396,
+    longitude: 129.3387,
+    region: "ulsan",
+    regionId: "ulsan",
+    launchStage: "active",
+  },
+  {
+    id: "ulsan-ganjeolgot",
+    name: "간절곶",
+    address: "울산 울주군 서생면 대송리",
+    category: "tourism",
+    latitude: 35.359,
+    longitude: 129.36,
+    region: "ulsan",
+    regionId: "ulsan",
+    launchStage: "active",
   },
   {
     id: "ulsan-city-hall",
@@ -59,6 +185,8 @@ export const mockPlaces: Place[] = [
     latitude: 35.5396,
     longitude: 129.3115,
     region: "ulsan",
+    regionId: "ulsan",
+    launchStage: "active",
   },
 ];
 
@@ -157,31 +285,96 @@ const flagsByReportId = new Map<string, FlagReason[]>();
 const flagsByPostId = new Map<string, FlagReason[]>();
 flagsByPostId.set("post_seed_cityhall_sensitive", ["false_content"]);
 
-export function listPlaces() {
-  return mockPlaces.map((place) => ({
-    ...place,
-    safetyWarning: getCategorySafetyWarning(place.category),
-  }));
+const regionActivationSnapshots: Array<Omit<RegionActivationDashboardRow, "status">> = [
+  {
+    regionId: "busan",
+    regionName: "부산",
+    areaId: "busan-suyeong",
+    areaName: "수영구",
+    owner: "operator:busan",
+    metrics: {
+      seedPlaceCount: 36,
+      reportsLast7Days: 128,
+      verifiedReportsLast7Days: 44,
+      photoReportsLast7Days: 38,
+      moderationFlowReady: true,
+    },
+    updatedAt: minutesAgoIso(9),
+  },
+  {
+    regionId: "ulsan",
+    regionName: "울산",
+    areaId: "ulsan-nam",
+    areaName: "남구",
+    owner: "operator:ulsan",
+    metrics: {
+      seedPlaceCount: 27,
+      reportsLast7Days: 96,
+      verifiedReportsLast7Days: 34,
+      photoReportsLast7Days: 25,
+      moderationFlowReady: true,
+    },
+    updatedAt: minutesAgoIso(18),
+  },
+  {
+    regionId: "gyeongju",
+    regionName: "경주",
+    areaId: "gyeongju-hwango",
+    areaName: "황오동",
+    owner: "operator:gyeongju",
+    metrics: {
+      seedPlaceCount: 31,
+      reportsLast7Days: 72,
+      verifiedReportsLast7Days: 20,
+      photoReportsLast7Days: 19,
+      moderationFlowReady: false,
+    },
+    updatedAt: minutesAgoIso(33),
+  },
+];
+
+export function listPlaces(filters: { regionId?: string; q?: string; limit?: number } = {}) {
+  const query = filters.q?.trim().toLocaleLowerCase("ko-KR");
+
+  return mockPlaces
+    .filter((place) => {
+      if (filters.regionId && place.regionId !== filters.regionId) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      return [place.name, place.address, place.category, place.regionId].some((value) => value.toLocaleLowerCase("ko-KR").includes(query));
+    })
+    .slice(0, normalizeListLimit(filters.limit))
+    .map((place) => ({
+      ...place,
+      safetyWarning: getCategorySafetyWarning(place.category),
+    }));
 }
 
-export function listReports(filters: { placeId?: string; includeExpired?: boolean } = {}) {
+export function listReports(filters: ScopedListFilters & { includeExpired?: boolean } = {}) {
   const now = new Date();
 
-  return reports.filter((report) => {
-    if (filters.placeId && report.placeId !== filters.placeId) {
-      return false;
-    }
+  return reports
+    .filter((report) => {
+      if (!matchesScopedPlace(report.placeId, filters)) {
+        return false;
+      }
 
-    if (report.hiddenAt) {
-      return false;
-    }
+      if (report.hiddenAt) {
+        return false;
+      }
 
-    if (!filters.includeExpired && isReportExpired(new Date(report.expiresAt), now)) {
-      return false;
-    }
+      if (!filters.includeExpired && isReportExpired(new Date(report.expiresAt), now)) {
+        return false;
+      }
 
-    return true;
-  });
+      return true;
+    })
+    .slice(0, normalizeListLimit(filters.limit));
 }
 
 export function createReport(input: CreateReportInput) {
@@ -220,9 +413,9 @@ export function createReport(input: CreateReportInput) {
   };
 }
 
-export function listPosts(filters: { placeId?: string; hashtagName?: string; includeHidden?: boolean } = {}) {
+export function listPosts(filters: ScopedListFilters & { hashtagName?: string; includeHidden?: boolean } = {}) {
   const filteredPosts = posts.filter((post) => {
-    if (filters.placeId && post.placeId !== filters.placeId) {
+    if (!matchesScopedPlace(post.placeId, filters)) {
       return false;
     }
 
@@ -237,7 +430,7 @@ export function listPosts(filters: { placeId?: string; hashtagName?: string; inc
     return true;
   });
 
-  return rankPostsForFeed(filteredPosts).map(publicPost);
+  return rankPostsForFeed(filteredPosts).slice(0, normalizeListLimit(filters.limit)).map(publicPost);
 }
 
 export function listHashtags(): StoredHashtag[] {
@@ -310,8 +503,10 @@ export function createPost(input: CreatePostInput) {
   };
 }
 
-export function listQuestions(placeId?: string) {
-  return questions.filter((question) => !placeId || question.placeId === placeId);
+export function listQuestions(filters: string | ScopedListFilters = {}) {
+  const normalizedFilters = typeof filters === "string" ? { placeId: filters } : filters;
+
+  return questions.filter((question) => matchesScopedPlace(question.placeId, normalizedFilters)).slice(0, normalizeListLimit(normalizedFilters.limit));
 }
 
 export function createQuestion(input: CreateQuestionInput) {
@@ -420,18 +615,31 @@ export function listPostModerationQueue(filters: { reason?: FlagReason | "hidden
     .sort((left, right) => right.flagCount - left.flagCount || new Date(right.post.createdAt).getTime() - new Date(left.post.createdAt).getTime());
 }
 
+export function listRegionActivationDashboard(): RegionActivationDashboardRow[] {
+  return regionActivationSnapshots
+    .map((snapshot) => ({
+      ...snapshot,
+      status: evaluateRegionActivation(snapshot.metrics),
+    }))
+    .sort((left, right) => Number(right.status.canActivate) - Number(left.status.canActivate) || left.regionName.localeCompare(right.regionName, "ko"));
+}
+
 export function moderatePost(input: { postId: string; action: "keep" | "hide" | "delete" | "restrict_author" }) {
   const post = findPost(input.postId);
+  const linkedReport = reports.find((report) => report.id === post.id);
 
   if (input.action === "keep") {
     flagsByPostId.set(post.id, []);
+    post.hiddenAt = null;
+    if (linkedReport) {
+      linkedReport.hiddenAt = null;
+    }
   }
 
   if ((input.action === "hide" || input.action === "delete") && !post.hiddenAt) {
     post.hiddenAt = new Date().toISOString();
   }
 
-  const linkedReport = reports.find((report) => report.id === post.id);
   if (linkedReport && post.hiddenAt) {
     linkedReport.hiddenAt = post.hiddenAt;
   }
@@ -551,4 +759,24 @@ function makeSeedPost(input: Omit<StoredPost, "userId" | "locationVerified" | "v
 
 function minutesAgoIso(minutes: number) {
   return new Date(Date.now() - minutes * 60_000).toISOString();
+}
+
+function matchesScopedPlace(placeId: string, filters: ScopedListFilters) {
+  if (filters.placeId && placeId !== filters.placeId) {
+    return false;
+  }
+
+  if (!filters.regionId) {
+    return true;
+  }
+
+  return mockPlaces.some((place) => place.id === placeId && place.regionId === filters.regionId);
+}
+
+function normalizeListLimit(limit: number | undefined) {
+  if (!Number.isFinite(limit)) {
+    return 100;
+  }
+
+  return Math.min(200, Math.max(1, Math.trunc(limit ?? 100)));
 }

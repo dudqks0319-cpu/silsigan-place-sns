@@ -1,0 +1,16 @@
+17. [GET] http://127.0.0.1:4323/api/photos?placeId=ulsan-taehwagang&limit=12 => [200] OK
+18. [GET] http://127.0.0.1:4323/api/photos?placeId=busan-gwangalli&limit=12 => [200] OK
+19. [GET] http://127.0.0.1:4323/api/photos?placeId=gyeongju-hwangridan&limit=12 => [200] OK
+20. [GET] http://127.0.0.1:4323/api/photos?placeId=ulsan-city-hall&limit=12 => [200] OK
+31. [GET] http://127.0.0.1:4323/api/photos?placeId=ulsan-taehwagang&limit=12 => [200] OK
+32. [GET] http://127.0.0.1:4323/api/photos?placeId=busan-gwangalli&limit=12 => [200] OK
+33. [GET] http://127.0.0.1:4323/api/photos?placeId=gyeongju-hwangridan&limit=12 => [200] OK
+34. [GET] http://127.0.0.1:4323/api/photos?placeId=ulsan-city-hall&limit=12 => [200] OK
+65. [GET] http://127.0.0.1:4323/api/photos?placeId=ulsan-taehwagang&limit=12 => [200] OK
+66. [GET] http://127.0.0.1:4323/api/photos?placeId=busan-gwangalli&limit=12 => [200] OK
+67. [GET] http://127.0.0.1:4323/api/photos?placeId=gyeongju-hwangridan&limit=12 => [200] OK
+68. [GET] http://127.0.0.1:4323/api/photos?placeId=ulsan-city-hall&limit=12 => [200] OK
+74. [POST] http://127.0.0.1:4323/api/places/busan-gwangalli/click => [200] OK
+75. [GET] http://127.0.0.1:4323/api/realtime/place/busan-gwangalli => [200] OK
+76. [GET] http://127.0.0.1:4323/api/photos/photo_preview_smoke_1/file => [200] OK
+77. [POST] http://127.0.0.1:4323/api/photos/photo_preview_smoke_1/click => [200] OK

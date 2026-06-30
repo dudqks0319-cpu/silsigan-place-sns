@@ -154,7 +154,7 @@ function TopBar({ toast }: { toast: string }) {
       </div>
       <div className="trust-chip" aria-label="실시간 인증 정책">
         <ShieldCheck size={18} />
-        <span>RLS + 위치구간</span>
+        <span>Worker 검증 + 위치구간</span>
       </div>
       <p className="toast" role="status">
         {toast}
@@ -411,7 +411,7 @@ function ReportScreen({
       >
         <Upload size={24} />
         <strong>{draft.hasPhoto ? "사진 첨부됨" : "사진 추가"}</strong>
-        <span>서버 저장 전 EXIF 제거와 재인코딩을 전제로 합니다.</span>
+        <span>서버 저장 전 EXIF 제거와 안전 처리 검증을 전제로 합니다.</span>
       </button>
       <SegmentedControl
         label="혼잡도"

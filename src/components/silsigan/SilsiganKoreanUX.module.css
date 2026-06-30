@@ -194,31 +194,87 @@
   color: #95621f;
 }
 
+.regionGuide,
+.nationwideBanner,
+.infoGapCard,
+.infoGapDetail {
+  border: 1px solid var(--warm-line);
+  border-radius: 24px;
+  background: var(--warm-surface);
+  box-shadow: 0 12px 30px rgba(58, 88, 110, 0.08);
+}
+
+.regionGuide,
+.nationwideBanner {
+  padding: 14px;
+}
+
+.regionGuide span,
+.nationwideBanner span,
+.infoGapHeader span {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: var(--warm-green-soft);
+  color: #2f6f9f;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.regionGuide strong,
+.nationwideBanner strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 16px;
+}
+
+.regionGuide p,
+.nationwideBanner p {
+  margin: 5px 0 0;
+  color: var(--warm-subtle);
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 800;
+}
+
+.nationwideBanner {
+  background:
+    radial-gradient(circle at 88% 18%, rgba(142, 214, 234, 0.22), transparent 26%),
+    linear-gradient(135deg, #f7fbff, #eef6ff);
+}
+
 .judgementGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
 .judgementCard {
-  min-height: 148px;
+  min-width: 0;
+  min-height: auto;
   border-radius: 22px;
   padding: 12px;
   display: grid;
+  grid-template-columns: auto 1fr;
   gap: 7px;
+  align-items: start;
   color: #fff;
 }
 
 .judgementCard span {
   font-size: 13px;
   font-weight: 950;
+  word-break: keep-all;
 }
 
 .judgementCard strong {
+  justify-self: end;
   font-size: 22px;
 }
 
 .judgementCard button {
+  grid-column: 1 / -1;
+  min-width: 0;
   border: 0;
   border-radius: 13px;
   padding: 8px;
@@ -227,10 +283,13 @@
   text-align: left;
   font-size: 11px;
   font-weight: 950;
+  overflow: hidden;
+  word-break: keep-all;
 }
 
 .judgementCard small,
 .judgementCard p {
+  grid-column: 1 / -1;
   display: block;
   margin-top: 3px;
   color: rgba(255, 255, 255, 0.82);
@@ -251,7 +310,12 @@
 }
 
 .toneEmpty {
-  background: linear-gradient(135deg, #b7aa9c, #7e7469) !important;
+  background: linear-gradient(135deg, #c6d3dc, #90a4b3) !important;
+}
+
+.challengeStack {
+  display: grid;
+  gap: 9px;
 }
 
 .challengeCard {
@@ -264,6 +328,75 @@
     radial-gradient(circle at 86% 18%, rgba(255, 255, 255, 0.24), transparent 28%),
     linear-gradient(135deg, #79bde8, #d9b6ee);
   color: #fff;
+}
+
+.infoGapCard,
+.infoGapDetail {
+  padding: 15px;
+}
+
+.infoGapHeader h2,
+.infoGapHeader p,
+.infoGapDetail p {
+  margin: 7px 0 0;
+}
+
+.infoGapHeader h2,
+.infoGapDetail strong {
+  display: block;
+  color: var(--warm-text);
+  font-size: 17px;
+}
+
+.infoGapHeader p,
+.infoGapDetail p {
+  color: var(--warm-subtle);
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 800;
+}
+
+.infoGapList {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.infoGapList article {
+  border-radius: 18px;
+  padding: 12px;
+  background: #f2f9fd;
+  display: grid;
+  gap: 9px;
+}
+
+.infoGapList strong {
+  display: block;
+  font-size: 13px;
+}
+
+.infoGapList span {
+  color: var(--warm-subtle);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.infoGapList article > div:last-child,
+.infoGapDetail div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.infoGapList button,
+.infoGapDetail button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--warm-surface-solid);
+  color: #2f6f9f;
+  font-size: 11px;
+  font-weight: 950;
 }
 
 .challengeCard span {
@@ -565,6 +698,23 @@
   font-size: 11px;
   font-weight: 950;
   box-shadow: 0 14px 28px rgba(58, 88, 110, 0.18);
+}
+
+.seedPin {
+  border-style: dashed;
+  color: #fff;
+  opacity: 0.9;
+}
+
+.seedNotice {
+  margin: 8px 0 0;
+  border-radius: 14px;
+  padding: 10px;
+  background: #f2f9fd;
+  color: var(--warm-subtle);
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 850;
 }
 
 .bottomSheet {
@@ -1200,12 +1350,21 @@
   }
 }
 
-@media (max-width: 360px) {
-  .feedActions {
-    grid-template-columns: 1fr;
+@media (max-width: 430px) {
+  .topBar p {
+    max-width: 246px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .judgementGrid {
+  .judgementCard strong {
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 360px) {
+  .feedActions {
     grid-template-columns: 1fr;
   }
 }

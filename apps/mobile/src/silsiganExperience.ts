@@ -49,11 +49,23 @@ export type QuestionControlShape = {
   includesSeparatePhotoCheckbox: boolean;
 };
 
+export type ServiceLinks = {
+  stagingWebUrl: string;
+  privacyPolicyUrl: string;
+  supportUrl: string;
+};
+
 export const serviceScope = {
   label: "전국 실시간",
   shortCopy: "전국 주요 장소의 혼잡, 줄, 주차, 현장 사진을 출발 전 바로 확인하세요.",
   regions: ["서울", "경기", "인천", "부산", "대구", "대전", "광주", "울산", "강원", "제주"] satisfies RegionName[],
 } as const;
+
+export const serviceLinks: ServiceLinks = {
+  stagingWebUrl: "https://silsigan-web-staging.dudqks0319.workers.dev",
+  privacyPolicyUrl: "https://silsigan-web-staging.dudqks0319.workers.dev/privacy",
+  supportUrl: "https://silsigan-web-staging.dudqks0319.workers.dev/support",
+};
 
 export const nationwidePlaces: NationwidePlace[] = [
   {
@@ -256,6 +268,14 @@ export function getQuestionControls(): QuestionControlShape {
   };
 }
 
+export function getServiceLinkReadiness(links: ServiceLinks = serviceLinks): Record<keyof ServiceLinks, boolean> {
+  return {
+    stagingWebUrl: isReleaseShapedUrl(links.stagingWebUrl),
+    privacyPolicyUrl: isReleaseShapedUrl(links.privacyPolicyUrl),
+    supportUrl: isReleaseShapedUrl(links.supportUrl),
+  };
+}
+
 export function getSignalColor(tone: SignalTone): string {
   if (tone === "good") {
     return "#0f766e";
@@ -266,4 +286,13 @@ export function getSignalColor(tone: SignalTone): string {
   }
 
   return "#b91c1c";
+}
+
+function isReleaseShapedUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname !== "localhost" && url.username === "" && url.password === "" && url.search === "" && url.hash === "";
+  } catch {
+    return false;
+  }
 }

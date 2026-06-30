@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 import { notFound } from "next/navigation";
-import { store } from "@/lib/store";
+import { findSharedPost } from "@/lib/shared-post";
 
 export const size = {
   width: 1200,
@@ -25,7 +25,7 @@ const variantGradients: Record<string, string> = {
 
 export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
   const { postId } = await params;
-  const post = (await store.listPosts({ includeHidden: true })).find((candidate) => candidate.id === postId);
+  const post = await findSharedPost(postId);
 
   if (!post || post.hiddenAt) {
     notFound();

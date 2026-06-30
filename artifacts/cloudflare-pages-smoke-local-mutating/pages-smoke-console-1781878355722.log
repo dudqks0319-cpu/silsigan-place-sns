@@ -1,0 +1,6 @@
+console.info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+console.log: [HMR] connected
+console.info: [silsigan:event] click_map_marker Object
+console.info: [silsigan:event] click_place Object
+console.info: [silsigan:event] like_place Object
+console.info: [silsigan:event] create_comment Object

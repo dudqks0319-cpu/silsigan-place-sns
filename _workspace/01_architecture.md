@@ -3,9 +3,9 @@
 ## 프로젝트 개요
 
 - 프로젝트명: `#실시간`
-- 설명: 사용자가 현재 위치 주변의 현장 사진과 상태를 제보하고, 궁금한 장소는 근처 사용자에게 질문하는 위치 기반 실시간 현장 확인 서비스.
-- 타깃 사용자: 여행지/맛집/병원/관공서/주차장 방문 직전 현재 상태를 알고 싶은 사용자와 현장에 있어 제보하고 질문권을 얻고 싶은 사용자.
-- 프로젝트 규모: 보수적 MVP.
+- 설명: 사용자가 전국 장소의 실시간 혼잡도, 댓글, 사진, 좋아요, 신고 상태를 확인하고 현장 정보를 보탤 수 있는 위치 기반 장소 앱.
+- 타깃 사용자: 여행지/맛집/병원/관공서/주차장 방문 직전 현재 상태를 알고 싶은 사용자와 현장 정보를 가볍게 제보하는 사용자.
+- 프로젝트 규모: 전국 MVP.
 
 ## 기능 요구사항
 
@@ -15,8 +15,8 @@
 | FR-2 | 장소 검색/상세 | 장소별 현재 혼잡도, 줄, 주차, 날씨, 사진, 질문을 본다. | P0 |
 | FR-3 | 현장 제보 | 사진, 상태 선택, 한 줄 코멘트, 위치 인증으로 제보한다. | P0 |
 | FR-4 | 위치 인증 | 서버에서 장소와의 거리를 계산하고 원좌표 대신 거리 구간만 저장한다. | P0 |
-| FR-5 | 질문 작성 | 장소별 질문을 질문권으로 등록한다. | P0 |
-| FR-6 | 질문권 | 가입/제보/답변/신고 확정에 따라 질문권 원장을 갱신한다. | P0 |
+| FR-5 | 댓글 작성 | 장소별 현장 코멘트를 익명 식별자 기준으로 작성한다. | P0 |
+| FR-6 | 랭킹 | 전국/지역/카테고리/지도 영역 기준 실시간 인기 장소를 제공한다. | P0 |
 | FR-7 | 3시간 만료 | 제보는 3시간 이후 기본 피드와 지도에서 제외한다. | P0 |
 | FR-8 | 신고/숨김 | 허위, 광고, 얼굴, 차량번호, 민감정보 신고를 접수하고 기준 충족 시 숨긴다. | P0 |
 | FR-9 | 민감 카테고리 경고 | 병원/관공서에서는 업로드 전 민감정보 경고와 제한 문구를 표시한다. | P0 |
@@ -27,7 +27,7 @@
 | # | 항목 | 요구사항 |
 | --- | --- | --- |
 | NFR-1 | 개인정보 | 사용자 정확 좌표, 사진 GPS EXIF, 민감정보가 저장/노출되지 않아야 한다. |
-| NFR-2 | 보안 | Supabase RLS deny-by-default, 서버 API 입력 검증, 비밀키 서버 전용 보관. |
+| NFR-2 | 보안 | Cloudflare Worker API 입력 검증, D1/R2 직접 접근 금지, 비밀키 서버 전용 보관. |
 | NFR-3 | 성능 | 모바일 첫 화면은 정적/캐시 가능한 데이터 중심으로 빠르게 렌더링한다. |
 | NFR-4 | 운영 | 신고/숨김/삭제 SLA와 감사 로그를 준비한다. |
 | NFR-5 | 법무 | 위치기반서비스 신고 가능성과 개인정보 처리방침을 MVP 단계부터 점검한다. |
@@ -36,10 +36,10 @@
 
 | 구분 | 기술 | 선택 근거 |
 | --- | --- | --- |
-| 프론트엔드 | Next.js App Router, React, TypeScript | Vercel 배포와 PWA 전환이 쉽고 서버 API와 같은 프로젝트에 묶기 좋다. |
-| UI | CSS modules가 아닌 전역 토큰 + 기능 컴포넌트 | MVP에서 빠르게 모바일 UI를 검증하고 디자인 토큰을 고정한다. |
-| 백엔드 | Next.js Route Handlers | 초기 MVP의 API 표면을 작게 유지한다. |
-| DB/Auth/Storage | Supabase Postgres, Auth, Storage | RLS, Storage 정책, 관리 콘솔을 빠르게 구성할 수 있다. |
+| 프론트엔드 | Next.js App Router, React, TypeScript | PWA와 지도 중심 UI를 빠르게 검증한다. |
+| UI | CSS Modules + 기능 컴포넌트 | 전국 지도, 랭킹, 장소 상세을 한 화면에서 안정적으로 구성한다. |
+| 백엔드 | Cloudflare Workers | 전국 트래픽을 낮은 비용과 짧은 지연으로 처리한다. |
+| DB/Auth/Storage | D1, R2, Durable Objects, 익명 식별자 | 장소/이벤트 저장, 사진 저장, 실시간 방 관리를 Cloudflare 안에서 처리한다. |
 | 검증 | Zod, node:test, ESLint, TypeScript | 입력 검증과 회귀 테스트를 최소 의존성으로 유지한다. |
 
 ## 시스템 구조
@@ -47,13 +47,13 @@
 ```mermaid
 flowchart TD
   U["모바일/PWA 사용자"] --> W["Next.js App Router UI"]
-  W --> A["Next.js API Routes"]
+  W --> A["Cloudflare Worker API"]
   A --> V["Zod validation"]
-  A --> D["Supabase Postgres"]
-  A --> S["Supabase Storage"]
-  D --> R["RLS policies"]
+  A --> D["D1"]
+  A --> S["R2"]
+  A --> O["Durable Objects"]
   A --> M["Moderation workflow"]
-  A --> C["Credit ledger"]
+  A --> C["Ranking aggregation"]
 ```
 
 ## 데이터/위치 원칙
@@ -74,7 +74,8 @@ silsigan/
     page.tsx
   src/components/silsigan/
   src/lib/
-  supabase/migrations/
+  workers/api/
+    migrations/
   tests/
   docs/
   _workspace/
@@ -83,10 +84,11 @@ silsigan/
 ## 팀 전달 사항
 
 - 프론트엔드: 한 페이지 탭형 PWA 프로토타입으로 홈/지도/상세/제보/질문/마이를 제공한다.
-- 백엔드: 모든 쓰기는 Route Handler를 거쳐 검증하고, Supabase 직접 쓰기는 최소화한다.
-- QA: 위치 원본 미저장, 3시간 만료, 신고 숨김, 질문권 차감/지급 negative-path를 우선 검증한다.
-- DevOps: `SUPABASE_SERVICE_ROLE_KEY`는 서버 전용 환경변수로만 등록한다.
+- 백엔드: 모든 쓰기는 Cloudflare Worker를 거쳐 검증하고, D1/R2 직접 접근은 서버 바인딩으로만 수행한다.
+- 실시간: Worker는 댓글/사진/신고 이벤트를 Durable Object place/region/global room으로 fanout하고, DO binding이 없으면 polling fallback을 제공한다.
+- QA: 위치 원본 미저장, 3시간 만료, 신고 숨김, 좋아요/댓글/사진 negative-path를 우선 검증한다.
+- DevOps: Cloudflare API 토큰과 관리자 토큰은 로컬/CI secret으로만 등록하고 브라우저 번들에 노출하지 않는다.
 
 ## MVP 제외
 
-결제, 현금성 포인트, DM, 팔로우, 업체 광고, 네이티브 앱, AI 자동 판독, 전국 자동 확장.
+결제, 현금성 포인트, DM, 팔로우, 업체 광고, 네이티브 앱, AI 자동 판독.

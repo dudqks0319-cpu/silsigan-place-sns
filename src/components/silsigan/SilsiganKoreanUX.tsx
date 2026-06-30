@@ -36,11 +36,40 @@ import styles from "./SilsiganKoreanUX.module.css";
 type View = "home" | "map" | "report" | "questions" | "my" | "place";
 type Tone = "good" | "caution" | "avoid" | "empty";
 type ReportPreset = "주차 만차" | "줄 길어요" | "사람 많아요" | "한산해요" | "사진스팟 좋아요";
+type RegionId =
+  | "busan"
+  | "ulsan"
+  | "gyeongju"
+  | "daegu"
+  | "changwon"
+  | "gimhae"
+  | "yangsan"
+  | "pohang"
+  | "seoul"
+  | "jeju"
+  | "gangneung"
+  | "jeonju"
+  | "yeosu"
+  | "sokcho";
+type LaunchStage = "seed" | "beta" | "active" | "paused";
+type RegionTabId = "nearby" | "southeast" | "busan" | "ulsan" | "gyeongju" | "nationwide";
+
+type Region = {
+  id: RegionId;
+  name: string;
+  level: "province" | "city" | "district";
+  parentId?: RegionId;
+  isActive: boolean;
+  isFeatured: boolean;
+  launchStage: LaunchStage;
+};
 
 type Place = {
   id: string;
   name: string;
-  region: "부산" | "울산" | "경주";
+  region: string;
+  regionId: RegionId;
+  launchStage: Exclude<LaunchStage, "paused">;
   category: string;
   address: string;
   distance: string;
@@ -85,11 +114,51 @@ type Question = {
   reward: string;
 };
 
+type Challenge = {
+  id: string;
+  regionId: RegionId;
+  title: string;
+  hashtagName: string;
+  description: string;
+  rewardBadge: string;
+  startsAt: string;
+  endsAt: string;
+  isActive: boolean;
+};
+
+const regions: Region[] = [
+  { id: "busan", name: "부산", level: "city", isActive: true, isFeatured: true, launchStage: "active" },
+  { id: "ulsan", name: "울산", level: "city", isActive: true, isFeatured: true, launchStage: "active" },
+  { id: "gyeongju", name: "경주", level: "city", isActive: true, isFeatured: true, launchStage: "active" },
+  { id: "daegu", name: "대구", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "changwon", name: "창원", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "gimhae", name: "김해", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "yangsan", name: "양산", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "pohang", name: "포항", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "seoul", name: "서울", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "jeju", name: "제주", level: "province", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "gangneung", name: "강릉", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "jeonju", name: "전주", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "yeosu", name: "여수", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+  { id: "sokcho", name: "속초", level: "city", isActive: true, isFeatured: false, launchStage: "seed" },
+];
+
+const regionTabs: Array<{ id: RegionTabId; label: string; helper: string }> = [
+  { id: "nearby", label: "내 주변", helper: "가까운 active 지역 우선" },
+  { id: "southeast", label: "동남권", helper: "부산·울산·경주 중심" },
+  { id: "busan", label: "부산", helper: "active" },
+  { id: "ulsan", label: "울산", helper: "active" },
+  { id: "gyeongju", label: "경주", helper: "active" },
+  { id: "nationwide", label: "전국", helper: "전국 주요 장소 베타" },
+];
+
 const places: Place[] = [
   {
     id: "busan-gwangalli",
     name: "광안리해수욕장",
     region: "부산",
+    regionId: "busan",
+    launchStage: "active",
     category: "관광지",
     address: "부산 수영구 광안해변로",
     distance: "38km",
@@ -114,6 +183,8 @@ const places: Place[] = [
     id: "ulsan-taehwagang",
     name: "태화강 국가정원",
     region: "울산",
+    regionId: "ulsan",
+    launchStage: "active",
     category: "관광지",
     address: "울산 중구 태화강국가정원길",
     distance: "1.2km",
@@ -138,6 +209,8 @@ const places: Place[] = [
     id: "gyeongju-hwangridan",
     name: "황리단길",
     region: "경주",
+    regionId: "gyeongju",
+    launchStage: "active",
     category: "맛집거리",
     address: "경북 경주시 포석로",
     distance: "29km",
@@ -162,6 +235,8 @@ const places: Place[] = [
     id: "busan-haeundae",
     name: "해운대해수욕장",
     region: "부산",
+    regionId: "busan",
+    launchStage: "active",
     category: "관광지",
     address: "부산 해운대구 우동",
     distance: "42km",
@@ -186,6 +261,8 @@ const places: Place[] = [
     id: "ulsan-grand-park",
     name: "울산대공원",
     region: "울산",
+    regionId: "ulsan",
+    launchStage: "beta",
     category: "공원",
     address: "울산 남구 대공원로",
     distance: "2.8km",
@@ -205,6 +282,84 @@ const places: Place[] = [
     followers: "330",
     x: 36,
     y: 58,
+  },
+  {
+    id: "daegu-dongseongro",
+    name: "대구 동성로",
+    region: "대구",
+    regionId: "daegu",
+    launchStage: "seed",
+    category: "맛집거리",
+    address: "대구 중구 동성로",
+    distance: "74km",
+    tone: "empty",
+    judgement: "정보 없음",
+    summary: "최근 제보 부족",
+    reason: "전국 주요 장소 베타에 포함됐지만 아직 최근 현장 인증이 부족해요.",
+    crowd: "정보 없음",
+    parking: "정보 없음",
+    line: "정보 없음",
+    weather: "정보 없음",
+    updated: "제보 대기",
+    verifiedCount: 0,
+    photoCount: 0,
+    reportCount: 0,
+    trustScore: 35,
+    followers: "120",
+    x: 59,
+    y: 64,
+  },
+  {
+    id: "seoul-seongsu",
+    name: "성수 카페거리",
+    region: "서울",
+    regionId: "seoul",
+    launchStage: "seed",
+    category: "카페거리",
+    address: "서울 성동구 성수동",
+    distance: "306km",
+    tone: "empty",
+    judgement: "정보 없음",
+    summary: "최근 제보 부족",
+    reason: "전국 베타 검색은 가능하지만, 아직 실시간 추천에 쓸 제보 밀도는 부족해요.",
+    crowd: "정보 없음",
+    parking: "정보 없음",
+    line: "정보 없음",
+    weather: "정보 없음",
+    updated: "제보 대기",
+    verifiedCount: 0,
+    photoCount: 0,
+    reportCount: 0,
+    trustScore: 30,
+    followers: "210",
+    x: 45,
+    y: 23,
+  },
+  {
+    id: "jeju-seongsan",
+    name: "성산일출봉",
+    region: "제주",
+    regionId: "jeju",
+    launchStage: "seed",
+    category: "관광지",
+    address: "제주 서귀포시 성산읍",
+    distance: "355km",
+    tone: "empty",
+    judgement: "정보 없음",
+    summary: "최근 제보 부족",
+    reason: "여행지 실시간 확장 후보입니다. 첫 제보가 쌓이면 추천에 반영돼요.",
+    crowd: "정보 없음",
+    parking: "정보 없음",
+    line: "정보 없음",
+    weather: "정보 없음",
+    updated: "제보 대기",
+    verifiedCount: 0,
+    photoCount: 0,
+    reportCount: 0,
+    trustScore: 28,
+    followers: "180",
+    x: 30,
+    y: 78,
   },
 ];
 
@@ -257,6 +412,53 @@ const questions: Question[] = [
   { id: "q4", placeId: "busan-haeundae", text: "아이랑 가도 괜찮나요?", type: "아이랑", minutesAgo: 30, reward: "+1" },
 ];
 
+const challenges: Challenge[] = [
+  {
+    id: "challenge-gwangalli-parking",
+    regionId: "busan",
+    title: "광안리 주차 살려줘",
+    hashtagName: "광안리주차살려줘",
+    description: "광안리 주변 주차 상황만 알려줘도 헛걸음을 줄일 수 있어요.",
+    rewardBadge: "부산 주차 도우미",
+    startsAt: "2026-05-25",
+    endsAt: "2026-06-02",
+    isActive: true,
+  },
+  {
+    id: "challenge-hwangridan-waiting",
+    regionId: "gyeongju",
+    title: "황리단길 웨이팅 제보",
+    hashtagName: "황리단길웨이팅",
+    description: "카페와 맛집 줄 길이를 10초 제보로 모읍니다.",
+    rewardBadge: "경주 웨이팅 답변왕",
+    startsAt: "2026-05-25",
+    endsAt: "2026-06-02",
+    isActive: true,
+  },
+  {
+    id: "challenge-taehwagang-walk",
+    regionId: "ulsan",
+    title: "태화강 산책 타이밍",
+    hashtagName: "태화강산책",
+    description: "산책로, 주차, 사진스팟 상태를 알려주세요.",
+    rewardBadge: "태화강 제보왕",
+    startsAt: "2026-05-25",
+    endsAt: "2026-06-02",
+    isActive: true,
+  },
+  {
+    id: "challenge-seongsu-line",
+    regionId: "seoul",
+    title: "성수 카페 줄 확인",
+    hashtagName: "성수카페줄",
+    description: "전국 베타 seed 챌린지입니다. 제보가 쌓이면 추천 지역으로 승격됩니다.",
+    rewardBadge: "서울 베타 제보자",
+    startsAt: "2026-05-25",
+    endsAt: "2026-06-02",
+    isActive: false,
+  },
+];
+
 const navItems: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "home", label: "홈", icon: Home },
   { id: "map", label: "지도", icon: Map },
@@ -266,7 +468,6 @@ const navItems: Array<{ id: View; label: string; icon: LucideIcon }> = [
 ];
 
 const quickPresets: ReportPreset[] = ["주차 만차", "줄 길어요", "사람 많아요", "한산해요", "사진스팟 좋아요"];
-const regionTabs = ["전체", "내 주변", "부산", "울산", "경주"];
 const mapFilters = ["주차 가능", "사람 적음", "줄 없음", "사진 있음", "30분 이내"];
 const reportReasons = [
   { icon: UserX, title: "얼굴이 보여요", desc: "개인 식별이 가능한 얼굴이 노출되어 있어요." },
@@ -280,7 +481,7 @@ const reportReasons = [
 export default function SilsiganKoreanUX() {
   const [view, setView] = useState<View>("home");
   const [selectedPlaceId, setSelectedPlaceId] = useState("busan-gwangalli");
-  const [region, setRegion] = useState("전체");
+  const [region, setRegion] = useState<RegionTabId>("nearby");
   const [activeMapFilter, setActiveMapFilter] = useState(mapFilters[0]);
   const [activePlaceTab, setActivePlaceTab] = useState("실시간");
   const [reportPreset, setReportPreset] = useState<ReportPreset>("주차 만차");
@@ -299,8 +500,21 @@ export default function SilsiganKoreanUX() {
   );
 
   const visiblePlaces = useMemo(() => {
-    if (region === "전체" || region === "내 주변") return places;
-    return places.filter((place) => place.region === region);
+    const regionIds = regionIdsForTab(region);
+    return places.filter((place) => regionIds === "all" || regionIds.includes(place.regionId));
+  }, [region]);
+
+  const visiblePosts = useMemo(() => {
+    const visiblePlaceIds = new Set(visiblePlaces.map((place) => place.id));
+    return posts.filter((post) => visiblePlaceIds.has(post.placeId));
+  }, [visiblePlaces]);
+
+  const visibleChallenges = useMemo(() => {
+    const regionIds = regionIdsForTab(region);
+    return challenges.filter((challenge) => {
+      if (region !== "nationwide" && !challenge.isActive) return false;
+      return regionIds === "all" || regionIds.includes(challenge.regionId);
+    });
   }, [region]);
 
   const selectedPosts = posts.filter((post) => post.placeId === selectedPlace.id);
@@ -361,7 +575,9 @@ export default function SilsiganKoreanUX() {
               <HomeScreen
                 region={region}
                 places={visiblePlaces}
-                posts={posts}
+                allPlaces={places}
+                posts={visiblePosts}
+                challenges={visibleChallenges}
                 onRegionChange={setRegion}
                 onOpenPlace={openPlace}
                 onGoMap={() => setView("map")}
@@ -504,7 +720,7 @@ function TopBar({
         {isDetail ? <X size={18} /> : <ShieldCheck size={18} />}
       </button>
       <div>
-        <p>부산 · 울산 · 경주 베타</p>
+        <p>전국 주요 장소 베타 · 부산/울산/경주 active</p>
         <h1>{title}</h1>
       </div>
       <button type="button" onClick={view === "place" ? onShare : undefined} aria-label={view === "place" ? "공유" : "알림"}>
@@ -517,7 +733,9 @@ function TopBar({
 function HomeScreen({
   region,
   places,
+  allPlaces,
   posts,
+  challenges,
   onRegionChange,
   onOpenPlace,
   onGoMap,
@@ -529,10 +747,12 @@ function HomeScreen({
   helpful,
   saved,
 }: {
-  region: string;
+  region: RegionTabId;
   places: Place[];
+  allPlaces: Place[];
   posts: Post[];
-  onRegionChange: (region: string) => void;
+  challenges: Challenge[];
+  onRegionChange: (region: RegionTabId) => void;
   onOpenPlace: (placeId: string) => void;
   onGoMap: () => void;
   onGoReport: () => void;
@@ -546,15 +766,26 @@ function HomeScreen({
   const good = places.filter((place) => place.tone === "good");
   const caution = places.filter((place) => place.tone === "caution");
   const avoid = places.filter((place) => place.tone === "avoid");
+  const infoGaps = places.filter((place) => place.tone === "empty" || place.launchStage === "seed");
+  const activeRegions = regions.filter((item) => item.launchStage === "active").map((item) => item.name).join(" · ");
+  const currentTab = regionTabs.find((item) => item.id === region) ?? regionTabs[0];
 
   return (
     <div className={styles.stack}>
       <section className={styles.regionTabs}>
         {regionTabs.map((item) => (
-          <button key={item} className={region === item ? styles.selected : ""} type="button" onClick={() => onRegionChange(item)}>
-            {item}
+          <button key={item.id} className={region === item.id ? styles.selected : ""} type="button" onClick={() => onRegionChange(item.id)}>
+            {item.label}
           </button>
         ))}
+      </section>
+
+      <section className={region === "nationwide" ? styles.nationwideBanner : styles.regionGuide}>
+        <div>
+          <span>{region === "nationwide" ? "전국 베타" : currentTab.label}</span>
+          <strong>{region === "nationwide" ? "전국 주요 장소 베타 오픈" : `${activeRegions} 실시간 운영 중`}</strong>
+          <p>{region === "nationwide" ? "아직 일부 지역은 최근 제보가 부족해요. 정보 없음은 한산함으로 판단하지 않습니다." : currentTab.helper}</p>
+        </div>
       </section>
 
       <section className={styles.searchCard}>
@@ -575,19 +806,19 @@ function HomeScreen({
         <JudgementCard title="지금은 비추" count={avoid.length} tone="avoid" places={avoid} onOpenPlace={onOpenPlace} />
       </section>
 
-      <section className={styles.challengeCard}>
-        <div>
-          <span>이번 주 챌린지 🔥</span>
-          <h2>#광안리주차살려줘</h2>
-          <p>광안리 주차 상황만 알려줘도 누군가의 헛걸음을 줄일 수 있어요.</p>
-        </div>
-        <button type="button" onClick={onGoReport}>참여하기</button>
+      <section className={styles.challengeStack}>
+        <SectionTitle title={region === "nationwide" ? "지역별 챌린지" : "이번 주 실시간 챌린지"} caption="active 지역 우선" />
+        {challenges.slice(0, region === "nationwide" ? 3 : 1).map((challenge) => (
+          <ChallengeCard key={challenge.id} challenge={challenge} onJoin={onGoReport} />
+        ))}
       </section>
+
+      {infoGaps.length > 0 && <InfoGapCard places={infoGaps.slice(0, 3)} onOpenPlace={onOpenPlace} onGoReport={onGoReport} />}
 
       <SectionTitle title="실시간 피드" caption="최근 현장 인증 우선" />
       <div className={styles.feedList}>
         {posts.map((post) => {
-          const place = places.find((item) => item.id === post.placeId) ?? places[0];
+          const place = allPlaces.find((item) => item.id === post.placeId) ?? allPlaces[0];
           return (
             <FeedCard
               key={post.id}
@@ -603,6 +834,7 @@ function HomeScreen({
             />
           );
         })}
+        {posts.length === 0 && <p className={styles.emptyText}>이 지역은 아직 최근 제보가 부족해요. 첫 제보나 질문으로 피드를 시작할 수 있습니다.</p>}
       </div>
 
       <section className={styles.ctaGrid}>
@@ -649,6 +881,56 @@ function JudgementCard({
   );
 }
 
+function ChallengeCard({ challenge, onJoin }: { challenge: Challenge; onJoin: () => void }) {
+  const region = regions.find((item) => item.id === challenge.regionId);
+
+  return (
+    <article className={styles.challengeCard}>
+      <div>
+        <span>{region?.name ?? "전국"} · {challenge.rewardBadge}</span>
+        <h2>#{challenge.hashtagName}</h2>
+        <p>{challenge.description}</p>
+      </div>
+      <button type="button" onClick={onJoin}>{challenge.isActive ? "참여하기" : "알림 받기"}</button>
+    </article>
+  );
+}
+
+function InfoGapCard({
+  places,
+  onOpenPlace,
+  onGoReport,
+}: {
+  places: Place[];
+  onOpenPlace: (placeId: string) => void;
+  onGoReport: () => void;
+}) {
+  return (
+    <section className={styles.infoGapCard}>
+      <div className={styles.infoGapHeader}>
+        <span>정보 없음 ≠ 한산함</span>
+        <h2>아직 최근 제보가 없어요</h2>
+        <p>근처 사용자에게 물어보거나 첫 제보를 남기면 이 장소의 판단이 살아납니다.</p>
+      </div>
+      <div className={styles.infoGapList}>
+        {places.map((place) => (
+          <article key={place.id}>
+            <div>
+              <strong>{place.name}</strong>
+              <span>{place.region} · {place.launchStage === "seed" ? "전국 베타 seed" : "최근 제보 부족"}</span>
+            </div>
+            <div>
+              <button type="button" onClick={() => onOpenPlace(place.id)}>물어보기</button>
+              <button type="button" onClick={onGoReport}>첫 제보하기</button>
+              <button type="button" onClick={() => onOpenPlace(place.id)}>이 장소 팔로우</button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function MapScreen({
   places,
   selectedPlace,
@@ -687,7 +969,7 @@ function MapScreen({
         {places.map((place) => (
           <button
             key={place.id}
-            className={`${styles.mapPin} ${toneClass(place.tone)}`}
+            className={`${styles.mapPin} ${toneClass(place.tone)} ${place.launchStage === "seed" ? styles.seedPin : ""}`}
             style={{ left: `${place.x}%`, top: `${place.y}%` }}
             type="button"
             onClick={() => onOpenPlace(place.id)}
@@ -707,6 +989,9 @@ function MapScreen({
           <span className={`${styles.statusChip} ${toneClass(selectedPlace.tone)}`}>{selectedPlace.judgement}</span>
         </div>
         <p>{selectedPlace.reason}</p>
+        {selectedPlace.launchStage === "seed" && (
+          <p className={styles.seedNotice}>전국 베타 seed 장소입니다. 실시간 추천에는 충분한 제보가 쌓인 뒤 반영돼요.</p>
+        )}
         <div className={styles.evidenceRow}>
           <Stat label="현장 인증" value={`${selectedPlace.verifiedCount}건`} />
           <Stat label="사진" value={`${selectedPlace.photoCount}장`} />
@@ -757,7 +1042,8 @@ function PlaceScreen({
   onOpenPlace: (placeId: string) => void;
 }) {
   const tabs = ["실시간", "사진", "질문", "해시태그", "근처"];
-  const nearby = places.filter((item) => item.region === place.region && item.id !== place.id);
+  const nearby = places.filter((item) => item.regionId === place.regionId && item.id !== place.id);
+  const hasInfoGap = place.tone === "empty" || place.launchStage === "seed";
 
   return (
     <div className={styles.stack}>
@@ -776,6 +1062,18 @@ function PlaceScreen({
           {followed ? "팔로잉" : "팔로우"}
         </button>
       </section>
+
+      {hasInfoGap && (
+        <section className={styles.infoGapDetail}>
+          <strong>최근 제보 부족</strong>
+          <p>정보 없음은 한산함이 아닙니다. 지금 상황이 궁금하면 질문하거나 첫 제보를 남겨주세요.</p>
+          <div>
+            <button type="button" onClick={onGoQuestion}>물어보기</button>
+            <button type="button" onClick={onGoReport}>첫 제보하기</button>
+            <button type="button" onClick={onFollow}>{followed ? "팔로잉" : "이 장소 팔로우"}</button>
+          </div>
+        </section>
+      )}
 
       <section className={styles.evidenceGrid}>
         <Stat label="마지막 업데이트" value={place.updated} />
@@ -1224,6 +1522,13 @@ function Stat({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
     </div>
   );
+}
+
+function regionIdsForTab(tab: RegionTabId): RegionId[] | "all" {
+  if (tab === "nearby") return ["ulsan", "busan", "gyeongju"];
+  if (tab === "southeast") return ["busan", "ulsan", "gyeongju", "daegu", "changwon", "gimhae", "yangsan", "pohang"];
+  if (tab === "nationwide") return "all";
+  return [tab];
 }
 
 function toneClass(tone: Tone) {

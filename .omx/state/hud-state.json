@@ -1,0 +1,5 @@
+{
+  "last_turn_at": "2026-06-22T06:04:01.143Z",
+  "turn_count": 46,
+  "last_agent_output": "docs/moderation-policy.md:125:| `POST /api/admin/places/coordinate-status` | `operator` 이상 | 좌표"
+}

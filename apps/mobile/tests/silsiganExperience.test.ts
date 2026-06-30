@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   getHomePriority,
   getQuestionControls,
+  getServiceLinkReadiness,
   nationwidePlaces,
+  serviceLinks,
   serviceScope,
   type ReportSnapshot,
 } from "../src/silsiganExperience.ts";
@@ -45,4 +47,15 @@ test("question form exposes a single photo request control", () => {
     includesPhotoRequestType: true,
     includesSeparatePhotoCheckbox: false,
   });
+});
+
+test("mobile TestFlight shell exposes release-shaped public URLs", () => {
+  assert.deepEqual(getServiceLinkReadiness(), {
+    stagingWebUrl: true,
+    privacyPolicyUrl: true,
+    supportUrl: true,
+  });
+  assert.equal(serviceLinks.privacyPolicyUrl.endsWith("/privacy"), true);
+  assert.equal(serviceLinks.supportUrl.endsWith("/support"), true);
+  assert.notEqual(serviceLinks.privacyPolicyUrl, serviceLinks.supportUrl);
 });
