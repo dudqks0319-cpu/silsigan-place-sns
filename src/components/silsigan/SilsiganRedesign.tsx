@@ -261,7 +261,7 @@ type WorkerComment = {
   createdAt: string;
 };
 
-type MyMenuTarget = "reports" | "questions" | "saved" | "hashtags" | "badges" | "safety";
+type MyMenuTarget = "reports" | "questions" | "saved" | "hashtags" | "badges" | "moderation" | "safety";
 type FeedTab = (typeof feedTabLabels)[number];
 type SearchResultTab = "장소" | "해시태그" | "사진";
 
@@ -3458,6 +3458,7 @@ function MyScreen({
   const savedRef = useRef<HTMLElement | null>(null);
   const hashtagsRef = useRef<HTMLElement | null>(null);
   const badgesRef = useRef<HTMLElement | null>(null);
+  const moderationRef = useRef<HTMLElement | null>(null);
   const safetyRef = useRef<HTMLElement | null>(null);
   const [activeMenuTarget, setActiveMenuTarget] = useState<MyMenuTarget | null>(null);
   const answeredCount = myQuestions.filter((question) => question.status === "answered").length;
@@ -3465,6 +3466,7 @@ function MyScreen({
   const hiddenReportCount = reports.length - visibleReports.length;
   const reflectedUploadCount = uploadActivities.filter((activity) => activity.status === "reflected").length;
   const failedUploadCount = uploadActivities.filter((activity) => activity.status === "failed").length;
+  const reviewAttentionCount = hiddenReportCount + failedUploadCount;
   const savedAndFollowedCount = savedPosts.length + followedPlaces.length + followedHashtagNames.size;
   const latestReports = [...reports]
     .filter((report) => !report.hiddenAt)
@@ -3481,6 +3483,7 @@ function MyScreen({
     { icon: Bookmark, label: "저장한 게시물", message: "저장한 게시물로 이동했습니다.", target: "saved", ref: savedRef },
     { icon: Hash, label: "팔로우한 해시태그", message: "팔로우한 해시태그로 이동했습니다.", target: "hashtags", ref: hashtagsRef },
     { icon: Star, label: "지역 뱃지", message: "지역 뱃지로 이동했습니다.", target: "badges", ref: badgesRef },
+    { icon: ShieldAlert, label: "신고/차단 관리", message: "신고/차단 관리로 이동했습니다.", target: "moderation", ref: moderationRef },
     { icon: UserX, label: "차단한 사용자", message: "차단/제한 보호 상태로 이동했습니다.", target: "safety", ref: safetyRef },
     { icon: ShieldCheck, label: "안전 정책 및 이용 안내", message: "안전 정책으로 이동했습니다.", target: "safety", ref: safetyRef },
   ] satisfies Array<{ icon: LucideIcon; label: string; message: string; target: MyMenuTarget; ref: RefObject<HTMLElement | null> }>;
@@ -3669,6 +3672,37 @@ function MyScreen({
             </article>
           ))}
           {savedPosts.length === 0 && <p className={styles.emptyText}>피드에서 저장한 현장 게시물이 표시됩니다.</p>}
+        </div>
+      </section>
+
+      <section
+        ref={moderationRef}
+        className={`${styles.sectionBlock} ${activeMenuTarget === "moderation" ? styles.sectionFocus : ""}`}
+        tabIndex={-1}
+        aria-labelledby="my-moderation-heading"
+      >
+        <SectionTitle title="신고/차단 관리" caption={`${reviewAttentionCount}건 확인 필요`} headingId="my-moderation-heading" />
+        <div className={styles.safetyStatusGrid}>
+          <div>
+            <ShieldAlert size={17} />
+            <strong>신고 접수 {reports.length}건</strong>
+            <span>장소, 사진, 댓글 신고는 운영 검토 큐와 연결됩니다.</span>
+          </div>
+          <div>
+            <AlertTriangle size={17} />
+            <strong>숨김 처리 {hiddenReportCount}건</strong>
+            <span>민감정보 또는 반복 신고는 먼저 숨기고 확인합니다.</span>
+          </div>
+          <div>
+            <UserX size={17} />
+            <strong>차단/제한 0명</strong>
+            <span>반복 악용 사용자는 운영자 제한 후 여기에 표시됩니다.</span>
+          </div>
+          <div>
+            <Settings size={17} />
+            <strong>문의/삭제 요청</strong>
+            <span>지원 페이지와 TestFlight 피드백으로 처리 경로를 남깁니다.</span>
+          </div>
         </div>
       </section>
 

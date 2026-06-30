@@ -624,6 +624,15 @@ async function runMapControlChecks(client, config) {
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '마이'`, "bottomNav.my", config.timeoutMs);
   record(config.checks, "bottomNav.my", "pass", "하단 마이 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
 
+  await clickHitTestedTextButton(client, "신고/차단 관리", { exact: true });
+  await waitForEvaluate(
+    client,
+    `[...document.querySelectorAll('button')].some((button) => button.textContent?.trim() === '신고/차단 관리' && button.getAttribute('aria-pressed') === 'true') && document.body.innerText.includes('신고/차단 관리로 이동했습니다.') && document.body.innerText.includes('문의/삭제 요청')`,
+    "my.moderationMenu",
+    config.timeoutMs,
+  );
+  record(config.checks, "my.moderationMenu", "pass", "마이 신고/차단 관리 메뉴가 실제 클릭 후 관리 섹션과 토스트를 표시했습니다.");
+
   await clickHitTestedTextButton(client, "안전 정책 및 이용 안내", { exact: true });
   await waitForEvaluate(
     client,
