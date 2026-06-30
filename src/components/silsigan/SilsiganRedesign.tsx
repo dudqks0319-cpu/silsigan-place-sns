@@ -243,6 +243,16 @@ type PhotoDeleteResult = {
   deleted: boolean;
 };
 
+type UploadActivity = {
+  id: string;
+  placeId: string;
+  placeName: string;
+  caption: string;
+  status: "reflected" | "failed";
+  message: string;
+  createdAt: string;
+};
+
 type WorkerComment = {
   id: string;
   placeId: string;
@@ -550,6 +560,7 @@ const persistedSetKeys = {
   helpfulPostIds: "silsigan.helpfulPostIds.v1",
   savedPostIds: "silsigan.savedPostIds.v1",
 } as const;
+const uploadActivityKey = "silsigan.uploadActivities.v1";
 const notificationEnabledKey = "silsigan.notificationEnabled.v1";
 const firstVisitSeenKey = "silsigan.firstVisitSeen.v1";
 const workerPhotoPlaceScopeLimit = 20;
@@ -688,6 +699,7 @@ export default function SilsiganRedesign() {
   const [followedHashtagNames, setFollowedHashtagNames] = useState<Set<string>>(() => new Set());
   const [helpfulPostIds, setHelpfulPostIds] = useState<Set<string>>(() => new Set());
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(() => new Set());
+  const [uploadActivities, setUploadActivities] = useState<UploadActivity[]>([]);
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -967,6 +979,7 @@ export default function SilsiganRedesign() {
       setFollowedHashtagNames(readPersistedSet(persistedSetKeys.followedHashtagNames));
       setHelpfulPostIds(readPersistedSet(persistedSetKeys.helpfulPostIds));
       setSavedPostIds(readPersistedSet(persistedSetKeys.savedPostIds));
+      setUploadActivities(readPersistedUploadActivities(uploadActivityKey));
       setNotificationEnabled(window.localStorage.getItem(notificationEnabledKey) === "true");
       setShowOnboarding(window.localStorage.getItem(firstVisitSeenKey) !== "true");
       setPersistenceReady(true);
@@ -998,6 +1011,12 @@ export default function SilsiganRedesign() {
 
     persistSet(persistedSetKeys.savedPostIds, savedPostIds);
   }, [persistenceReady, savedPostIds]);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+
+    persistUploadActivities(uploadActivityKey, uploadActivities);
+  }, [persistenceReady, uploadActivities]);
 
   useEffect(() => {
     if (!persistenceReady) return;
@@ -1285,6 +1304,17 @@ export default function SilsiganRedesign() {
     );
   };
 
+  const recordUploadActivity = (activity: Omit<UploadActivity, "id" | "createdAt">) => {
+    setUploadActivities((current) => [
+      {
+        ...activity,
+        id: `upload-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+      },
+      ...current,
+    ].slice(0, 20));
+  };
+
   const submitReport = async () => {
     if (!selectedPlace || isSubmitting) {
       return;
@@ -1317,6 +1347,13 @@ export default function SilsiganRedesign() {
         setAllPosts((current) => mergePublicPosts([result.post], current));
         setReports((current) => mergeReports([optimisticReport], current));
         trackEvent("submit_post", { placeId: selectedPlace.id, locationVerified: result.post.locationVerified });
+        recordUploadActivity({
+          placeId: selectedPlace.id,
+          placeName: selectedPlace.name,
+          caption: result.post.caption ?? "한 줄 입력 없음",
+          status: "reflected",
+          message: "장소 피드 반영 완료",
+        });
         setToast(`${badge} 완료! 방금 올린 사진이 ${selectedPlace.name} 피드에 반영됐습니다. 물어보기권 +${earned}`);
       };
 
@@ -1339,6 +1376,13 @@ export default function SilsiganRedesign() {
           const badge = result.report.verifiedRadiusM ? "현장 인증" : "상태 제보";
           const safetyNotice = result.safetyWarning ? ` · ${result.safetyWarning}` : "";
           trackEvent("submit_report", { placeId: selectedPlace.id, locationVerified: Boolean(result.report.verifiedRadiusM) });
+          recordUploadActivity({
+            placeId: selectedPlace.id,
+            placeName: selectedPlace.name,
+            caption: payload.caption ?? "한 줄 입력 없음",
+            status: "reflected",
+            message: "현장 제보 저장 완료",
+          });
           setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}${safetyNotice}`);
         } catch (error) {
           if (!localCloudflareApiConfigured) {
@@ -1356,7 +1400,15 @@ export default function SilsiganRedesign() {
       setActiveView("place");
       await loadData();
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "제보 등록에 실패했습니다.");
+      const message = error instanceof Error ? error.message : "제보 등록에 실패했습니다.";
+      recordUploadActivity({
+        placeId: selectedPlace.id,
+        placeName: selectedPlace.name,
+        caption: reportText.trim() || "한 줄 입력 없음",
+        status: "failed",
+        message,
+      });
+      setToast(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -2003,6 +2055,7 @@ export default function SilsiganRedesign() {
                     questions={questions}
                     reports={reports}
                     savedPosts={allRankedPosts.filter((post) => savedPostIds.has(post.id))}
+                    uploadActivities={uploadActivities}
                     userReputation={userReputation}
                     onToast={setToast}
                   />
@@ -3387,6 +3440,7 @@ function MyScreen({
   questions,
   reports,
   savedPosts,
+  uploadActivities,
   userReputation,
 }: {
   followedHashtagNames: Set<string>;
@@ -3396,6 +3450,7 @@ function MyScreen({
   questions: Question[];
   reports: Report[];
   savedPosts: PublicPost[];
+  uploadActivities: UploadActivity[];
   userReputation: UserReputation;
 }) {
   const reportsRef = useRef<HTMLElement | null>(null);
@@ -3406,6 +3461,11 @@ function MyScreen({
   const safetyRef = useRef<HTMLElement | null>(null);
   const [activeMenuTarget, setActiveMenuTarget] = useState<MyMenuTarget | null>(null);
   const answeredCount = myQuestions.filter((question) => question.status === "answered").length;
+  const visibleReports = reports.filter((report) => !report.hiddenAt);
+  const hiddenReportCount = reports.length - visibleReports.length;
+  const reflectedUploadCount = uploadActivities.filter((activity) => activity.status === "reflected").length;
+  const failedUploadCount = uploadActivities.filter((activity) => activity.status === "failed").length;
+  const savedAndFollowedCount = savedPosts.length + followedPlaces.length + followedHashtagNames.size;
   const latestReports = [...reports]
     .filter((report) => !report.hiddenAt)
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
@@ -3463,6 +3523,40 @@ function MyScreen({
         <StatBox label="내 질문" value={String(myQuestions.length || questions.length)} />
         <StatBox label="답변 완료" value={String(answeredCount)} />
         <StatBox label="저장" value={String(savedPosts.length)} />
+      </section>
+
+      <section className={styles.contributionTracker} aria-labelledby="contribution-tracker-heading">
+        <SectionTitle title="기여 트래커" caption="피드 반영과 재시도 상태" headingId="contribution-tracker-heading" />
+        <div className={styles.trackerGrid}>
+          <article>
+            <Camera size={17} />
+            <strong>{reflectedUploadCount || visibleReports.length}건</strong>
+            <span>피드 반영</span>
+          </article>
+          <article>
+            <AlertTriangle size={17} />
+            <strong>{failedUploadCount}건</strong>
+            <span>재시도 필요</span>
+          </article>
+          <article>
+            <Bookmark size={17} />
+            <strong>{savedAndFollowedCount}개</strong>
+            <span>저장/팔로우</span>
+          </article>
+        </div>
+        <div className={styles.uploadActivityList}>
+          {uploadActivities.slice(0, 3).map((activity) => (
+            <article key={activity.id} className={styles.uploadActivityItem}>
+              {activity.status === "reflected" ? <ShieldCheck size={15} /> : <ShieldAlert size={15} />}
+              <div>
+                <strong>{activity.placeName}</strong>
+                <span>{activity.status === "reflected" ? "피드 반영" : "업로드 실패"} · {activity.message} · {minutesAgo(activity.createdAt)}</span>
+                <small>{activity.caption}</small>
+              </div>
+            </article>
+          ))}
+          {uploadActivities.length === 0 && <p className={styles.emptyText}>사진 올리기를 완료하면 피드 반영 상태가 여기에 쌓입니다.</p>}
+        </div>
       </section>
 
       <section
@@ -3601,6 +3695,11 @@ function MyScreen({
             <strong>반복 악용 제한</strong>
             <span>운영자 승인 후 write 제한</span>
           </div>
+          <div>
+            <ShieldAlert size={17} />
+            <strong>숨김 처리 {hiddenReportCount}건</strong>
+            <span>신고/숨김 내역은 운영 증거와 함께 확인</span>
+          </div>
         </div>
       </section>
 
@@ -3694,7 +3793,13 @@ function BottomNav({ activeView, onChange }: { activeView: View; onChange: (view
         const Icon = item.icon;
         const isActive = item.id === activeView;
         return (
-          <button key={item.id} className={`${styles.navButton} ${isActive ? styles.navActive : ""} ${item.id === "report" ? styles.reportNav : ""}`} type="button" onClick={() => onChange(item.id)}>
+          <button
+            key={item.id}
+            className={`${styles.navButton} ${isActive ? styles.navActive : ""} ${item.id === "report" ? styles.reportNav : ""}`}
+            type="button"
+            onClick={() => onChange(item.id)}
+            aria-pressed={isActive}
+          >
             <Icon size={item.id === "report" ? 22 : 19} />
             <span>{item.label}</span>
           </button>
@@ -4585,6 +4690,39 @@ function readPersistedSet(key: string) {
 
 function persistSet(key: string, set: Set<string>) {
   window.localStorage.setItem(key, JSON.stringify([...set]));
+}
+
+function readPersistedUploadActivities(key: string): UploadActivity[] {
+  try {
+    const value = window.localStorage.getItem(key);
+    if (!value) return [];
+    const parsed = JSON.parse(value);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter((item): item is UploadActivity => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as Record<string, unknown>;
+
+      return (
+        typeof candidate.id === "string" &&
+        typeof candidate.placeId === "string" &&
+        typeof candidate.placeName === "string" &&
+        typeof candidate.caption === "string" &&
+        (candidate.status === "reflected" || candidate.status === "failed") &&
+        typeof candidate.message === "string" &&
+        typeof candidate.createdAt === "string"
+      );
+    }).slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+function persistUploadActivities(key: string, activities: UploadActivity[]) {
+  window.localStorage.setItem(key, JSON.stringify(activities.slice(0, 20)));
 }
 
 function crowdValueFromLabel(label: string): CrowdLevel {

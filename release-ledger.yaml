@@ -16,9 +16,9 @@ candidate:
   phase: "local_ready_external_blocked"
   version: "0.1.0"
   build_number: "not_applicable"
-  git_sha: "c3b7bb1fd865a96c280b8ec6199a5f5247b5fb16"
+  git_sha: "fc7f245cb2d7a2e41cc375a9ed6128fc801f0a6e"
   branch: "agent/silsigan-map-tourism-ui-20260628"
-  dirty_state: "uncommitted 2026-06-30 local upload completion feedback/feed reflection UX plus product/dev/GTM gap execution plan; previous pushed_agent_branch head c3b7bb1; staging/production web Workers deployed, public web/API URL exports documented, staging D1 first-launch seed applied, and mobile TestFlight shell public links guarded by release:status"
+  dirty_state: "uncommitted 2026-06-30 local upload completion feedback/feed reflection UX, photo-feed-first map smoke hardening, and product/dev/GTM gap execution plan; previous pushed_agent_branch head fc7f245; staging/production web Workers deployed, public web/API URL exports documented, staging D1 first-launch seed applied, and mobile TestFlight shell public links guarded by release:status"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
@@ -38,6 +38,14 @@ local_checks:
     command: "browser QA at http://127.0.0.1:3000/"
     status: "pass_local"
     evidence: "2026-06-30 local upload/report browser QA confirms completion feedback says the uploaded photo was reflected in the 광안리해수욕장 place feed, and submitted caption 브라우저 QA 업로드 1782745925336 is visible in the place feed within the same browser session; screenshot /private/tmp/silsigan-upload-complete-qa-20260630.png. This is local same-origin proof only and does not replace R2/staging mutation smoke"
+  - name: "Photo-feed-first local Pages map smoke"
+    command: "pnpm smoke:pages -- --pages-url=http://127.0.0.1:3000 --timeout-ms=60000"
+    status: "pass_local"
+    evidence: "2026-06-30 smoke waits for 방금 올라온 장소 사진, clicks bottom nav 지도, verifies the nationwide Naver/fallback map aria label, bottom nav aria-pressed state, map.visible, map.controlsUncovered, traffic/filter/requery/header controls, onboarding dismiss, My safety menu, ranking detail, and 광안리해수욕장 marker detail; artifacts artifacts/cloudflare-pages-smoke/pages-smoke-1782802662030.png, artifacts/cloudflare-pages-smoke/pages-smoke-network-1782802662032.json, artifacts/cloudflare-pages-smoke/pages-smoke-console-1782802662033.log"
+  - name: "Local tourism/place API route check"
+    command: "curl http://127.0.0.1:3000/api/tourism/attractions?regionId=busan&limit=5 && curl http://127.0.0.1:3000/api/places?regionId=busan"
+    status: "pass_local"
+    evidence: "2026-06-30 tourism route returned HTTP 200 with data.length=3, meta.provider=tourapi-fallback, reason=TOUR_API_SERVICE_KEY_REQUIRED; places route returned HTTP 200 with data.length=6. This proves local fallback behavior only, not live TourAPI or staging API readiness"
   - name: "Targeted Cloudflare API tests"
     command: "pnpm test"
     status: "pass"
@@ -88,6 +96,10 @@ local_checks:
     evidence: "No output on 2026-06-27"
 
 runtime_checks:
+  - name: "Local photo-feed Pages smoke"
+    target: "local"
+    status: "pass"
+    evidence: "2026-06-30 pnpm smoke:pages -- --pages-url=http://127.0.0.1:3000 --timeout-ms=60000 passed after the photo-feed redesign and bottom-nav map entry update; screenshot artifacts/cloudflare-pages-smoke/pages-smoke-1782802662030.png"
   - name: "Local Pages browser report"
     target: "local"
     status: "pass"

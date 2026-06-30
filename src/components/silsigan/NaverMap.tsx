@@ -379,7 +379,7 @@ export function NaverMap<TPlace extends MapPlace>({
         className={`naver-map naver-map--live${mapHealthy ? "" : " naver-map--checking"}`}
         ref={mapRef}
         role="img"
-        aria-label="네이버 지도 기반 부산·경주·울산 실시간 장소 지도"
+        aria-label="네이버 지도 기반 전국 실시간 장소 지도"
         aria-busy={!mapHealthy}
       />
       {!mapHealthy && (
@@ -425,7 +425,7 @@ function FallbackMap<TPlace extends MapPlace>({
   return (
     <div
       className={`naver-map naver-map--fallback naver-map__fallback${overlay ? " naver-map--fallback-overlay" : ""}`}
-      aria-label="클릭 가능한 부산·경주·울산 실시간 장소 지도"
+      aria-label="클릭 가능한 전국 실시간 장소 지도"
     >
       <div className="naver-map__fallback-status">
         <strong>{fallbackStatusTitle({ empty, failureReason, loading })}</strong>

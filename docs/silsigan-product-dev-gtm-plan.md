@@ -1,7 +1,211 @@
 # #실시간 제품/개발/GTM 실행 계획
 
-Updated: 2026-06-29
+Updated: 2026-06-30
 Source of truth: `docs/current-release-state.md`, `RELEASE_STATUS.md`, `release-ledger.yaml`
+
+## 0. 2026-06-30 오케스트레이터 실행판
+
+이 문서는 제품, 개발, 마케팅 관점을 합친 실행 계획서다.
+현재 목표는 App Store 정식 출시가 아니라 Cloudflare staging과 TestFlight 내부 테스트 가능한 MVP 증거 확보다.
+
+### 현재 판정
+
+현재 #실시간은 로컬 웹/PWA와 Cloudflare web read-only 기준으로는 MVP 후보권이다.
+홈, 검색, 지도, 관광 장소, 작은 핀, 장소 상세, 로컬 업로드 완료 피드 반영까지는 방향이 잡혔다.
+
+하지만 출시 가능 상태는 아니다.
+사진 기반 앱의 핵심인 실제 R2 업로드, staging API write path, 실기기 권한/카메라/지도, 운영자 신고/숨김 루프가 아직 실제 환경에서 닫히지 않았다.
+
+| 관점 | 현재 상태 | 결론 |
+| --- | --- | --- |
+| 사용자 경험 | 사진 피드 중심 방향은 맞음 | 첫 경험, 업로드 실패/재시도, 안전/신고 상태 추적 보강 필요 |
+| 개발/릴리즈 | 로컬과 web read-only 증거는 강함 | R2, API Worker, staging mutation, 실기기 QA가 P0 |
+| 마케팅/GTM | 메시지는 좁힐 수 있음 | 전국 홍보보다 1개 지역 베타와 지금컷 챌린지가 적합 |
+| App Store | 정식 제출 불가 | TestFlight 내부 테스트 증거부터 확보 |
+
+### 안 된 부분
+
+P0, 출시를 막는 부분:
+
+1. `R2_NOT_ENABLED`
+   - 실제 사진 업로드, 조회, 삭제, 숨김 evidence가 불가능하다.
+   - 사용자는 사진 앱이라고 느끼는데, staging에서 사진 저장소가 아직 준비되지 않은 상태다.
+
+2. API Worker 배포 미완료
+   - staging/production API URL 값은 준비됐지만 실제 API Worker deployment와 smoke가 끝나지 않았다.
+   - 로컬 fallback 성공을 staging 성공으로 착각하면 안 된다.
+
+3. real staging mutation smoke 미완료
+   - 댓글, 사진, 좋아요, 랭킹, 신고, 운영자 숨김, R2 삭제/차단이 실제 Cloudflare 리소스에서 검증되지 않았다.
+
+4. 실기기 QA 미완료
+   - iPhone/Android에서 위치 권한, 카메라/사진 권한, 네이버지도, 업로드, 뒤로가기, crash 여부가 아직 증거화되지 않았다.
+
+5. 운영 증거 미완료
+   - 신고 접수 후 숨김/복구/삭제, Workers tail redaction, 비용/사용량 대시보드 캡처가 아직 운영 evidence로 묶이지 않았다.
+
+P1, 내부 TestFlight 전후로 닫아야 하는 부분:
+
+1. 사진 업로드 실패/재시도 UX
+2. 신고 후 상태 추적 UX
+3. 첫 방문 온보딩과 권한 거부 대응
+4. 검색 결과의 사진/장소/해시태그 분리
+5. 마이 탭의 실제 기여/안전 상태 노출
+6. 해시태그 금칙어/광고성 태그 차단
+7. TestFlight 외부 리뷰 노트와 개인정보/지원 URL shell export 확인
+
+### 사용자 입장에서 필요한 계획
+
+사용자에게 필요한 것은 기능 수가 아니라 빠른 판단이다.
+첫 화면에서 바로 답해야 하는 질문은 세 가지다.
+
+1. 지금 어디가 볼 만한가?
+2. 이 장소가 지금 붐비는가, 한산한가, 줄이 긴가?
+3. 내가 방금 찍은 사진을 쉽게 올릴 수 있는가?
+
+우선순위:
+
+1. 홈 첫 화면을 사진 피드 중심으로 고정
+   - 첫 viewport 안에 사진 카드가 보여야 한다.
+   - 상단 문구는 `방금 올라온 사진`, `지금 광안리 어때?`처럼 생활어로 유지한다.
+   - 성공 기준: 390px 모바일에서 첫 화면에 사진 카드, 장소명, 시간, 태그가 보인다.
+
+2. 올리기 5단계 고정
+   - 사진 선택, 장소 선택, 태그 선택, 한 줄 입력, 올리기.
+   - 성공 기준: 첫 업로드가 60초 이내 가능하고, 성공 후 홈/장소 피드 반영 피드백이 5초 이내 보인다.
+
+3. 실패해도 막히지 않는 UX
+   - 위치 거부 시 지역 선택.
+   - 업로드 실패 시 원인, 마지막 시도 시각, 재시도 버튼.
+   - 지도 데이터 0건 시 검색, 지도 이동, 사진 올리기 CTA.
+   - 성공 기준: 네트워크 실패나 권한 거부 뒤에도 다음 행동이 1개 이상 보인다.
+
+4. 안전/신고를 사용자가 이해하게 만들기
+   - 신고 버튼을 숨기지 않는다.
+   - 신고 후 `접수됨`, `검토중`, `숨김 처리됨` 중 최소 1단계 상태를 보여준다.
+   - 성공 기준: 사용자가 부적절한 사진/댓글을 신고하고 처리 상태를 확인할 수 있다.
+
+5. 지도는 보조 탐색으로 유지
+   - 지도 위에는 작은 핀만 둔다.
+   - 대기오염이나 큰 상태 텍스트는 지도 밖 정보 카드로 분리한다.
+   - 성공 기준: 지도 탭 진입 시 지도와 핀이 우선 보이고, 핀 클릭 시 하단 장소 시트가 열린다.
+
+### 개발자로서 필요한 계획
+
+개발 우선순위는 사용자가 보는 화면보다 release evidence를 먼저 닫는 것이다.
+로컬로 예뻐 보이는 상태와 TestFlight 내부 테스트 가능 상태는 다르다.
+
+1. Cloudflare 외부 blocker 제거
+   - R2 subscription checkout
+   - `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000`
+   - `pnpm cf:r2:evidence -- --env=production --check --timeout-ms=120000`
+   - `pnpm cf:external-state`
+   - 완료 기준: `R2_NOT_ENABLED` 제거
+
+2. API Worker 배포
+   - `pnpm cf:preflight`
+   - `pnpm cf:dry-run:staging`
+   - `pnpm cf:dry-run:production`
+   - `wrangler deploy --config workers/api/wrangler.jsonc --env staging`
+   - `wrangler deploy --config workers/api/wrangler.jsonc --env production`
+   - 완료 기준: `worker_deployment.staging.api`, `worker_deployment.production.api` 제거
+
+3. staging smoke
+   - `pnpm smoke:staging`
+   - `SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging -- --require-admin`
+   - `pnpm smoke:tail-redaction --tail-file=artifacts/cloudflare-tail/staging-tail.log`
+   - 완료 기준: 사진/댓글/좋아요/랭킹/신고/숨김/R2 삭제 evidence 확보
+
+4. release gate
+   - `pnpm release:status -- --strict`
+   - `pnpm release:gate -- --release-candidate --tail-file=artifacts/cloudflare-tail/staging-tail.log`
+   - 완료 기준: open blocker가 실기기 QA 또는 의도적 deferred 항목만 남는다.
+
+5. 실기기 QA
+   - iPhone: 위치 허용/거부, 카메라/사진, 지도, 업로드, 댓글, 좋아요, 신고, crash log
+   - Android: 권한, 지도, 업로드, 댓글, 좋아요, 신고, 뒤로가기, crash log
+   - 완료 기준: `docs/real-device-qa.md`에 실제 스크린샷/로그/known issue가 채워진다.
+
+개발 운영 원칙:
+
+- local fallback은 local에서만 허용한다.
+- staging/production API 실패는 숨기지 않는다.
+- 원본 파일명, EXIF GPS, raw 좌표, admin token은 public response와 로그에 남기지 않는다.
+- 변경 후 최소 `pnpm typecheck`, `pnpm lint`, `pnpm test`, `git diff --check`를 실행한다.
+- 모바일 shell 변경 시 `cd apps/mobile && pnpm lint && pnpm typecheck && pnpm test`를 별도로 실행한다.
+
+### 10년차 마케터 관점의 계획
+
+전국 앱으로 바로 말하면 약하다.
+첫 마케팅은 `전국 실시간 지도`가 아니라 `오늘 이 동네 갈지 말지 10초 판단`으로 좁혀야 한다.
+
+추천 beachhead:
+
+1. 부산 광안리/해운대
+2. 서울 성수/연남/홍대
+3. 제주 공항/애월/성산
+
+선정 이유:
+
+- 주차, 웨이팅, 혼잡, 날씨, 사진스팟 차이가 사진으로 바로 보인다.
+- 주말 수요가 몰려서 `지금` 정보의 가치가 크다.
+- 지역 커뮤니티, 블로그, 숏폼 소재가 풍부하다.
+
+핵심 메시지:
+
+- `가기 전에 지금 사진부터 보세요.`
+- `광안리 지금 주차 만차래요.`
+- `성수 웨이팅, 말보다 사진이 빠릅니다.`
+- `지도는 길을 보여주고, #실시간은 지금 분위기를 보여줍니다.`
+
+피할 메시지:
+
+- `AI 기반`
+- `실시간 데이터를 기반으로`
+- `전국 통합 관광 플랫폼`
+- `차세대 위치 기반 소셜 네트워크`
+
+초기 캠페인:
+
+- 이름: `지금컷 챌린지`
+- 방식: 특정 지역에서 사진 1장, 태그 2개, 한 줄 설명을 올린다.
+- 추천 태그: `#주차만차`, `#웨이팅`, `#한산함`, `#노을`, `#야경`, `#비오는날`
+- 1차 목표: 7일간 한 지역 사진 100장, 업로드 유저 30명, 재방문율 25%, 신고 SLA 24시간 이내
+
+채널:
+
+1. TestFlight 내부 테스터
+   - 목적: 기능 안정성, 권한/업로드/crash 확인
+   - KPI: 설치율, 첫 업로드율, 핵심 플로우 성공률
+
+2. 지역 커뮤니티와 카카오톡/디스코드 소그룹
+   - 목적: 첫 콘텐츠 생산자 확보
+   - KPI: 업로드 유저 수, 첫 주 사진 수, 재방문율
+
+3. 인스타그램 릴스/TikTok
+   - 목적: 상황형 인지
+   - 콘텐츠: `지금 광안리 실제 상황`, `성수 웨이팅 실시간`, `주차 만차 피하는 법`
+   - KPI: 저장 수, 공유 수, TestFlight 신청 클릭
+
+4. 네이버 블로그/카페
+   - 목적: 검색 유입
+   - 콘텐츠: `광안리 주차 실시간 확인`, `성수 웨이팅 많은 시간`, `부산 여행 전 확인할 앱`
+   - KPI: 지역 키워드 유입, 링크 클릭, 신청 전환
+
+30/60/90일 목표:
+
+- 30일: 베타 참여 150명, 핵심 플로우 진입률 50% 이상
+- 60일: DAU 유지 25% 이상, 신규 제보 완료율 40%, 제보+공유 동시율 20%
+- 90일: 내부 TestFlight MAU 500명, 실기기 핵심 시나리오 통과율 90% 이상, P0 장애 0건
+
+### 추천 실행 순서
+
+1. R2 활성화와 API Worker 배포를 끝낸다.
+2. staging mutation smoke로 실제 UGC 루프를 증명한다.
+3. iPhone/Android 실기기 QA를 채운다.
+4. 홈/올리기/마이/안전 UX를 1회 더 다듬는다.
+5. TestFlight 내부 5~10명으로 `지금컷 챌린지`를 작게 시작한다.
+6. 한 지역에서 사진 100장과 신고/숨김 운영 증거가 생기면 외부 TestFlight 20명으로 확장한다.
 
 ## 1. 현재 판정
 

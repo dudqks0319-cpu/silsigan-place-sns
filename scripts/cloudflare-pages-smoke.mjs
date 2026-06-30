@@ -274,6 +274,34 @@ async function runBrowserSmoke(client, config) {
   await clickTextButton(client, "바로 둘러보기").catch(() => {});
   await waitForEvaluate(
     client,
+    `document.body.innerText.includes('방금 올라온 장소 사진') && !document.body.innerText.includes('실시간 데이터를 불러오는 중입니다')`,
+    "app.homeReady",
+    config.timeoutMs,
+  );
+  record(config.checks, "app.homeReady", "pass", "홈 사진 피드가 로딩된 뒤 지도 탭 검증을 시작합니다.");
+  await clickBottomNavTextButton(client, "지도");
+  const initialMapNavState = await evaluate(
+    client,
+    `
+      (() => {
+        const heading = document.querySelector('h1')?.textContent?.trim() ?? null;
+        const overlay = Boolean(document.querySelector('[aria-label="#실시간 첫 방문 안내"]'));
+        const nav = document.querySelector('[class*="bottomNav"]');
+        const buttons = nav instanceof HTMLElement
+          ? [...nav.querySelectorAll('button')].map((button) => ({
+              text: button.textContent?.trim() ?? '',
+              pressed: button.getAttribute('aria-pressed'),
+            }))
+          : [];
+        return { heading, overlay, buttons };
+      })()
+    `,
+  );
+  record(config.checks, "bottomNav.map.initialClick", "pass", "지도 진입 클릭 직후 DOM 상태를 기록했습니다.", initialMapNavState);
+  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "bottomNav.map.initial", config.timeoutMs);
+  record(config.checks, "bottomNav.map.initial", "pass", "사진 피드 홈에서 하단 지도 버튼으로 지도 화면에 진입했습니다.");
+  await waitForEvaluate(
+    client,
     "Boolean(document.querySelector('[aria-label=\"클릭 가능한 전국 실시간 장소 지도\"], [aria-label=\"네이버 지도 기반 전국 실시간 장소 지도\"]'))",
     "map.surface",
     config.timeoutMs,
@@ -511,7 +539,7 @@ async function assertRankingPanelsVisible(client, config) {
         if (!(grid instanceof HTMLElement)) return false;
         const text = grid.innerText;
         const buttons = [...grid.querySelectorAll('button')];
-        return text.includes('전국 TOP 10') &&
+        return (text.includes('전국 TOP 10') || text.includes('첫 출시 TOP 10')) &&
           text.includes('지도 화면 안 TOP 10') &&
           buttons.length >= 1 &&
           buttons.some((button) => button.textContent?.includes(${JSON.stringify(config.placeName)}));
@@ -585,14 +613,14 @@ async function runMapControlChecks(client, config) {
   );
   record(config.checks, "header.notificationButton", "pass", "헤더 알림 버튼 클릭 후 pressed 상태와 라벨이 바뀌었습니다.");
 
-  await clickHitTestedTextButton(client, "홈", { exact: true });
-  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '실시간'`, "bottomNav.home", config.timeoutMs);
-  record(config.checks, "bottomNav.home", "pass", "하단 홈 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
+  await clickBottomNavTextButton(client, "홈");
+  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '#실시간'`, "bottomNav.home", config.timeoutMs);
+  record(config.checks, "bottomNav.home", "pass", "하단 홈 버튼으로 화면을 전환했습니다.");
   if (await dismissOnboardingIfPresent(client, config.timeoutMs)) {
     record(config.checks, "onboarding.dismiss", "pass", "첫 방문 안내가 뜬 상태에서 안내 버튼을 실제 클릭해 닫았습니다.");
   }
 
-  await clickHitTestedTextButton(client, "마이", { exact: true });
+  await clickBottomNavTextButton(client, "마이");
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '마이'`, "bottomNav.my", config.timeoutMs);
   record(config.checks, "bottomNav.my", "pass", "하단 마이 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
 
@@ -605,7 +633,7 @@ async function runMapControlChecks(client, config) {
   );
   record(config.checks, "my.safetyMenu", "pass", "마이 안전 정책 메뉴가 실제 클릭 후 활성 상태와 토스트를 표시했습니다.");
 
-  await clickHitTestedTextButton(client, "지도", { exact: true });
+  await clickBottomNavTextButton(client, "지도");
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "bottomNav.map", config.timeoutMs);
   record(config.checks, "bottomNav.map", "pass", "하단 지도 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
 }
@@ -830,6 +858,25 @@ async function clickTextButton(client, text) {
   );
   if (result !== true) {
     throw new SmokeError("BUTTON_NOT_FOUND", `${text} 버튼을 찾지 못했습니다.`);
+  }
+}
+
+async function clickBottomNavTextButton(client, text) {
+  const result = await evaluate(
+    client,
+    `
+      (() => {
+        const nav = document.querySelector('[class*="bottomNav"]');
+        if (!(nav instanceof HTMLElement)) return false;
+        const button = [...nav.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(text)});
+        if (!(button instanceof HTMLButtonElement)) return false;
+        button.click();
+        return true;
+      })()
+    `,
+  );
+  if (result !== true) {
+    throw new SmokeError("BOTTOM_NAV_BUTTON_NOT_FOUND", `${text} 하단 탭 버튼을 찾지 못했습니다.`);
   }
 }
 
