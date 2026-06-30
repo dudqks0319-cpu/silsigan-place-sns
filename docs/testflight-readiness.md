@@ -211,12 +211,13 @@ The real-device QA ledger is now a release-state checked artifact. This closes t
 
 ## 2026-06-30 Real-Device QA Evidence Gate
 
-The real-device QA ledger now has an executable evidence check. This is intentionally stricter than `release:status`: it fails while the ledger still contains `blocked-staging`, missing URLs, unselected builds, `R2_NOT_ENABLED`, non-pass matrix rows, or no dated iPhone/Android artifact directories.
+The real-device QA ledger now has an executable evidence check and an artifact scaffold helper. This is intentionally stricter than `release:status`: it fails while the ledger still contains `blocked-staging`, missing URLs, unselected builds, `R2_NOT_ENABLED`, non-pass matrix rows, or no dated iPhone/Android artifact directories.
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
+| `pnpm qa:real-device:init -- --platform=iphone --build=<testflight-build>` | pass local | Creates `device-summary.md`, `screenshots/`, `network-redacted.json`, `console-redacted.log`, and `known-issues.md` under `artifacts/real-device-qa/<date>-iphone-<build>/`; Android uses `--platform=android`. |
 | `pnpm qa:real-device` | blocked expected | Current `docs/real-device-qa.md` is still a blocked staging ledger, so the command should fail until iPhone and Android evidence is captured under `artifacts/real-device-qa/<date>-<platform>-<build>/`. |
-| `pnpm test` | pass required | Tests cover both failure on a blocked ledger and success on a completed iPhone/Android fixture. |
+| `pnpm test` | pass required | 136 tests pass, including failure on a blocked ledger, success on a completed iPhone/Android fixture, and artifact scaffold creation/rejection coverage. |
 
 ## 2026-06-27 Privacy/Support Pages
 

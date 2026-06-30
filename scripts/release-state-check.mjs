@@ -941,6 +941,7 @@ async function checkOpenNextAdapter() {
 
     const requiredQaScripts = {
       "qa:real-device": "node scripts/real-device-qa-evidence-check.mjs",
+      "qa:real-device:init": "node scripts/create-real-device-qa-artifact.mjs",
     };
 
     for (const [scriptName, expectedCommand] of Object.entries(requiredQaScripts)) {

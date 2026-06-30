@@ -433,6 +433,8 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare.wrangler.log_path_env_helper" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:api:deploy:staging" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:api:deploy:production" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.script.qa:real-device" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.script.qa:real-device:init" && check.status === "pass"));
 
     try {
       execFileSync(process.execPath, [
@@ -813,6 +815,58 @@ test("real-device QA evidence check fails until iPhone and Android evidence is c
 
     assert.equal(readyPayload.ok, true);
     assert.equal(readyPayload.checks.every((check) => check.status === "pass"), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("real-device QA artifact scaffold creates required redacted evidence files", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-real-device-artifact-"));
+  try {
+    const scriptPath = new URL("../scripts/create-real-device-qa-artifact.mjs", import.meta.url).pathname;
+    const output = execFileSync(
+      process.execPath,
+      [
+        scriptPath,
+        "--platform=iphone",
+        "--build=TestFlight 42",
+        "--date=2026-06-30",
+        `--out-dir=${tempDir}`,
+        "--device=iPhone 15",
+        "--os=iOS 18.5",
+        "--staging-pages-url=https://silsigan-web-staging.dudqks0319.workers.dev",
+        "--staging-api-url=https://silsigan-api-staging.dudqks0319.workers.dev",
+      ],
+      {
+        encoding: "utf8",
+        stdio: "pipe",
+      },
+    );
+    const payload = JSON.parse(output) as { ok: boolean; artifactDir: string; files: string[] };
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.artifactDir, join(tempDir, "2026-06-30-iphone-testflight-42"));
+    assert.deepEqual(payload.files, ["device-summary.md", "screenshots/", "network-redacted.json", "console-redacted.log", "known-issues.md"]);
+    assert.equal(existsSync(join(payload.artifactDir, "device-summary.md")), true);
+    assert.equal(existsSync(join(payload.artifactDir, "screenshots", ".gitkeep")), true);
+    assert.equal(readFileSync(join(payload.artifactDir, "network-redacted.json"), "utf8"), "[]\n");
+
+    const summary = readFileSync(join(payload.artifactDir, "device-summary.md"), "utf8");
+    assert.match(summary, /TestFlight 42/);
+    assert.match(summary, /iPhone 15/);
+
+    try {
+      execFileSync(process.execPath, [scriptPath, "--platform=web", "--build=bad", `--out-dir=${tempDir}`], {
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+      assert.fail("artifact scaffold should reject unsupported platforms");
+    } catch (error) {
+      const stderr = error && typeof error === "object" && "stderr" in error ? String((error as { stderr?: unknown }).stderr) : "";
+      const failurePayload = JSON.parse(stderr) as { ok: boolean; errors: Array<{ code: string }> };
+      assert.equal(failurePayload.ok, false);
+      assert.deepEqual(failurePayload.errors.map((item) => item.code), ["PLATFORM_REQUIRED"]);
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

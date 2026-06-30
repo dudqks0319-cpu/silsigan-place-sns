@@ -5,6 +5,13 @@ Status: blocked until the staging API Worker deployment, R2, build selection, an
 
 Executable gate: `pnpm qa:real-device`
 
+Evidence scaffold:
+
+```bash
+pnpm qa:real-device:init -- --platform=iphone --build=<testflight-build>
+pnpm qa:real-device:init -- --platform=android --build=<internal-build>
+```
+
 Current expected result: fail. This is intentional until both iPhone and Android rows below have real pass evidence and dated artifact directories under `artifacts/real-device-qa/`.
 
 ## Scope
@@ -72,5 +79,7 @@ Store future evidence under `artifacts/real-device-qa/<date>-<platform>-<build>/
 - `network-redacted.json`
 - `console-redacted.log`
 - `known-issues.md`
+
+Use `pnpm qa:real-device:init -- --platform=iphone --build=<testflight-build>` or `pnpm qa:real-device:init -- --platform=android --build=<internal-build>` to create the directory and required file scaffold before running the device script.
 
 Do not store raw tokens, raw coordinates, exact user coordinates, original filenames, unredacted anonymous IDs, private emails, or Cloudflare account identifiers in evidence artifacts.

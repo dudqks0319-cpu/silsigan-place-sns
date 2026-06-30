@@ -15,6 +15,7 @@
     "smoke:pages:local-report": "node scripts/cloudflare-pages-local-report-smoke.mjs",
     "smoke:tail-redaction": "node scripts/cloudflare-staging-smoke.mjs --tail-only",
     "qa:real-device": "node scripts/real-device-qa-evidence-check.mjs",
+    "qa:real-device:init": "node scripts/create-real-device-qa-artifact.mjs",
     "release:gate": "node scripts/cloudflare-release-gate.mjs",
     "release:status": "node scripts/release-state-check.mjs",
     "cf:build": "opennextjs-cloudflare build",

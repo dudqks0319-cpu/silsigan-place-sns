@@ -61,7 +61,7 @@ local_checks:
   - name: "Targeted Cloudflare API tests"
     command: "pnpm test"
     status: "pass"
-    evidence: "135 tests passed on 2026-06-30 after adding shared Wrangler command env helper coverage, including phone/email/vehicle/link/script blocking, first-launch Busan/Gyeongju/Ulsan seed coverage, D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, real-device QA ledger and evidence gate coverage, public privacy/support page guard coverage, privacy/support URL guard coverage, mobile TestFlight shell guard coverage, auth-aware external-state blocker canonicalization, and Worker deployment absence classification"
+    evidence: "136 tests passed on 2026-06-30 after adding the real-device QA artifact scaffold and shared Wrangler command env helper coverage, including qa:real-device:init scaffold creation/rejection coverage, phone/email/vehicle/link/script blocking, first-launch Busan/Gyeongju/Ulsan seed coverage, D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, real-device QA ledger and evidence gate coverage, public privacy/support page guard coverage, privacy/support URL guard coverage, mobile TestFlight shell guard coverage, auth-aware external-state blocker canonicalization, and Worker deployment absence classification"
   - name: "Release status open blocker guard"
     command: "node scripts/release-state-check.mjs --strict"
     status: "blocked_expected"
@@ -85,11 +85,11 @@ local_checks:
   - name: "Real-device QA ledger gate"
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
-    evidence: "docs/real-device-qa.md now guards required iPhone/Android QA matrices, staging environment fields, permission flows, UGC flows, redaction requirements, crash checks, and artifact naming before TestFlight internal testing"
+    evidence: "docs/real-device-qa.md now guards required iPhone/Android QA matrices, staging environment fields, permission flows, UGC flows, redaction requirements, crash checks, and artifact naming before TestFlight internal testing; release:status also guards the qa:real-device:init scaffold script"
   - name: "Real-device QA evidence gate"
     command: "pnpm qa:real-device"
     status: "blocked_expected"
-    evidence: "2026-06-30 executable gate added; current docs/real-device-qa.md now carries the selected staging Pages/API URLs and should fail because the staging API Worker deployment, R2, build selections, device matrix rows, and dated iPhone/Android artifact directories are not ready yet"
+    evidence: "2026-06-30 executable gate added; pnpm qa:real-device:init now creates the required redacted device evidence scaffold, and current docs/real-device-qa.md should fail pnpm qa:real-device because the staging API Worker deployment, R2, build selections, device matrix rows, and dated iPhone/Android artifact directories are not ready yet"
   - name: "Public privacy/support page gate"
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
@@ -202,7 +202,7 @@ security:
     evidence: "apps/mobile My tab exposes public privacy/support/staging web links; expo config includes iOS camera/location/photo usage strings, Android camera/location permissions, and extra.silsigan public URLs; release:status now fails if mobile TestFlight shell UI tokens, service links, permission metadata, or URL shape drift; real-device QA remains blocked until staging API/R2 are ready"
   real_device_qa:
     status: "blocked_expected"
-    evidence: "docs/real-device-qa.md defines the selected staging Pages/API URLs plus the iPhone/Android QA matrix and evidence artifact rules; pnpm qa:real-device fails until the staging API Worker deployment, R2, selected builds, pass rows, and dated iPhone/Android artifact directories are recorded"
+    evidence: "docs/real-device-qa.md defines the selected staging Pages/API URLs plus the iPhone/Android QA matrix and evidence artifact rules; pnpm qa:real-device:init creates the redacted artifact scaffold, and pnpm qa:real-device fails until the staging API Worker deployment, R2, selected builds, pass rows, and dated iPhone/Android artifact directories are recorded"
   public_policy_support_pages:
     status: "pass_local"
     evidence: "src/app/privacy/page.tsx and src/app/support/page.tsx exist and release:status verifies required public-page tokens; HTTPS SILSIGAN_PRIVACY_POLICY_URL and SILSIGAN_SUPPORT_URL values are defined in .env.example/operator docs and still require actual release-shell export"
@@ -260,4 +260,4 @@ blockers:
 next_action:
   owner: "me"
   command: "pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000"
-  description: "After adding the R2 subscription in Cloudflare Dashboard checkout, verify bucket visibility, deploy the staging API Worker at the committed API URL, export the committed public web/API/privacy/support URL values, continue to real staging smoke, then fill docs/real-device-qa.md and pass pnpm qa:real-device before TestFlight internal testing."
+  description: "After adding the R2 subscription in Cloudflare Dashboard checkout, verify bucket visibility, deploy the staging API Worker at the committed API URL, export the committed public web/API/privacy/support URL values, continue to real staging smoke, then run pnpm qa:real-device:init for iPhone/Android, fill docs/real-device-qa.md, and pass pnpm qa:real-device before TestFlight internal testing."
