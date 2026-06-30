@@ -2,7 +2,7 @@
 
 ## 한 줄 상태
 
-로컬 Cloudflare 전환 검증, 2026-06-29 지도/관광 route 회귀 복구와 지도/검색 빈 상태 CTA, 2026-06-30 로컬 업로드 완료 피드 반영 UX와 사진 피드 첫 화면 이후 지도 진입 smoke, staging/production D1 `0002` 원격 적용, staging first-launch 12개 장소 seed 재적용, staging/production web Worker 배포와 read-only 브라우저 smoke 증적, staging/production API URL 값 정의는 준비됐지만, Cloudflare R2 활성화, staging/production API Worker 배포, real staging mutation smoke가 남아 있어 public release는 `blocked-external`이다.
+로컬 Cloudflare 전환 검증, 2026-06-29 지도/관광 route 회귀 복구와 지도/검색 빈 상태 CTA, 2026-06-30 로컬 업로드 완료 피드 반영 UX와 사진 피드 첫 화면 이후 지도 진입 smoke, 2026-06-30 Cloudflare 외부 상태 재확인, staging/production D1 `0002` 원격 적용, staging first-launch 12개 장소 seed 재적용, staging/production web Worker 배포와 read-only 브라우저 smoke 증적, staging/production API URL 값 정의는 준비됐지만, Cloudflare R2 활성화, staging/production API Worker 배포, real staging mutation smoke가 남아 있어 public release는 `blocked-external`이다.
 
 상세 source of truth는 [docs/current-release-state.md](docs/current-release-state.md)이다. 이 파일은 공통 release harness가 읽는 요약 index다.
 
@@ -12,10 +12,10 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 
 - Version: `0.1.0`
 - Build: `not_applicable`
-- Git SHA: `fc7f245cb2d7a2e41cc375a9ed6128fc801f0a6e`
+- Git SHA: `18de4fae9663580317deddf24e314d16be66a95e`
 - Branch: `agent/silsigan-map-tourism-ui-20260628`
 - Phase: `local_ready_external_blocked`
-- Pushed evidence baseline before this ledger update: `agent/silsigan-map-tourism-ui-20260628` at `fc7f245cb2d7a2e41cc375a9ed6128fc801f0a6e`
+- Pushed evidence baseline before this ledger update: `agent/silsigan-map-tourism-ui-20260628` at `18de4fae9663580317deddf24e314d16be66a95e`
 - Continuing local delta: 2026-06-29 local map/tourism runtime recovery adds a same-origin `/api/tourism/attractions` fallback route, keeps read-only home/map data alive when `.env.local` points at an offline local Worker URL, separates local-only fallback from staging/production API failure, and fixes crowded Naver marker hit targets so `광안리해수욕장 상세 열기` opens the correct detail sheet. Browser QA confirmed 13 map markers, tourism panel, 광안리 detail, 좋아요 local preview with no `Failed to fetch`, map 0건 recovery CTAs (`재시도`, `검색으로 이동`, `사진 올리기`), and search 0건 recommendations (`광안리`, `해운대`, `황리단길`, `#주차만차`, `#웨이팅`, `#사진스팟`, `지도에서 보기`); screenshots `/private/tmp/silsigan-map-marker-detail-qa-20260629.png` and `/private/tmp/silsigan-map-search-empty-qa-20260629.png`. 2026-06-30 upload completion work keeps local fallback limited to local Worker URLs, posts to same-origin `/api/posts` only for local fallback/no Worker mode, immediately merges the created post/report into the local feed, and shows `방금 올린 사진이 ... 피드에 반영됐습니다` completion feedback; this does not claim R2/staging upload readiness. 2026-06-30 photo-feed-first Pages smoke now waits for `방금 올라온 장소 사진`, enters the map through the bottom nav, verifies the nationwide map aria contract, checks bottom-nav `aria-pressed`, accepts the new first-launch ranking title, and opens `광안리해수욕장` detail; local artifacts are `artifacts/cloudflare-pages-smoke/pages-smoke-1782802662030.png`, `artifacts/cloudflare-pages-smoke/pages-smoke-network-1782802662032.json`, and `artifacts/cloudflare-pages-smoke/pages-smoke-console-1782802662033.log`. Release-status can ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED` and missing API Worker deployments while staging/production D1 `0002` and staging/production web Worker deployments pass; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates; 2026-06-27 web Workers are deployed at `https://silsigan-web-staging.dudqks0319.workers.dev` and `https://silsigan-web-production.dudqks0319.workers.dev`, `.env.example` / operator docs define public web/privacy/support/API URL values, and `apps/mobile` exposes the same public privacy/support/staging web links in the TestFlight shell surface. 2026-06-28 local API/UI seed work adds the first-launch 부산/경주/울산 12개 장소 and staging D1 seed apply confirms `launch_focus_count=12`. `release:status` also guards the mobile TestFlight shell UI tokens, service-link source, Expo permission metadata, and `extra.silsigan` public URL shape.
 
 ## 통과한 증거
@@ -28,8 +28,15 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - `pnpm smoke:pages -- --pages-url=http://127.0.0.1:3000 --timeout-ms=60000`: pass on 2026-06-30 after the photo-feed redesign. The smoke waits for the home feed, clicks the bottom `지도` tab, verifies the nationwide Naver/fallback map aria label, bottom nav pressed state, map visibility, uncovered controls, traffic/filter/requery/header controls, onboarding dismiss, My safety menu, ranking detail, and `광안리해수욕장` marker detail. Artifacts: `artifacts/cloudflare-pages-smoke/pages-smoke-1782802662030.png`, `artifacts/cloudflare-pages-smoke/pages-smoke-network-1782802662032.json`, `artifacts/cloudflare-pages-smoke/pages-smoke-console-1782802662033.log`
 - `curl http://127.0.0.1:3000/api/tourism/attractions?regionId=busan&limit=5`: pass on 2026-06-30 with HTTP 200, `data.length=3`, `meta.provider=tourapi-fallback`, and `reason=TOUR_API_SERVICE_KEY_REQUIRED`; `curl http://127.0.0.1:3000/api/places?regionId=busan`: pass with HTTP 200 and `data.length=6`
 - `pnpm cf:d1:evidence -- --env=staging --apply --timeout-ms=120000`: pass on 2026-06-28; no pending migrations, idempotent seed apply wrote the first-launch seed delta, and follow-up remote D1 query returned `launch_focus_count=12`
+- `pnpm cf:preflight` with `.env.example` sourced: pass on 2026-06-30; staging/production D1/KV/R2/Images/Durable Object bindings and staging/production Pages/API URL shapes all pass
+- `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass on 2026-06-30; no pending migrations, remote staging D1 posts/questions evidence returns `posts=4`, `questions=3`
+- `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`: pass on 2026-06-30; no pending migrations, remote production D1 posts/questions evidence returns `posts=4`, `questions=3`
+- `pnpm cf:dry-run:staging` and `pnpm cf:dry-run:production`: pass on 2026-06-30; API Worker bundles validate with Durable Object, KV, D1, R2, Images, and `ENVIRONMENT` bindings for each env
 - `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000`: expected blocked-external on 2026-06-27 with `R2_NOT_ENABLED`; no bucket creation or mutation was attempted
+- `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000`: expected blocked-external on 2026-06-30 with `R2_NOT_ENABLED`; no bucket creation or mutation was attempted
+- `pnpm cf:r2:evidence -- --env=production --check`: expected blocked-external on 2026-06-30 with `R2_NOT_ENABLED`; no bucket creation or mutation was attempted
 - `pnpm cf:external-state`: expected blocked-external on 2026-06-27 in a plain shell; Wrangler auth, web Worker deployments, staging/production D1 `0002`, and Worker dry-runs pass, while `R2_NOT_ENABLED`, missing staging/production API Workers, and missing staging/production Pages/API URL shell exports remain blockers
+- `pnpm cf:external-state` with `.env.example` sourced: expected blocked-external on 2026-06-30; Wrangler auth, staging/production web Worker deployments, staging/production Pages/API URL shape, staging/production D1 `0002`, and staging/production API dry-runs pass; remaining blockers are exactly `R2_NOT_ENABLED`, `worker_deployment.staging.api`, and `worker_deployment.production.api`
 - `node scripts/release-state-check.mjs --strict` with `.env.example` sourced: expected blocked-external with `release_harness.ledger.open_blockers`; staging/production Pages/API URL and privacy/support URL shape gates pass, but actual API Worker deployments and smoke are still external blockers
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
 - `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, TestFlight review notes, and mobile TestFlight shell gates pass; current failure remains expected open external blockers
@@ -53,6 +60,8 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - `pnpm cf:d1:evidence -- --env=production --apply --confirm-production --timeout-ms=120000`: pass, applied `0002_posts_questions.sql`, reran seed, verified `posts=4`, `questions=3`
 - `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
 - `pnpm release:gate -- --skip-verify --skip-dry-run --collect-blockers --tail-file=tests/fixtures/redacted-worker-tail.log --timeout-ms=120000`: expected fail with `resultCounts.pass=9` / `resultCounts.fail=7`; tail redaction, audit, typegen, build, frontend dry-runs, staging D1 evidence, and production D1 evidence pass while remaining failures are external blockers
+- `pnpm smoke:staging` with `.env.example` sourced: expected fail on 2026-06-30 because the configured staging API URL returns a non-JSON `/api/health` response before the API Worker deployment is live (`JSON_PARSE_FAILED`)
+- `pnpm release:gate -- --skip-verify --skip-dry-run --collect-blockers --tail-file=tests/fixtures/redacted-worker-tail.log --timeout-ms=120000`: expected fail on 2026-06-30 with `resultCounts.pass=10` / `resultCounts.fail=6`; tail redaction, critical audit, typegen, OpenNext build, frontend dry-runs, preflight, and staging/production D1 evidence pass; remaining blockers are `R2_NOT_ENABLED`, missing staging/production API Workers, `JSON_PARSE_FAILED` for staging API smoke, and staging Pages `app.homeReady` failure caused by the missing API Worker
 
 ## 막힌 항목
 
@@ -74,5 +83,5 @@ Cloudflare Dashboard > Storage & databases > R2 > Overview에서 R2 subscription
 ## 사람이 직접 해야 하는 일
 
 - Cloudflare Dashboard에서 R2 subscription checkout 완료
-- Staging/production API Worker 배포와 smoke 확인
+- R2 checkout 이후 staging/production API Worker 배포와 smoke 확인
 - Staging admin token과 captured Workers tail log 제공
