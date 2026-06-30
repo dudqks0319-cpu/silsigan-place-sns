@@ -371,6 +371,10 @@ async function runBrowserSmoke(client, config) {
     record(config.checks, "worker.realtimeGlobalRoom", "pass", "브라우저에서 Worker realtime global room을 조회했습니다.");
   }
 
+  if (!config.apiBaseUrl) {
+    await runLocalModerationActivityCheck(client, config);
+  }
+
   if (config.mutating && config.apiBaseUrl) {
     await runMutatingBrowserChecks(client, config, networkEvents);
   } else {
@@ -627,7 +631,7 @@ async function runMapControlChecks(client, config) {
   await clickHitTestedTextButton(client, "신고/차단 관리", { exact: true });
   await waitForEvaluate(
     client,
-    `[...document.querySelectorAll('button')].some((button) => button.textContent?.trim() === '신고/차단 관리' && button.getAttribute('aria-pressed') === 'true') && document.body.innerText.includes('신고/차단 관리로 이동했습니다.') && document.body.innerText.includes('문의/삭제 요청')`,
+    `[...document.querySelectorAll('button')].some((button) => button.textContent?.trim() === '신고/차단 관리' && button.getAttribute('aria-pressed') === 'true') && document.body.innerText.includes('신고/차단 관리로 이동했습니다.') && document.body.innerText.includes('문의/삭제 요청') && document.body.innerText.includes('내 신고 내역')`,
     "my.moderationMenu",
     config.timeoutMs,
   );
@@ -645,6 +649,30 @@ async function runMapControlChecks(client, config) {
   await clickBottomNavTextButton(client, "지도");
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "bottomNav.map", config.timeoutMs);
   record(config.checks, "bottomNav.map", "pass", "하단 지도 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
+}
+
+async function runLocalModerationActivityCheck(client, config) {
+  await clickAriaButton(client, "장소 신고");
+  await waitForEvaluate(
+    client,
+    `document.body.innerText.includes(${JSON.stringify(`${config.placeName} 신고가 접수 대기`)}) || document.body.innerText.includes(${JSON.stringify(`${config.placeName} 신고가 로컬 미리보기`)})`,
+    "my.localReportActivityCreate",
+    config.timeoutMs,
+  );
+  record(config.checks, "my.localReportActivityCreate", "pass", "로컬 장소 신고가 내 신고 내역 기록으로 생성됐습니다.", { placeName: config.placeName });
+
+  await clickAriaButton(client, "상세 닫기");
+  await waitForEvaluate(client, `!document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)})`, "my.localReportDetailClose", config.timeoutMs);
+  await clickBottomNavTextButton(client, "마이");
+  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '마이'`, "my.localReportMyTab", config.timeoutMs);
+  await clickHitTestedTextButton(client, "신고/차단 관리", { exact: true });
+  await waitForEvaluate(
+    client,
+    `document.body.innerText.includes(${JSON.stringify(config.placeName)}) && document.body.innerText.includes('장소 신고') && document.body.innerText.includes('로컬 기록')`,
+    "my.localReportActivityVisible",
+    config.timeoutMs,
+  );
+  record(config.checks, "my.localReportActivityVisible", "pass", "마이 신고/차단 관리에 방금 접수한 장소 신고 내역이 표시됐습니다.", { placeName: config.placeName });
 }
 
 async function assertBottomNavOpaque(client, timeoutMs) {

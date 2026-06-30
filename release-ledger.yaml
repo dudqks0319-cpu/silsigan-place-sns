@@ -16,9 +16,9 @@ candidate:
   phase: "local_ready_external_blocked"
   version: "0.1.0"
   build_number: "not_applicable"
-  git_sha: "18de4fae9663580317deddf24e314d16be66a95e"
+  git_sha: "tracked-by-current-branch-head"
   branch: "agent/silsigan-map-tourism-ui-20260628"
-  dirty_state: "uncommitted 2026-06-30 Cloudflare R2/API Worker blocker refresh and release ledger evidence update; previous pushed_agent_branch head 18de4fa; staging/production web Workers deployed, public web/API URL exports documented, staging/production D1 0002 check passes, API Worker dry-runs pass, and R2/API Worker deployments remain externally blocked"
+  dirty_state: "committed 2026-06-30 My tab report-history update; previous pushed_agent_branch head dd3ca65; local verification passes, and R2/API Worker deployments remain externally blocked"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
@@ -45,7 +45,7 @@ local_checks:
   - name: "My tab UGC management smoke"
     command: "pnpm smoke:pages -- --pages-url=http://127.0.0.1:3000 --timeout-ms=60000"
     status: "pass_local"
-    evidence: "2026-06-30 My tab exposes 신고/차단 관리, opens the section by real click, verifies pressed state and 문의/삭제 요청 copy, then keeps My safety menu, map, ranking detail, and marker detail checks passing; artifacts artifacts/cloudflare-pages-smoke/pages-smoke-1782816231666.png, artifacts/cloudflare-pages-smoke/pages-smoke-network-1782816231667.json, artifacts/cloudflare-pages-smoke/pages-smoke-console-1782816231668.log"
+    evidence: "2026-06-30 My tab exposes 신고/차단 관리 and 내 신고 내역, creates a local 광안리해수욕장 place report, verifies my.localReportActivityCreate and my.localReportActivityVisible with 장소 신고 plus 로컬 기록, then keeps My safety menu, map, ranking detail, and marker detail checks passing; artifacts artifacts/cloudflare-pages-smoke/pages-smoke-1782817053447.png, artifacts/cloudflare-pages-smoke/pages-smoke-network-1782817053448.json, artifacts/cloudflare-pages-smoke/pages-smoke-console-1782817053449.log; redaction scan found no token/key/coordinate/anonymous id/original filename strings in the new console/network artifacts"
   - name: "Local tourism/place API route check"
     command: "curl http://127.0.0.1:3000/api/tourism/attractions?regionId=busan&limit=5 && curl http://127.0.0.1:3000/api/places?regionId=busan"
     status: "pass_local"

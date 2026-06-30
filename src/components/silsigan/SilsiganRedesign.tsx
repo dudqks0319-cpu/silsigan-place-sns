@@ -253,6 +253,16 @@ type UploadActivity = {
   createdAt: string;
 };
 
+type ModerationActivity = {
+  id: string;
+  targetType: "place" | "comment" | "photo" | "post";
+  targetName: string;
+  reason: FlagReason;
+  status: "queued" | "hidden" | "local-preview";
+  message: string;
+  createdAt: string;
+};
+
 type WorkerComment = {
   id: string;
   placeId: string;
@@ -561,6 +571,7 @@ const persistedSetKeys = {
   savedPostIds: "silsigan.savedPostIds.v1",
 } as const;
 const uploadActivityKey = "silsigan.uploadActivities.v1";
+const moderationActivityKey = "silsigan.moderationActivities.v1";
 const notificationEnabledKey = "silsigan.notificationEnabled.v1";
 const firstVisitSeenKey = "silsigan.firstVisitSeen.v1";
 const workerPhotoPlaceScopeLimit = 20;
@@ -700,6 +711,7 @@ export default function SilsiganRedesign() {
   const [helpfulPostIds, setHelpfulPostIds] = useState<Set<string>>(() => new Set());
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(() => new Set());
   const [uploadActivities, setUploadActivities] = useState<UploadActivity[]>([]);
+  const [moderationActivities, setModerationActivities] = useState<ModerationActivity[]>([]);
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -980,6 +992,7 @@ export default function SilsiganRedesign() {
       setHelpfulPostIds(readPersistedSet(persistedSetKeys.helpfulPostIds));
       setSavedPostIds(readPersistedSet(persistedSetKeys.savedPostIds));
       setUploadActivities(readPersistedUploadActivities(uploadActivityKey));
+      setModerationActivities(readPersistedModerationActivities(moderationActivityKey));
       setNotificationEnabled(window.localStorage.getItem(notificationEnabledKey) === "true");
       setShowOnboarding(window.localStorage.getItem(firstVisitSeenKey) !== "true");
       setPersistenceReady(true);
@@ -1017,6 +1030,12 @@ export default function SilsiganRedesign() {
 
     persistUploadActivities(uploadActivityKey, uploadActivities);
   }, [persistenceReady, uploadActivities]);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+
+    persistModerationActivities(moderationActivityKey, moderationActivities);
+  }, [moderationActivities, persistenceReady]);
 
   useEffect(() => {
     if (!persistenceReady) return;
@@ -1176,6 +1195,13 @@ export default function SilsiganRedesign() {
     trackEvent("report_abuse", { targetType: "place", targetId: place.id, reason: "other" });
 
     if (!cloudflareApiConfigured) {
+      recordModerationActivity({
+        targetType: "place",
+        targetName: place.name,
+        reason: "other",
+        status: "local-preview",
+        message: "운영 검토 큐 연결 대기",
+      });
       appendRealtimeEvent(place.id, "report.created", new Date().toISOString(), { placeId: place.id, targetType: "place", source: "local-preview" });
       setToast(`${place.name} 신고가 접수 대기 상태로 기록됐습니다. 운영자 검토 항목에 연결할 수 있습니다.`);
       return;
@@ -1191,10 +1217,25 @@ export default function SilsiganRedesign() {
           note: "지도 상세에서 접수된 장소 신고",
         }),
       });
+      recordModerationActivity({
+        targetType: "place",
+        targetName: place.name,
+        reason: "other",
+        status: "queued",
+        message: "운영 검토 큐 접수",
+        createdAt: report.createdAt,
+      });
       appendRealtimeEvent(place.id, "report.created", report.createdAt, { id: report.id, placeId: place.id, targetType: report.targetType });
       setToast(`${place.name} 신고가 운영 검토 큐에 접수됐습니다.`);
     } catch (error) {
       if (localCloudflareApiConfigured) {
+        recordModerationActivity({
+          targetType: "place",
+          targetName: place.name,
+          reason: "other",
+          status: "local-preview",
+          message: "staging 검증 전 로컬 기록",
+        });
         appendRealtimeEvent(place.id, "report.created", new Date().toISOString(), { placeId: place.id, targetType: "place", source: "local-preview" });
         setToast(`${place.name} 신고가 로컬 미리보기로 기록됐습니다. staging에서는 운영 검토 큐에 연결됩니다.`);
         return;
@@ -1236,6 +1277,13 @@ export default function SilsiganRedesign() {
     trackEvent("report_abuse", { targetType: target.targetType, targetId: target.targetId, reason });
 
     if (!cloudflareApiConfigured) {
+      recordModerationActivity({
+        targetType: target.targetType,
+        targetName: target.title,
+        reason,
+        status: "local-preview",
+        message: "Worker API base 설정 후 큐 접수",
+      });
       appendRealtimeEvent(target.placeId, "report.created", new Date().toISOString(), {
         placeId: target.placeId,
         targetType: target.targetType,
@@ -1256,6 +1304,14 @@ export default function SilsiganRedesign() {
           reason,
           note: target.note,
         }),
+      });
+      recordModerationActivity({
+        targetType: report.targetType,
+        targetName: target.title,
+        reason,
+        status: "queued",
+        message: "운영 검토 큐 접수",
+        createdAt: report.createdAt,
       });
       appendRealtimeEvent(target.placeId, "report.created", report.createdAt, {
         id: report.id,
@@ -1310,6 +1366,17 @@ export default function SilsiganRedesign() {
         ...activity,
         id: `upload-${Date.now()}`,
         createdAt: new Date().toISOString(),
+      },
+      ...current,
+    ].slice(0, 20));
+  };
+
+  const recordModerationActivity = (activity: Omit<ModerationActivity, "id" | "createdAt"> & { createdAt?: string }) => {
+    setModerationActivities((current) => [
+      {
+        ...activity,
+        id: `moderation-${Date.now()}`,
+        createdAt: activity.createdAt ?? new Date().toISOString(),
       },
       ...current,
     ].slice(0, 20));
@@ -1662,6 +1729,13 @@ export default function SilsiganRedesign() {
           }),
         });
         trackEvent("flag_post", { postId: post.id, reason });
+        recordModerationActivity({
+          targetType: "post",
+          targetName: post.shareCard.headline,
+          reason,
+          status: "queued",
+          message: "운영 검토 대기열 접수",
+        });
         setToast("신고가 접수되어 운영 검토 대기열에 등록했습니다.");
         setPendingFlagPost(null);
         return;
@@ -1675,6 +1749,13 @@ export default function SilsiganRedesign() {
         }),
       });
       trackEvent("flag_post", { postId: post.id, reason });
+      recordModerationActivity({
+        targetType: "post",
+        targetName: post.shareCard.headline,
+        reason,
+        status: result.hidden ? "hidden" : "queued",
+        message: result.hidden ? "임시 숨김 처리" : `누적 ${result.flagCount}건`,
+      });
       setToast(result.hidden ? "신고가 접수되어 게시물을 임시 숨김 처리했습니다." : `신고가 접수됐습니다. 누적 ${result.flagCount}건`);
       setPendingFlagPost(null);
       await loadData();
@@ -2056,6 +2137,7 @@ export default function SilsiganRedesign() {
                     reports={reports}
                     savedPosts={allRankedPosts.filter((post) => savedPostIds.has(post.id))}
                     uploadActivities={uploadActivities}
+                    moderationActivities={moderationActivities}
                     userReputation={userReputation}
                     onToast={setToast}
                   />
@@ -3436,6 +3518,7 @@ function MyScreen({
   followedHashtagNames,
   followedPlaces,
   myQuestions,
+  moderationActivities,
   onToast,
   questions,
   reports,
@@ -3446,6 +3529,7 @@ function MyScreen({
   followedHashtagNames: Set<string>;
   followedPlaces: Place[];
   myQuestions: MyQuestion[];
+  moderationActivities: ModerationActivity[];
   onToast: (message: string) => void;
   questions: Question[];
   reports: Report[];
@@ -3466,7 +3550,8 @@ function MyScreen({
   const hiddenReportCount = reports.length - visibleReports.length;
   const reflectedUploadCount = uploadActivities.filter((activity) => activity.status === "reflected").length;
   const failedUploadCount = uploadActivities.filter((activity) => activity.status === "failed").length;
-  const reviewAttentionCount = hiddenReportCount + failedUploadCount;
+  const reviewAttentionCount = hiddenReportCount + failedUploadCount + moderationActivities.length;
+  const latestModerationActivities = moderationActivities.slice(0, 4);
   const savedAndFollowedCount = savedPosts.length + followedPlaces.length + followedHashtagNames.size;
   const latestReports = [...reports]
     .filter((report) => !report.hiddenAt)
@@ -3703,6 +3788,22 @@ function MyScreen({
             <strong>문의/삭제 요청</strong>
             <span>지원 페이지와 TestFlight 피드백으로 처리 경로를 남깁니다.</span>
           </div>
+        </div>
+        <SectionTitle title="내 신고 내역" caption={`${latestModerationActivities.length}건`} />
+        <div className={styles.followList} aria-label="내 신고 내역">
+          {latestModerationActivities.map((activity) => (
+            <article key={activity.id} className={styles.followListItem}>
+              <ShieldAlert size={15} />
+              <div>
+                <strong>{activity.targetName}</strong>
+                <span>
+                  {moderationActivityTargetLabel(activity.targetType)} 신고 · {moderationActivityStatusLabel(activity.status)} · {reasonLabelForFlag(activity.reason)} · {minutesAgo(activity.createdAt)}
+                </span>
+                <span>{activity.message}</span>
+              </div>
+            </article>
+          ))}
+          {latestModerationActivities.length === 0 && <p className={styles.emptyText}>아직 접수한 신고가 없습니다. 장소, 사진, 댓글에서 신고하면 여기에 남습니다.</p>}
         </div>
       </section>
 
@@ -4757,6 +4858,60 @@ function readPersistedUploadActivities(key: string): UploadActivity[] {
 
 function persistUploadActivities(key: string, activities: UploadActivity[]) {
   window.localStorage.setItem(key, JSON.stringify(activities.slice(0, 20)));
+}
+
+function readPersistedModerationActivities(key: string): ModerationActivity[] {
+  try {
+    const value = window.localStorage.getItem(key);
+    if (!value) return [];
+    const parsed = JSON.parse(value);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter((item): item is ModerationActivity => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as Record<string, unknown>;
+
+      return (
+        typeof candidate.id === "string" &&
+        (candidate.targetType === "place" || candidate.targetType === "comment" || candidate.targetType === "photo" || candidate.targetType === "post") &&
+        typeof candidate.targetName === "string" &&
+        isFlagReason(candidate.reason) &&
+        (candidate.status === "queued" || candidate.status === "hidden" || candidate.status === "local-preview") &&
+        typeof candidate.message === "string" &&
+        typeof candidate.createdAt === "string"
+      );
+    }).slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+function persistModerationActivities(key: string, activities: ModerationActivity[]) {
+  window.localStorage.setItem(key, JSON.stringify(activities.slice(0, 20)));
+}
+
+function isFlagReason(value: unknown): value is FlagReason {
+  return typeof value === "string" && postFlagReasonOptions.some((option) => option.id === value);
+}
+
+function reasonLabelForFlag(reason: FlagReason) {
+  return postFlagReasonOptions.find((option) => option.id === reason)?.label ?? "기타";
+}
+
+function moderationActivityTargetLabel(targetType: ModerationActivity["targetType"]) {
+  if (targetType === "comment") return "댓글";
+  if (targetType === "photo") return "사진";
+  if (targetType === "post") return "게시물";
+  return "장소";
+}
+
+function moderationActivityStatusLabel(status: ModerationActivity["status"]) {
+  if (status === "hidden") return "임시 숨김";
+  if (status === "local-preview") return "로컬 기록";
+  return "검토 대기";
 }
 
 function crowdValueFromLabel(label: string): CrowdLevel {
