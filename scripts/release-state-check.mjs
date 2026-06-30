@@ -897,6 +897,16 @@ async function checkOpenNextAdapter() {
     } catch (error) {
       record("frontend.wrangler.log_path_runner", "fail", publicErrorMessage(error));
     }
+    try {
+      await access("scripts/wrangler-command-env.mjs");
+      record(
+        "cloudflare.wrangler.log_path_env_helper",
+        "pass",
+        "Cloudflare evidence scripts must share the repo-local Wrangler log path environment helper.",
+      );
+    } catch (error) {
+      record("cloudflare.wrangler.log_path_env_helper", "fail", publicErrorMessage(error));
+    }
 
     const requiredScripts = {
       "cf:build": "opennextjs-cloudflare build",

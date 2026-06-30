@@ -3,6 +3,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { createWranglerCommandEnv } from "./wrangler-command-env.mjs";
 
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
 const DEFAULT_FRONTEND_CONFIG_PATH = "wrangler.jsonc";
@@ -489,7 +490,7 @@ async function main() {
 
 function runCommand(command, args, timeoutMs) {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 * 4, env: process.env }, (error, stdout, stderr) => {
+    execFile(command, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 * 4, env: createWranglerCommandEnv() }, (error, stdout, stderr) => {
       resolve({
         exitCode: error ? (typeof error.code === "number" ? error.code : 1) : 0,
         stdout: String(stdout ?? ""),

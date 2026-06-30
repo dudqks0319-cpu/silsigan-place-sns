@@ -107,6 +107,8 @@ pnpm cf:preflight
 
 Run `cf:external-state` and `cf:preflight` in the same shell where the public URL exports above are set. A plain shell can still fail URL checks because the release scripts do not automatically load `.env.example`.
 
+Wrangler package scripts and R2/D1/external-state evidence scripts write Wrangler debug logs under `artifacts/wrangler-logs` by default, so operator evidence runs should not depend on user-home `.wrangler` log write permissions.
+
 Expected before API Worker deploy: R2/D1/web Worker checks are separated, Pages/API URL shape checks pass only when the public URL values are exported, and API deployment/smoke checks fail until the API Workers are deployed. Expected after R2 and API Worker deploy: R2, D1, URL, deployment, and smoke checks pass.
 
 ## Staging Smoke

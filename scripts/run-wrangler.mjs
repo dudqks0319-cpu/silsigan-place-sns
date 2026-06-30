@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
-import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { createWranglerCommandEnv } from "./wrangler-command-env.mjs";
 
 const args = process.argv.slice(2);
 
@@ -19,15 +18,11 @@ Set WRANGLER_LOG_PATH explicitly to override the default.`);
   process.exit(args.length === 0 ? 1 : 0);
 }
 
-const logPath = process.env.WRANGLER_LOG_PATH || resolve(process.cwd(), "artifacts/wrangler-logs");
-await mkdir(logPath, { recursive: true });
+const commandEnv = createWranglerCommandEnv();
 
 const child = spawn(process.platform === "win32" ? "wrangler.cmd" : "wrangler", args, {
   stdio: "inherit",
-  env: {
-    ...process.env,
-    WRANGLER_LOG_PATH: logPath,
-  },
+  env: commandEnv,
 });
 
 child.on("error", (error) => {

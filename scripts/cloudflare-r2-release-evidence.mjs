@@ -7,6 +7,7 @@ import {
   classifyR2BucketListResult,
   sanitizeWranglerOutput,
 } from "./cloudflare-external-state-check.mjs";
+import { createWranglerCommandEnv } from "./wrangler-command-env.mjs";
 
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
@@ -239,7 +240,7 @@ async function runStep(envName, targetStep, timeoutMs) {
 
 function runCommand(command, args, timeoutMs) {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 * 4, env: process.env }, (error, stdout, stderr) => {
+    execFile(command, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 * 4, env: createWranglerCommandEnv() }, (error, stdout, stderr) => {
       resolve({
         exitCode: error ? (typeof error.code === "number" ? error.code : 1) : 0,
         stdout: String(stdout ?? ""),

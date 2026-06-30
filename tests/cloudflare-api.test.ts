@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -18,6 +18,7 @@ const releaseGate = await import(new URL("../scripts/cloudflare-release-gate.mjs
 const externalState = await import(new URL("../scripts/cloudflare-external-state-check.mjs", import.meta.url).href);
 const d1ReleaseEvidence = await import(new URL("../scripts/cloudflare-d1-release-evidence.mjs", import.meta.url).href);
 const r2ReleaseEvidence = await import(new URL("../scripts/cloudflare-r2-release-evidence.mjs", import.meta.url).href);
+const wranglerCommandEnv = await import(new URL("../scripts/wrangler-command-env.mjs", import.meta.url).href);
 
 type SuccessPayload<TData> = {
   success: true;
@@ -43,6 +44,31 @@ type Place = {
   score: number;
   coordinateStatus: "verified" | "TODO_COORDINATE_VERIFY" | "rejected";
 };
+
+test("Wrangler command env keeps release evidence logs in repo-local artifacts", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-wrangler-env-"));
+  try {
+    const commandEnv = wranglerCommandEnv.createWranglerCommandEnv({
+      env: { PATH: process.env.PATH ?? "" },
+      cwd: tempDir,
+    });
+    const expectedLogPath = join(tempDir, "artifacts", "wrangler-logs");
+
+    assert.equal(commandEnv.WRANGLER_LOG_PATH, expectedLogPath);
+    assert.equal(existsSync(expectedLogPath), true);
+
+    const customLogPath = join(tempDir, "custom-wrangler-logs");
+    const customEnv = wranglerCommandEnv.createWranglerCommandEnv({
+      env: { PATH: process.env.PATH ?? "", WRANGLER_LOG_PATH: customLogPath },
+      cwd: tempDir,
+    });
+
+    assert.equal(customEnv.WRANGLER_LOG_PATH, customLogPath);
+    assert.equal(existsSync(customLogPath), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 type Ranking = {
   placeId: string;
@@ -404,6 +430,7 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.app_config.urls.staging_web" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.experience.url_values" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "frontend.wrangler.log_path_runner" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare.wrangler.log_path_env_helper" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:api:deploy:staging" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:api:deploy:production" && check.status === "pass"));
 
