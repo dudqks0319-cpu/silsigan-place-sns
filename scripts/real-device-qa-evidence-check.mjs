@@ -7,6 +7,7 @@ const DEFAULT_LEDGER_PATH = "docs/real-device-qa.md";
 const REQUIRED_ENVIRONMENT_ITEMS = [
   "Staging Pages URL",
   "Staging Worker API URL",
+  "Staging API Worker deployment",
   "R2 staging bucket visibility",
   "TestFlight build",
   "Android internal/debug build",

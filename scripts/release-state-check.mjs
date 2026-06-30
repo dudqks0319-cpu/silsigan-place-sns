@@ -127,6 +127,7 @@ const REQUIRED_REAL_DEVICE_QA_LEDGER_SECTIONS = [
 const REQUIRED_REAL_DEVICE_QA_LEDGER_TOKENS = [
   "Staging Pages URL",
   "Staging Worker API URL",
+  "Staging API Worker deployment",
   "R2_NOT_ENABLED",
   "TestFlight build",
   "Android internal/debug build",

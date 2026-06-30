@@ -1,6 +1,6 @@
 # #실시간 TestFlight readiness
 
-Updated: 2026-06-27
+Updated: 2026-06-30
 Source of truth: `docs/current-release-state.md`
 Operator packet: `docs/cloudflare-staging-operator-packet.md`
 
@@ -11,7 +11,7 @@ Operator packet: `docs/cloudflare-staging-operator-packet.md`
 | Target | Current judgement | Reason |
 | --- | --- | --- |
 | Web/PWA beta MVP | possible locally | Cloudflare Worker API, D1 schema, local browser smoke, reporting, photos, likes, comments, rankings, and moderation guards are implemented and locally verified. |
-| TestFlight internal testing | candidate after staging API/R2 | Native wrapper and permission copy can be exercised once staging API URL, R2, and mutation smoke are available; staging/production web read-only smoke now passes. |
+| TestFlight internal testing | candidate after staging API/R2 | Native wrapper and permission copy can be exercised once the staging API Worker deployment, R2, and mutation smoke are available; staging/production web read-only smoke now passes. |
 | TestFlight external testing | blocked | Needs real staging smoke, R2/Images mutation proof, production-safe moderation runbook, and device QA evidence. |
 | App Store production submission | blocked | This is still a beta MVP until external Cloudflare resources, UGC operations, and real-device evidence are complete. |
 
@@ -21,7 +21,7 @@ The earlier release assessment correctly warns against App Store submission, but
 
 - Backend is no longer a Supabase-first MVP in the current release branch. README, package dependencies, release checks, and tests now target Cloudflare Workers, D1, R2, Durable Objects, and OpenNext Cloudflare.
 - Nationwide map and ranking scope are not just roadmap text. Local smoke and tests cover nationwide/region/map-bounds ranking panels, current-location controls, bbox place loading, and Worker ranking API query propagation.
-- Remaining release blockers are mostly external-state and evidence blockers, not missing local code paths: `R2_NOT_ENABLED`, missing configured API Worker deployments, staging/production API URL exports, and real staging mutation smoke.
+- Remaining release blockers are mostly external-state and evidence blockers, not missing local code paths: `R2_NOT_ENABLED`, missing configured API Worker deployments, release-shell URL exports, and real staging mutation smoke.
 - App Store submission remains the wrong next milestone. The correct milestone is a TestFlight MVP with live Cloudflare staging and real-device QA.
 
 ## TestFlight MVP Gate
@@ -70,7 +70,7 @@ Only consider App Store production submission after TestFlight evidence is clean
 | Blocker | Owner action |
 | --- | --- |
 | `R2_NOT_ENABLED` | Add the R2 subscription through Cloudflare Dashboard checkout, then rerun R2 evidence checks. |
-| Missing Worker deployments and staging/production URLs | Staging/production web Workers are deployed; deploy configured staging/production API Workers, then export the four `SILSIGAN_*_URL` variables. |
+| Missing API Worker deployments and release-shell URL exports | Staging/production web Workers are deployed and public URL values are defined; deploy configured staging/production API Workers, then export the `SILSIGAN_*_URL` variables in the release/smoke shell. |
 | Missing privacy/support URL shell exports | Local `/privacy` and `/support` pages now exist on the staging web URL, and `.env.example` / operator packet define the HTTPS values. Export `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL` in the actual release shell before external TestFlight notes. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
 | No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and Android device evidence after staging is live. |
@@ -121,7 +121,7 @@ R2 was rechecked after production D1 passed.
 | `node scripts/cloudflare-external-state-check.mjs` | blocked | Staging and production D1 pass; remaining external blockers are R2 plus the four staging/production deployment URLs. |
 | Cloudflare R2 docs | operator action required | The account needs an R2 subscription added through Cloudflare Dashboard checkout before CLI bucket evidence can pass: https://developers.cloudflare.com/r2/get-started/ |
 
-No R2 bucket create, Worker deploy, Pages deploy, or staging smoke was run because R2 subscription and staging URLs are still missing.
+No R2 bucket create, API Worker deploy, Pages redeploy, or staging smoke was run because R2 subscription and the API Worker release path were still blocked.
 
 ## 2026-06-27 External-State Gate Hardening
 

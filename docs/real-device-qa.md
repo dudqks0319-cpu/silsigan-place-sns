@@ -1,7 +1,7 @@
 # #실시간 real-device QA ledger
 
-Updated: 2026-06-27
-Status: blocked until Cloudflare staging URLs and R2 are ready.
+Updated: 2026-06-30
+Status: blocked until the staging API Worker deployment, R2, build selection, and device evidence are ready.
 
 Executable gate: `pnpm qa:real-device`
 
@@ -15,8 +15,9 @@ This ledger records the device evidence required before TestFlight internal test
 
 | Item | Current state |
 | --- | --- |
-| Staging Pages URL | missing |
-| Staging Worker API URL | missing |
+| Staging Pages URL | https://silsigan-web-staging.dudqks0319.workers.dev |
+| Staging Worker API URL | https://silsigan-api-staging.dudqks0319.workers.dev |
+| Staging API Worker deployment | blocked by `worker_deployment.staging.api` |
 | R2 staging bucket visibility | blocked by `R2_NOT_ENABLED` |
 | Staging D1 `0002` | applied and verified |
 | Production D1 `0002` | applied and verified |
