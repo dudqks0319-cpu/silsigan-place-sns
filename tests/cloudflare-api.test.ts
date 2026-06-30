@@ -1630,6 +1630,7 @@ test("Cloudflare release gate plan orders strict staging and browser evidence wi
       "wrangler.dryRun.production",
       "staging.api.smoke",
       "pages.browser.smoke",
+      "testflight.realDeviceQa",
     ],
   );
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "cloudflare.r2Evidence.staging")?.args, [
@@ -1652,6 +1653,7 @@ test("Cloudflare release gate plan orders strict staging and browser evidence wi
     "--report",
     "--require-photo",
   ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "testflight.realDeviceQa")?.args, ["qa:real-device"]);
   assert.equal(JSON.stringify(plan).includes("super-secret"), false);
 });
 
@@ -1699,6 +1701,7 @@ test("Cloudflare release gate can collect non-mutating external blockers without
     "SILSIGAN_STAGING_PAGES_URL",
     "SILSIGAN_STAGING_API_BASE_URL",
   ]);
+  assert.deepEqual(collectPlan.steps.find((step: ReleaseGateStep) => step.name === "testflight.realDeviceQa")?.args, ["qa:real-device"]);
 
   const mutatingCollectPlan = releaseGate.resolveReleaseGatePlan({
     flags: releaseGate.parseArgs(["--collect-blockers", "--mutating"]).flags,
@@ -1752,6 +1755,7 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
     "SILSIGAN_STAGING_PAGES_URL",
     "SILSIGAN_STAGING_API_BASE_URL",
   ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "testflight.realDeviceQa")?.args, ["qa:real-device"]);
   assert.equal(JSON.stringify(plan).includes("super-secret"), false);
 
   const missingEvidencePlan = releaseGate.resolveReleaseGatePlan({
@@ -1818,6 +1822,7 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
     "SILSIGAN_PRODUCTION_PAGES_URL",
     "SILSIGAN_PRODUCTION_API_BASE_URL",
   ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "testflight.realDeviceQa")?.args, ["qa:real-device"]);
   assert.equal(JSON.stringify(plan).includes("https://silsigan.pages.dev"), false);
   assert.equal(JSON.stringify(plan).includes("https://silsigan-api.workers.dev"), false);
 
@@ -1887,20 +1892,29 @@ test("Cloudflare release gate summarizes failed collect-blockers steps without s
         checks: [{ name: "harness", status: "fail", message: "SILSIGAN_STAGING_PAGES_URL 또는 --pages-url 이 필요합니다." }],
       }),
     },
+    {
+      name: "testflight.realDeviceQa",
+      status: "fail",
+      outputTail: JSON.stringify({
+        blockers: ["real_device_qa.environment.ready", "real_device_qa.iphone.matrix.results"],
+      }),
+    },
   ]);
 
   assert.deepEqual(summary, {
     resultCounts: {
       pass: 1,
-      fail: 4,
+      fail: 5,
     },
-    failedSteps: ["release.status.strict", "cloudflare.preflight", "cloudflare.externalState", "pages.browser.smoke"],
+    failedSteps: ["release.status.strict", "cloudflare.preflight", "cloudflare.externalState", "pages.browser.smoke", "testflight.realDeviceQa"],
     blockers: [
       "release_harness.ledger.open_blockers",
       "deployment_url.staging.pages",
       "deployment_url.staging.worker_api",
       "deployment_url.production.worker_api",
       "R2_NOT_ENABLED",
+      "real_device_qa.environment.ready",
+      "real_device_qa.iphone.matrix.results",
     ],
   });
   assert.equal(JSON.stringify(summary).includes("super-secret"), false);

@@ -200,6 +200,7 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
     pagesSmokeArgs.push("--", ...pagesSmokeFlags);
   }
   steps.push(step("pages.browser.smoke", pagesSmokeArgs, RELEASE_CANDIDATE_REQUIRED_URL_ENV_KEYS));
+  steps.push(step("testflight.realDeviceQa", ["qa:real-device"]));
 
   if (productionCandidate) {
     steps.push(
@@ -619,6 +620,7 @@ Runs the release evidence chain:
   pnpm cf:dry-run:staging / cf:dry-run:production
   pnpm smoke:staging
   pnpm smoke:pages
+  pnpm qa:real-device
   optional pnpm smoke:tail-redaction
 
 Options:
