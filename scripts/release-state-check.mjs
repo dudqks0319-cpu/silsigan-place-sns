@@ -887,15 +887,25 @@ async function checkOpenNextAdapter() {
       readyString(devDependencies.wrangler) ? "pass" : "fail",
       "wrangler must be pinned as a devDependency for reproducible Cloudflare frontend builds.",
     );
+    try {
+      await access("scripts/run-wrangler.mjs");
+      record(
+        "frontend.wrangler.log_path_runner",
+        "pass",
+        "Wrangler commands must run through scripts/run-wrangler.mjs so logs stay in repo-local artifacts.",
+      );
+    } catch (error) {
+      record("frontend.wrangler.log_path_runner", "fail", publicErrorMessage(error));
+    }
 
     const requiredScripts = {
       "cf:build": "opennextjs-cloudflare build",
       "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
       "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-      "cf:typegen": "wrangler types cloudflare-env.d.ts --env-interface CloudflareEnv --env-file .env.example --include-runtime false",
-      "cf:web:dry-run": "wrangler deploy --dry-run --env=\"\" --config wrangler.jsonc",
-      "cf:web:dry-run:staging": "wrangler deploy --dry-run --env staging --config wrangler.jsonc",
-      "cf:web:dry-run:production": "wrangler deploy --dry-run --env production --config wrangler.jsonc",
+      "cf:typegen": "node scripts/run-wrangler.mjs types cloudflare-env.d.ts --env-interface CloudflareEnv --env-file .env.example --include-runtime false",
+      "cf:web:dry-run": "node scripts/run-wrangler.mjs deploy --dry-run --env=\"\" --config wrangler.jsonc",
+      "cf:web:dry-run:staging": "node scripts/run-wrangler.mjs deploy --dry-run --env staging --config wrangler.jsonc",
+      "cf:web:dry-run:production": "node scripts/run-wrangler.mjs deploy --dry-run --env production --config wrangler.jsonc",
     };
 
     for (const [scriptName, expectedCommand] of Object.entries(requiredScripts)) {
@@ -907,8 +917,8 @@ async function checkOpenNextAdapter() {
     }
 
     const requiredApiWorkerScripts = {
-      "cf:api:deploy:staging": "wrangler deploy --config workers/api/wrangler.jsonc --env staging",
-      "cf:api:deploy:production": "wrangler deploy --config workers/api/wrangler.jsonc --env production",
+      "cf:api:deploy:staging": "node scripts/run-wrangler.mjs deploy --config workers/api/wrangler.jsonc --env staging",
+      "cf:api:deploy:production": "node scripts/run-wrangler.mjs deploy --config workers/api/wrangler.jsonc --env production",
     };
 
     for (const [scriptName, expectedCommand] of Object.entries(requiredApiWorkerScripts)) {

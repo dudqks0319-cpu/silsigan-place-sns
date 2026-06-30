@@ -113,11 +113,11 @@ local_checks:
   - name: "API Worker dry-runs"
     command: "pnpm cf:dry-run:staging && pnpm cf:dry-run:production"
     status: "pass"
-    evidence: "2026-06-30 staging and production API Worker dry-runs pass with Durable Object, KV, D1, R2, Images, and ENVIRONMENT bindings; deploy remains held until R2 account enablement is complete"
+    evidence: "2026-06-30 staging and production API Worker dry-runs pass with Durable Object, KV, D1, R2, Images, and ENVIRONMENT bindings; scripts now run through scripts/run-wrangler.mjs with WRANGLER_LOG_PATH under artifacts/wrangler-logs to avoid home-directory log write noise; deploy remains held until R2 account enablement is complete"
   - name: "API Worker deploy scripts"
     command: "pnpm cf:api:deploy:staging && pnpm cf:api:deploy:production"
     status: "ready_scripted"
-    evidence: "2026-06-30 package.json exposes explicit API Worker deploy commands for the committed wrangler config, and release:status guards that staging runs wrangler deploy --config workers/api/wrangler.jsonc --env staging while production runs wrangler deploy --config workers/api/wrangler.jsonc --env production. Do not run these deploy commands until R2 account enablement is complete"
+    evidence: "2026-06-30 package.json exposes explicit API Worker deploy commands for the committed wrangler config, and release:status guards that staging runs node scripts/run-wrangler.mjs deploy --config workers/api/wrangler.jsonc --env staging while production runs node scripts/run-wrangler.mjs deploy --config workers/api/wrangler.jsonc --env production. Do not run these deploy commands until R2 account enablement is complete"
   - name: "Staging API smoke before deploy"
     command: "set -a; source .env.example; set +a; pnpm smoke:staging"
     status: "blocked_expected"
@@ -125,7 +125,7 @@ local_checks:
   - name: "Git diff whitespace check"
     command: "git diff --check"
     status: "pass"
-    evidence: "No output on 2026-06-27"
+    evidence: "No output on 2026-06-30 after adding the Wrangler log-path runner and release-state guard updates"
 
 runtime_checks:
   - name: "Local photo-feed Pages smoke"

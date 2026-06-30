@@ -16,3 +16,4 @@ playwright-report
 test-results
 tsconfig.tsbuildinfo
 .env*.local
+artifacts/wrangler-logs/
