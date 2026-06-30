@@ -47,6 +47,7 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
 - `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, TestFlight review notes, and mobile TestFlight shell gates pass; current failure remains expected open external blockers
 - `node scripts/release-state-check.mjs --strict`: real-device QA ledger structure passes against `docs/real-device-qa.md`; actual iPhone/Android evidence remains blocked until staging URLs and R2 pass
+- `pnpm qa:real-device`: expected blocked on 2026-06-30 because the current real-device ledger still has missing staging URLs/R2/build selections, `blocked-staging` matrix rows, and no dated iPhone/Android artifact directories. This command is the executable gate that must pass before internal TestFlight QA is considered ready
 - `node scripts/release-state-check.mjs --strict`: `/privacy` and `/support` page source checks pass; HTTPS `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` values are defined in `.env.example` and still must be exported in the actual release shell
 - `cd apps/mobile && pnpm lint && pnpm typecheck && pnpm test`: pass on 2026-06-27; mobile TestFlight shell exposes release-shaped `stagingWebUrl`, `privacyPolicyUrl`, and `supportUrl` values and renders `개인정보`, `지원 문의`, `staging web` link controls in the `마이` tab
 - `cd apps/mobile && expo config --json`: pass on 2026-06-27 with iOS camera/location/photo usage strings, Android camera/location permissions, and `extra.silsigan` public staging/privacy/support URLs
@@ -75,7 +76,7 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - P0: Configured staging/production API Workers are not deployed: `worker_deployment.staging.api`, `worker_deployment.production.api`
 - P0: Staging/production API URL values are defined but not proven live until API Worker deploy and smoke pass: `SILSIGAN_STAGING_API_BASE_URL`, `SILSIGAN_PRODUCTION_API_BASE_URL`
 - P0: Real staging API smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
-- P0: iPhone and Android real-device QA evidence is not captured: `docs/real-device-qa.md`
+- P0: iPhone and Android real-device QA evidence is not captured: `docs/real-device-qa.md`; `pnpm qa:real-device` should fail until the device ledger is filled with pass rows and dated artifacts
 - P1: Privacy/support URL values are defined but still need final release-shell export and external TestFlight review-note confirmation: `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`
 
 ## 다음 행동
@@ -85,6 +86,8 @@ pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000
 ```
 
 Cloudflare Dashboard > Storage & databases > R2 > Overview에서 R2 subscription checkout을 완료한 뒤 위 check를 먼저 다시 실행한다. R2 check가 통과하면 `pnpm cf:r2:evidence -- --env=staging --apply`로 누락 staging bucket을 만들고, staging API Worker를 배포한 뒤 `.env.example` / `docs/cloudflare-staging-operator-packet.md`의 public web/privacy/support/API URL 값을 export해서 release-candidate smoke로 넘어간다. Staging D1에는 2026-06-28 first-launch seed가 재적용됐고 `launch_focus_count=12`를 확인했다. Production D1은 기존 `0002` 적용 증거가 있으므로 이후에는 `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`로 유지 검증하고, production first-launch seed 재적용은 production API candidate 준비 시 별도 확인한다.
+
+Staging smoke가 통과한 뒤에는 `docs/real-device-qa.md`를 iPhone/Android 실기기 결과로 채우고 `pnpm qa:real-device`를 통과시킨 다음 내부 TestFlight로 넘어간다.
 
 ## 사람이 직접 해야 하는 일
 

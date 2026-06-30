@@ -917,6 +917,18 @@ async function checkOpenNextAdapter() {
         `package.json script ${scriptName} must run '${expectedCommand}'.`,
       );
     }
+
+    const requiredQaScripts = {
+      "qa:real-device": "node scripts/real-device-qa-evidence-check.mjs",
+    };
+
+    for (const [scriptName, expectedCommand] of Object.entries(requiredQaScripts)) {
+      record(
+        `real_device_qa.script.${scriptName}`,
+        scripts[scriptName] === expectedCommand ? "pass" : "fail",
+        `package.json script ${scriptName} must run '${expectedCommand}'.`,
+      );
+    }
   } catch (error) {
     record("frontend.opennext.package", "fail", publicErrorMessage(error));
   }

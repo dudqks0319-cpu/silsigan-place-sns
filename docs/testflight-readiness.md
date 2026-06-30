@@ -209,6 +209,15 @@ The real-device QA ledger is now a release-state checked artifact. This closes t
 | --- | --- | --- |
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/real-device-qa.md` to cover staging Pages/API environment fields, `R2_NOT_ENABLED`, TestFlight and Android build selection, iPhone and Android QA matrices, Naver map display, location allow/deny, camera/photo library, photo upload/preview, like/unlike, ranking refresh, report/moderation, crash checks, redaction requirements, and artifact names. Current failure remains expected until live staging, real-device evidence, and external URLs are available. |
 
+## 2026-06-30 Real-Device QA Evidence Gate
+
+The real-device QA ledger now has an executable evidence check. This is intentionally stricter than `release:status`: it fails while the ledger still contains `blocked-staging`, missing URLs, unselected builds, `R2_NOT_ENABLED`, non-pass matrix rows, or no dated iPhone/Android artifact directories.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `pnpm qa:real-device` | blocked expected | Current `docs/real-device-qa.md` is still a blocked staging ledger, so the command should fail until iPhone and Android evidence is captured under `artifacts/real-device-qa/<date>-<platform>-<build>/`. |
+| `pnpm test` | pass required | Tests cover both failure on a blocked ledger and success on a completed iPhone/Android fixture. |
+
 ## 2026-06-27 Privacy/Support Pages
 
 Local public privacy and support pages now exist on the deployed staging web URL, but final readiness still requires exporting those HTTPS values in the actual release shell.

@@ -86,6 +86,10 @@ local_checks:
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
     evidence: "docs/real-device-qa.md now guards required iPhone/Android QA matrices, staging environment fields, permission flows, UGC flows, redaction requirements, crash checks, and artifact naming before TestFlight internal testing"
+  - name: "Real-device QA evidence gate"
+    command: "pnpm qa:real-device"
+    status: "blocked_expected"
+    evidence: "2026-06-30 executable gate added; current docs/real-device-qa.md should fail because staging URLs/R2/build selections are blocked, device matrix rows are blocked-staging, and dated iPhone/Android artifact directories do not exist yet"
   - name: "Public privacy/support page gate"
     command: "node scripts/release-state-check.mjs --strict"
     status: "pass_local"
@@ -198,7 +202,7 @@ security:
     evidence: "apps/mobile My tab exposes public privacy/support/staging web links; expo config includes iOS camera/location/photo usage strings, Android camera/location permissions, and extra.silsigan public URLs; release:status now fails if mobile TestFlight shell UI tokens, service links, permission metadata, or URL shape drift; real-device QA remains blocked until staging API/R2 are ready"
   real_device_qa:
     status: "blocked_expected"
-    evidence: "docs/real-device-qa.md defines the iPhone/Android QA matrix and evidence artifact rules; actual iPhone/Android device evidence remains blocked until staging URLs and R2 pass"
+    evidence: "docs/real-device-qa.md defines the iPhone/Android QA matrix and evidence artifact rules; pnpm qa:real-device fails until selected builds, pass rows, and dated iPhone/Android artifact directories are recorded; actual device evidence remains blocked until staging URLs and R2 pass"
   public_policy_support_pages:
     status: "pass_local"
     evidence: "src/app/privacy/page.tsx and src/app/support/page.tsx exist and release:status verifies required public-page tokens; HTTPS SILSIGAN_PRIVACY_POLICY_URL and SILSIGAN_SUPPORT_URL values are defined in .env.example/operator docs and still require actual release-shell export"
@@ -243,7 +247,7 @@ blockers:
     status: "open"
     title: "iPhone and Android real-device QA evidence is not captured against live Cloudflare staging."
     owner: "me"
-    evidence: "docs/real-device-qa.md"
+    evidence: "docs/real-device-qa.md; pnpm qa:real-device expected fail until live device evidence is filled"
     due: "before_testflight_internal_testing"
   - id: "P1-SILSIGAN-PRIVACY-SUPPORT-URLS"
     severity: "P1"
@@ -256,4 +260,4 @@ blockers:
 next_action:
   owner: "me"
   command: "pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000"
-  description: "After adding the R2 subscription in Cloudflare Dashboard checkout, verify bucket visibility, deploy the staging API Worker at the committed API URL, export the committed public web/API/privacy/support URL values, and continue to real staging smoke."
+  description: "After adding the R2 subscription in Cloudflare Dashboard checkout, verify bucket visibility, deploy the staging API Worker at the committed API URL, export the committed public web/API/privacy/support URL values, continue to real staging smoke, then fill docs/real-device-qa.md and pass pnpm qa:real-device before TestFlight internal testing."

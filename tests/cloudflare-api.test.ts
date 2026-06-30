@@ -705,6 +705,90 @@ test("release state check requires an operable real-device QA ledger", () => {
   }
 });
 
+test("real-device QA evidence check fails until iPhone and Android evidence is captured", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-real-device-evidence-"));
+  try {
+    const scriptPath = new URL("../scripts/real-device-qa-evidence-check.mjs", import.meta.url).pathname;
+    const blockedLedgerPath = join(tempDir, "blocked-real-device-qa.md");
+    const readyLedgerPath = join(tempDir, "ready-real-device-qa.md");
+
+    writeFileSync(
+      blockedLedgerPath,
+      [
+        "# #실시간 real-device QA ledger",
+        "",
+        "## Environment",
+        "",
+        "| Item | Current state |",
+        "| --- | --- |",
+        "| Staging Pages URL | missing |",
+        "| Staging Worker API URL | missing |",
+        "| R2 staging bucket visibility | blocked by R2_NOT_ENABLED |",
+        "| TestFlight build | not selected |",
+        "| Android internal/debug build | not selected |",
+        "",
+        "## iPhone QA Matrix",
+        "",
+        "| Flow | Required evidence | Result |",
+        "| --- | --- | --- |",
+        "| App launch | screenshot | blocked-staging |",
+        "| Naver map display | map | blocked-staging |",
+        "| Crash check | no crash | blocked-staging |",
+        "",
+        "## Android QA Matrix",
+        "",
+        "| Flow | Required evidence | Result |",
+        "| --- | --- | --- |",
+        "| App launch | screenshot | blocked-staging |",
+        "| Crash check | no crash | blocked-staging |",
+        "",
+        "## Evidence Naming",
+        "",
+        "Use `device-summary.md`, `screenshots/`, `network-redacted.json`, `console-redacted.log`, and `known-issues.md`.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    writeRealDeviceQaEvidenceLedger(readyLedgerPath);
+
+    try {
+      execFileSync(process.execPath, [scriptPath, `--ledger=${blockedLedgerPath}`], {
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+      assert.fail("real-device QA evidence check should fail while the ledger is blocked");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; blockedItems?: unknown[]; blockedFlows?: unknown[]; missingFlows?: string[] }>;
+      };
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("real_device_qa.environment.ready"));
+      assert.ok(payload.blockers.includes("real_device_qa.iphone.matrix.results"));
+      assert.ok(payload.blockers.includes("real_device_qa.android.matrix.required_flows"));
+      assert.ok(payload.blockers.includes("real_device_qa.evidence.iphone_artifacts"));
+      assert.ok(payload.blockers.includes("real_device_qa.evidence.android_artifacts"));
+    }
+
+    const readyOutput = execFileSync(process.execPath, [scriptPath, `--ledger=${readyLedgerPath}`], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    const readyPayload = JSON.parse(readyOutput) as {
+      ok: boolean;
+      checks: Array<{ name: string; status: string }>;
+    };
+
+    assert.equal(readyPayload.ok, true);
+    assert.equal(readyPayload.checks.every((check) => check.status === "pass"), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("release state check requires public privacy and support pages", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-public-policy-pages-"));
   try {
@@ -2917,6 +3001,86 @@ function writeRealDeviceQaLedger(path: string) {
       "## Evidence Naming",
       "",
       "Use `network-redacted.json`, `known-issues.md`, screenshots, and console logs. Do not store raw coordinates, original filenames, tokens, or anonymous IDs.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writeRealDeviceQaEvidenceLedger(path: string) {
+  const requiredRows = [
+    "| App launch | Build number, device model, OS version, first screen screenshot | pass |",
+    "| Naver map display | Map or fallback map visible, marker hit-test works | pass |",
+    "| Location allow | Permission prompt, current-location marker, no raw coordinate display | pass |",
+    "| Location deny | Region selection remains usable | pass |",
+    "| Place detail | Place marker/ranking item opens detail sheet | pass |",
+    "| Place click | Worker records click and UI remains responsive | pass |",
+    "| Comment create/delete | Comment appears, realtime/polling state updates, delete hides it | pass |",
+    "| Camera and photo library | Permission prompts and denied-state recovery captured | pass |",
+    "| Photo upload/preview | Upload succeeds and preview loads from staging API | pass |",
+    "| Like/unlike | Count/state changes and duplicate action is bounded | pass |",
+    "| Ranking refresh | Nationwide/region/map-bounds TOP 10 updates are recorded | pass |",
+    "| Report/moderation | User report succeeds, admin hide/delete affects public UI | pass |",
+    "| Privacy redaction | No raw coordinate, original filename, token, or anonymous id visible | pass |",
+    "| Crash check | No crash during the full script | pass |",
+  ];
+  const androidRows = [
+    requiredRows[0],
+    requiredRows[1],
+    requiredRows[2],
+    requiredRows[3],
+    "| Back navigation | Back exits sheets/modals predictably without losing app state | pass |",
+    ...requiredRows.slice(4),
+  ];
+
+  writeFileSync(
+    path,
+    [
+      "# #실시간 real-device QA ledger",
+      "",
+      "Updated: 2026-06-30",
+      "Status: complete for internal TestFlight candidate evidence.",
+      "",
+      "## Scope",
+      "",
+      "This ledger records iPhone and Android real-device evidence required before TestFlight internal testing.",
+      "",
+      "## Environment",
+      "",
+      "| Item | Current state |",
+      "| --- | --- |",
+      "| Staging Pages URL | https://silsigan-web-staging.example.workers.dev |",
+      "| Staging Worker API URL | https://silsigan-api-staging.example.workers.dev |",
+      "| R2 staging bucket visibility | visible: silsigan-photos-staging |",
+      "| TestFlight build | iOS build 42 selected |",
+      "| Android internal/debug build | Android debug build 42 selected |",
+      "",
+      "## iPhone QA Matrix",
+      "",
+      "| Flow | Required evidence | Result |",
+      "| --- | --- | --- |",
+      ...requiredRows,
+      "",
+      "## Android QA Matrix",
+      "",
+      "| Flow | Required evidence | Result |",
+      "| --- | --- | --- |",
+      ...androidRows,
+      "",
+      "## Evidence Naming",
+      "",
+      "- `artifacts/real-device-qa/2026-06-30-iphone-build-42/device-summary.md`",
+      "- `artifacts/real-device-qa/2026-06-30-iphone-build-42/screenshots/`",
+      "- `artifacts/real-device-qa/2026-06-30-iphone-build-42/network-redacted.json`",
+      "- `artifacts/real-device-qa/2026-06-30-iphone-build-42/console-redacted.log`",
+      "- `artifacts/real-device-qa/2026-06-30-iphone-build-42/known-issues.md`",
+      "- `artifacts/real-device-qa/2026-06-30-android-build-42/device-summary.md`",
+      "- `artifacts/real-device-qa/2026-06-30-android-build-42/screenshots/`",
+      "- `artifacts/real-device-qa/2026-06-30-android-build-42/network-redacted.json`",
+      "- `artifacts/real-device-qa/2026-06-30-android-build-42/console-redacted.log`",
+      "- `artifacts/real-device-qa/2026-06-30-android-build-42/known-issues.md`",
+      "",
+      "Do not store raw tokens, raw coordinates, exact user coordinates, original filenames, unredacted anonymous IDs, private emails, or Cloudflare account identifiers in evidence artifacts.",
       "",
     ].join("\n"),
     "utf8",
