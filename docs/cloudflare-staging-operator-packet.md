@@ -56,6 +56,20 @@ pnpm cf:r2:evidence -- --env=production --apply --confirm-production --timeout-m
 
 Keep production bucket creation separate from the staging MVP unblock unless production evidence is explicitly needed in the same run.
 
+Then deploy the staging API Worker with the committed Worker config:
+
+```bash
+pnpm cf:api:deploy:staging
+```
+
+After the staging smoke passes, deploy production separately:
+
+```bash
+pnpm cf:api:deploy:production
+```
+
+Do not deploy production as a substitute for staging mutation evidence. The staging API Worker must pass read-only smoke, mutation/admin smoke, Pages browser smoke, and tail redaction before TestFlight internal evidence is considered complete.
+
 ## Staging Deploy Inputs
 
 After R2 is enabled, set the staging URLs in the shell that will run the release evidence:

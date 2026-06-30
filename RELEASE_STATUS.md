@@ -36,6 +36,7 @@ R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md]
 - `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass on 2026-06-30; no pending migrations, remote staging D1 posts/questions evidence returns `posts=4`, `questions=3`
 - `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`: pass on 2026-06-30; no pending migrations, remote production D1 posts/questions evidence returns `posts=4`, `questions=3`
 - `pnpm cf:dry-run:staging` and `pnpm cf:dry-run:production`: pass on 2026-06-30; API Worker bundles validate with Durable Object, KV, D1, R2, Images, and `ENVIRONMENT` bindings for each env
+- `release:status` now guards explicit API Worker deploy scripts: `pnpm cf:api:deploy:staging` runs `wrangler deploy --config workers/api/wrangler.jsonc --env staging`, and `pnpm cf:api:deploy:production` runs `wrangler deploy --config workers/api/wrangler.jsonc --env production`
 - `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000`: expected blocked-external on 2026-06-27 with `R2_NOT_ENABLED`; no bucket creation or mutation was attempted
 - `pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000`: expected blocked-external on 2026-06-30 with `R2_NOT_ENABLED`; no bucket creation or mutation was attempted
 - `pnpm cf:r2:evidence -- --env=production --check`: expected blocked-external on 2026-06-30 with `R2_NOT_ENABLED`; no bucket creation or mutation was attempted

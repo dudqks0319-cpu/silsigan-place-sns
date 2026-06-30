@@ -403,6 +403,8 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.app_config.android_permissions" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.app_config.urls.staging_web" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "mobile_testflight.experience.url_values" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:api:deploy:staging" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:api:deploy:production" && check.status === "pass"));
 
     try {
       execFileSync(process.execPath, [

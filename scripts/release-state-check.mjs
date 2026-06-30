@@ -904,6 +904,19 @@ async function checkOpenNextAdapter() {
         `package.json script ${scriptName} must run '${expectedCommand}'.`,
       );
     }
+
+    const requiredApiWorkerScripts = {
+      "cf:api:deploy:staging": "wrangler deploy --config workers/api/wrangler.jsonc --env staging",
+      "cf:api:deploy:production": "wrangler deploy --config workers/api/wrangler.jsonc --env production",
+    };
+
+    for (const [scriptName, expectedCommand] of Object.entries(requiredApiWorkerScripts)) {
+      record(
+        `worker.api.script.${scriptName}`,
+        scripts[scriptName] === expectedCommand ? "pass" : "fail",
+        `package.json script ${scriptName} must run '${expectedCommand}'.`,
+      );
+    }
   } catch (error) {
     record("frontend.opennext.package", "fail", publicErrorMessage(error));
   }
