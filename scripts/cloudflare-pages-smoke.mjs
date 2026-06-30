@@ -342,6 +342,10 @@ async function runBrowserSmoke(client, config) {
   await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "place.detail", config.timeoutMs);
   record(config.checks, "place.detail", "pass", "지도 마커 클릭으로 장소 상세 시트를 브라우저에서 열었습니다.", { placeName: config.placeName });
 
+  if (!config.apiBaseUrl) {
+    await runLocalContentSafetyChecks(client, config);
+  }
+
   if (config.apiBaseUrl) {
     await waitFor(
       () => hasApiRequest(networkEvents, config.apiBaseUrl, `/api/places/${encodeURIComponent(config.placeId)}/click`, "POST"),
@@ -673,6 +677,38 @@ async function runLocalModerationActivityCheck(client, config) {
     config.timeoutMs,
   );
   record(config.checks, "my.localReportActivityVisible", "pass", "마이 신고/차단 관리에 방금 접수한 장소 신고 내역이 표시됐습니다.", { placeName: config.placeName });
+}
+
+async function runLocalContentSafetyChecks(client, config) {
+  const privacyWarning = "전화번호, 이메일, 차량번호 같은 개인정보는 올릴 수 없습니다.";
+  const spamWarning = "링크나 스크립트는 올릴 수 없습니다. 장소 상황만 짧게 남겨 주세요.";
+
+  await fillTextarea(client, `${config.placeName} 댓글 작성`, "010-1234-5678");
+  await waitForEvaluate(
+    client,
+    `document.body.innerText.includes(${JSON.stringify(privacyWarning)}) && [...document.querySelectorAll('button')].some((button) => button.textContent?.trim() === '등록' && button.disabled)`,
+    "contentSafety.commentPrivacy",
+    config.timeoutMs,
+  );
+  record(config.checks, "contentSafety.commentPrivacy", "pass", "댓글 작성 UI가 전화번호성 개인정보 입력을 즉시 차단했습니다.");
+  await fillTextarea(client, `${config.placeName} 댓글 작성`, "");
+
+  await clickBottomNavTextButton(client, "올리기");
+  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '사진 올리기'`, "contentSafety.reportTab", config.timeoutMs);
+  await fillTextareaById(client, "reportText", "www.example.com");
+  await waitForEvaluate(
+    client,
+    `document.body.innerText.includes(${JSON.stringify(spamWarning)}) && [...document.querySelectorAll('button')].some((button) => button.textContent?.trim() === '올리기' && button.disabled)`,
+    "contentSafety.reportSpam",
+    config.timeoutMs,
+  );
+  record(config.checks, "contentSafety.reportSpam", "pass", "사진 올리기 한 줄 입력이 링크성 스팸 입력을 즉시 차단했습니다.");
+  await fillTextareaById(client, "reportText", "");
+
+  await clickBottomNavTextButton(client, "지도");
+  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "contentSafety.mapReturn", config.timeoutMs);
+  await clickMapMarker(client, config.placeName, config.timeoutMs);
+  await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "contentSafety.detailReturn", config.timeoutMs);
 }
 
 async function assertBottomNavOpaque(client, timeoutMs) {

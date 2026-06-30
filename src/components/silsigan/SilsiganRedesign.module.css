@@ -2379,6 +2379,18 @@
   color: #b42318;
 }
 
+.inputSafetyNotice {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  border-radius: 12px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
 .photoSafetyNotice {
   margin: 0;
   padding: 10px 12px;

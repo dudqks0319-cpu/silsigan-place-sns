@@ -60,6 +60,7 @@ import type {
 import { getSiteUrl } from "@/lib/site-url";
 import { CurrentLocationButton, type LocationPermissionState, type UiLocation } from "./CurrentLocationButton";
 import { EmptyState as SharedEmptyState } from "./EmptyState";
+import { contentSafetyWarningFor } from "./contentSafety";
 import { crowdLabels, lineLabels, parkingLabels, weatherLabels } from "./labels";
 import { NaverMap, type MapBounds, type MapFocusTarget } from "./NaverMap";
 import { PlaceDetailSheet } from "./PlaceDetailSheet";
@@ -1387,6 +1388,12 @@ export default function SilsiganRedesign() {
       return;
     }
 
+    const reportSafetyWarning = contentSafetyWarningFor(reportText);
+    if (reportSafetyWarning) {
+      setToast(reportSafetyWarning);
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const payload = {
@@ -1610,6 +1617,12 @@ export default function SilsiganRedesign() {
     const normalizedBody = body.trim();
     if (!normalizedBody) {
       setToast("댓글 내용을 입력해 주세요.");
+      return;
+    }
+
+    const commentSafetyWarning = contentSafetyWarningFor(normalizedBody);
+    if (commentSafetyWarning) {
+      setToast(commentSafetyWarning);
       return;
     }
 
@@ -3324,6 +3337,7 @@ function ReportScreen({
   onSubmit: () => void;
 }) {
   const verificationCopy = verificationStatusCopy(locationVerificationStatus);
+  const reportSafetyWarning = contentSafetyWarningFor(reportText);
   const toggleRecommendedTag = (tag: string) => {
     const token = `#${tag}`;
     const nextText = reportText.includes(token)
@@ -3409,7 +3423,10 @@ function ReportScreen({
           onChange={(event) => setReportText(event.target.value)}
           placeholder="예: 공영주차장 거의 찼어요."
           maxLength={120}
+          aria-describedby={reportSafetyWarning ? "reportTextSafety" : undefined}
+          aria-invalid={Boolean(reportSafetyWarning)}
         />
+        {reportSafetyWarning && <p id="reportTextSafety" className={styles.inputSafetyNotice} role="alert">{reportSafetyWarning}</p>}
         <span>{reportText.length}/120</span>
       </section>
 
@@ -3424,7 +3441,7 @@ function ReportScreen({
         </button>
       </section>
 
-      <button className={styles.submitButton} type="button" onClick={onSubmit} disabled={isSubmitting}>
+      <button className={styles.submitButton} type="button" onClick={onSubmit} disabled={isSubmitting || Boolean(reportSafetyWarning)}>
         {isSubmitting ? "올리는 중..." : "올리기"}
       </button>
     </div>

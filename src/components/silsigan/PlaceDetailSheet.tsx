@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 import { Flag, Heart, Send, ShieldCheck, X } from "lucide-react";
 import styles from "./SilsiganRedesign.module.css";
 import { CommentFeed, type PlaceComment } from "./CommentFeed";
+import { contentSafetyWarningFor } from "./contentSafety";
 import { PhotoUploader, type PlacePhoto, type PreparedPhotoUpload } from "./PhotoUploader";
 
 export type SheetPlace = {
@@ -72,10 +73,12 @@ export function PlaceDetailSheet({
   const [commentBody, setCommentBody] = useState("");
   const [commentSubmitting, setCommentSubmitting] = useState(false);
   const trimmedComment = commentBody.trim();
+  const commentSafetyWarning = contentSafetyWarningFor(commentBody);
+  const commentSafetyId = `comment-${place.id}-safety`;
 
   const submitComment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!trimmedComment || commentSubmitting) {
+    if (!trimmedComment || commentSubmitting || commentSafetyWarning) {
       return;
     }
 
@@ -162,12 +165,15 @@ export function PlaceDetailSheet({
               rows={2}
               value={commentBody}
               aria-label={`${place.name} 댓글 작성`}
+              aria-describedby={commentSafetyWarning ? commentSafetyId : undefined}
+              aria-invalid={Boolean(commentSafetyWarning)}
             />
-            <button type="submit" disabled={!trimmedComment || commentSubmitting}>
+            <button type="submit" disabled={!trimmedComment || commentSubmitting || Boolean(commentSafetyWarning)}>
               <Send size={15} />
               {commentSubmitting ? "등록 중" : "등록"}
             </button>
           </div>
+          {commentSafetyWarning && <p id={commentSafetyId} className={styles.inputSafetyNotice} role="alert">{commentSafetyWarning}</p>}
           <span>{trimmedComment.length}/300</span>
         </form>
         <CommentFeed comments={comments} onLikeComment={onCommentLike} onReportComment={onReportComment} />
