@@ -42,10 +42,23 @@ First verify account-level R2 visibility:
 pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000
 ```
 
+The staging unblock lane is also available as a single ordered command. Its default mode runs only staging preflight, staging R2 check, staging D1 check, and external-state checks:
+
+```bash
+pnpm cf:staging:unblock -- --plan-only
+pnpm cf:staging:unblock -- --timeout-ms=120000
+```
+
 If the account is enabled but the staging bucket is missing, create only the configured staging bucket:
 
 ```bash
 pnpm cf:r2:evidence -- --env=staging --apply --timeout-ms=120000
+```
+
+Or run the same staging-only bucket creation through the unblock lane:
+
+```bash
+pnpm cf:staging:unblock -- --apply-r2 --timeout-ms=120000
 ```
 
 Production bucket creation is a separate production action:
@@ -60,6 +73,12 @@ Then deploy the staging API Worker with the committed Worker config:
 
 ```bash
 pnpm cf:api:deploy:staging
+```
+
+To continue from staging R2 bucket verification into staging API deploy and read-only smoke in one lane:
+
+```bash
+pnpm cf:staging:unblock -- --apply-r2 --deploy-api --smoke --timeout-ms=120000
 ```
 
 After the staging smoke passes, deploy production separately:
@@ -123,6 +142,12 @@ Mutation/admin smoke:
 
 ```bash
 SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging -- --require-admin
+```
+
+The unblock lane can run the same admin-gated mutation smoke only when the admin token is present:
+
+```bash
+pnpm cf:staging:unblock -- --smoke --mutating --timeout-ms=120000
 ```
 
 Pages browser smoke:

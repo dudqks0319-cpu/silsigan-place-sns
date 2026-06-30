@@ -30,6 +30,7 @@ The following must be true before treating the app as TestFlight-ready:
 
 - [ ] `pnpm release:status -- --strict` passes or reports only intentionally deferred App Store production items.
 - [ ] Cloudflare R2 is enabled and `pnpm cf:r2:evidence -- --env=staging --check` passes.
+- [ ] R2 checkout 이후 staging-only unblock lane `pnpm cf:staging:unblock -- --apply-r2 --deploy-api --smoke --timeout-ms=120000` passes.
 - [ ] Staging Worker API is deployed and `SILSIGAN_STAGING_API_BASE_URL` is set to an HTTPS URL.
 - [x] Staging web frontend is deployed at `https://silsigan-web-staging.dudqks0319.workers.dev` and read-only `pnpm smoke:pages` passes for map controls, bottom nav, ranking detail, and marker detail.
 - [x] `SILSIGAN_STAGING_PAGES_URL` value is defined in `.env.example` and `docs/cloudflare-staging-operator-packet.md`.
@@ -217,7 +218,7 @@ The real-device QA ledger now has an executable evidence check and an artifact s
 | --- | --- | --- |
 | `pnpm qa:real-device:init -- --platform=iphone --build=<testflight-build>` | pass local | Creates `device-summary.md`, `screenshots/`, `network-redacted.json`, `console-redacted.log`, and `known-issues.md` under `artifacts/real-device-qa/<date>-iphone-<build>/`; Android uses `--platform=android`. |
 | `pnpm qa:real-device` | blocked expected | Current `docs/real-device-qa.md` is still a blocked staging ledger, so the command should fail until iPhone and Android evidence is captured under `artifacts/real-device-qa/<date>-<platform>-<build>/`. |
-| `pnpm test` | pass required | 136 tests pass, including failure on a blocked ledger, success on a completed iPhone/Android fixture, and artifact scaffold creation/rejection coverage. |
+| `pnpm test` | pass required | 138 tests pass, including staging unblock plan/admin-gate coverage, failure on a blocked ledger, success on a completed iPhone/Android fixture, and artifact scaffold creation/rejection coverage. |
 
 ## 2026-06-27 Privacy/Support Pages
 

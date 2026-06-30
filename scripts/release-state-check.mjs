@@ -929,6 +929,7 @@ async function checkOpenNextAdapter() {
     const requiredApiWorkerScripts = {
       "cf:api:deploy:staging": "node scripts/run-wrangler.mjs deploy --config workers/api/wrangler.jsonc --env staging",
       "cf:api:deploy:production": "node scripts/run-wrangler.mjs deploy --config workers/api/wrangler.jsonc --env production",
+      "cf:staging:unblock": "node scripts/cloudflare-staging-unblock.mjs",
     };
 
     for (const [scriptName, expectedCommand] of Object.entries(requiredApiWorkerScripts)) {

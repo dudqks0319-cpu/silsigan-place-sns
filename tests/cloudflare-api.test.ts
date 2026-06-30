@@ -15,6 +15,7 @@ const execFileAsync = promisify(execFile);
 const pagesSmoke = await import(new URL("../scripts/cloudflare-pages-smoke.mjs", import.meta.url).href);
 const pagesLocalReportSmoke = await import(new URL("../scripts/cloudflare-pages-local-report-smoke.mjs", import.meta.url).href);
 const releaseGate = await import(new URL("../scripts/cloudflare-release-gate.mjs", import.meta.url).href);
+const stagingUnblock = await import(new URL("../scripts/cloudflare-staging-unblock.mjs", import.meta.url).href);
 const externalState = await import(new URL("../scripts/cloudflare-external-state-check.mjs", import.meta.url).href);
 const d1ReleaseEvidence = await import(new URL("../scripts/cloudflare-d1-release-evidence.mjs", import.meta.url).href);
 const r2ReleaseEvidence = await import(new URL("../scripts/cloudflare-r2-release-evidence.mjs", import.meta.url).href);
@@ -433,6 +434,7 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare.wrangler.log_path_env_helper" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:api:deploy:staging" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:api:deploy:production" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "worker.api.script.cf:staging:unblock" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.script.qa:real-device" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.script.qa:real-device:init" && check.status === "pass"));
 
@@ -1762,6 +1764,96 @@ test("Cloudflare release gate can run local Pages report baseline before externa
   ]);
   assert.equal(plan.steps.some((step: ReleaseGateStep) => step.name === "pages.browser.smoke"), true);
   assert.equal(plan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_ADMIN_TOKEN_REQUIRED"), false);
+  assert.equal(JSON.stringify(plan).includes("super-secret"), false);
+});
+
+test("Cloudflare staging unblock plan is staging-only and requires explicit side-effect flags", () => {
+  const defaultParsed = stagingUnblock.parseArgs([]);
+  const defaultPlan = stagingUnblock.resolveStagingUnblockPlan({
+    flags: defaultParsed.flags,
+    options: defaultParsed.options,
+    env: {},
+  });
+
+  assert.equal(defaultPlan.ok, true);
+  assert.equal(defaultPlan.applyR2, false);
+  assert.equal(defaultPlan.deployApi, false);
+  assert.equal(defaultPlan.smoke, false);
+  assert.deepEqual(
+    defaultPlan.steps.map((step: ReleaseGateStep) => step.name),
+    [
+      "cloudflare.preflight.staging",
+      "cloudflare.r2.checkStagingBucket",
+      "cloudflare.d1.checkStaging",
+      "cloudflare.externalState",
+    ],
+  );
+  assert.equal(defaultPlan.steps.some((step: ReleaseGateStep) => step.args.includes("--env=production")), false);
+
+  const parsed = stagingUnblock.parseArgs(["--apply-r2", "--deploy-api", "--smoke", "--timeout-ms=120000"]);
+  const plan = stagingUnblock.resolveStagingUnblockPlan({
+    flags: parsed.flags,
+    options: parsed.options,
+    env: {},
+  });
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.timeoutMs, 120000);
+  assert.deepEqual(
+    plan.steps.map((step: ReleaseGateStep) => step.name),
+    [
+      "cloudflare.preflight.staging",
+      "cloudflare.r2.ensureStagingBucket",
+      "cloudflare.d1.checkStaging",
+      "cloudflare.externalState",
+      "worker.api.deploy.staging",
+      "staging.api.smoke.readOnly",
+    ],
+  );
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "cloudflare.r2.ensureStagingBucket")?.args, [
+    "cf:r2:evidence",
+    "--",
+    "--env=staging",
+    "--apply",
+    "--timeout-ms=120000",
+  ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "worker.api.deploy.staging")?.args, ["cf:api:deploy:staging"]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke.readOnly")?.args, ["smoke:staging"]);
+  assert.equal(plan.steps.some((step: ReleaseGateStep) => step.name.includes("production")), false);
+});
+
+test("Cloudflare staging unblock mutating smoke is admin-gated", () => {
+  const missingSmokeParsed = stagingUnblock.parseArgs(["--mutating"]);
+  const missingSmokePlan = stagingUnblock.resolveStagingUnblockPlan({
+    flags: missingSmokeParsed.flags,
+    options: missingSmokeParsed.options,
+    env: {},
+  });
+
+  assert.equal(missingSmokePlan.ok, false);
+  assert.ok(missingSmokePlan.errors.some((error: { code: string }) => error.code === "MUTATING_REQUIRES_SMOKE"));
+  assert.ok(missingSmokePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_ADMIN_TOKEN_REQUIRED"));
+
+  const parsed = stagingUnblock.parseArgs(["--smoke", "--mutating"]);
+  const plan = stagingUnblock.resolveStagingUnblockPlan({
+    flags: parsed.flags,
+    options: parsed.options,
+    env: {
+      SILSIGAN_STAGING_ADMIN_TOKEN: "super-secret-admin-token",
+    },
+  });
+
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke.mutating")?.args, [
+    "smoke:staging",
+    "--",
+    "--mutating",
+    "--require-admin",
+  ]);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke.mutating")?.envKeys, [
+    "SILSIGAN_STAGING_API_BASE_URL",
+    "SILSIGAN_STAGING_ADMIN_TOKEN",
+  ]);
   assert.equal(JSON.stringify(plan).includes("super-secret"), false);
 });
 

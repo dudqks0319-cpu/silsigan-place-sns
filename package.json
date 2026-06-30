@@ -29,6 +29,7 @@
     "cf:preflight": "node scripts/cloudflare-resource-preflight.mjs",
     "cf:preflight:staging": "node scripts/cloudflare-resource-preflight.mjs --env staging",
     "cf:preflight:production": "node scripts/cloudflare-resource-preflight.mjs --env production",
+    "cf:staging:unblock": "node scripts/cloudflare-staging-unblock.mjs",
     "cf:dry-run": "node scripts/run-wrangler.mjs deploy --dry-run --env=\"\" --config workers/api/wrangler.jsonc",
     "cf:dry-run:staging": "node scripts/run-wrangler.mjs deploy --dry-run --env staging --config workers/api/wrangler.jsonc",
     "cf:dry-run:production": "node scripts/run-wrangler.mjs deploy --dry-run --env production --config workers/api/wrangler.jsonc",
