@@ -6,6 +6,8 @@
 
 상세 source of truth는 [docs/current-release-state.md](docs/current-release-state.md)이다. 이 파일은 공통 release harness가 읽는 요약 index다.
 
+2026-07-10 GitHub 스냅샷과 이번 검증 결과는 [docs/github-progress-2026-07-10.md](docs/github-progress-2026-07-10.md)에 기록했다. 현재 검토 브랜치는 `codex/silsigan-progress-20260710`이며, 로컬 `pnpm lint`, `pnpm typecheck`, `pnpm test`는 133 / 133 통과했다. 외부 release blocker는 이 문서의 `막힌 항목`과 동일하다.
+
 R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md](docs/cloudflare-staging-operator-packet.md)에 모았다.
 
 ## 현재 후보
