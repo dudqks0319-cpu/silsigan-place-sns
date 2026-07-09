@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type CSSProperties, type FormEvent, useState } from "react";
 import { Flag, Heart, Send, ShieldCheck, X } from "lucide-react";
 import styles from "./SilsiganRedesign.module.css";
 import { CommentFeed, type PlaceComment } from "./CommentFeed";
@@ -69,6 +69,8 @@ export function PlaceDetailSheet({
   safetyNotice?: string | null;
 }) {
   const recentRealtimeEvents = realtimeEvents.slice(0, 3);
+  const heroPhoto = photos[0] ?? null;
+  const heroPhotoStyle = photoPreviewBackground(heroPhoto?.previewUrl);
   const [commentBody, setCommentBody] = useState("");
   const [commentSubmitting, setCommentSubmitting] = useState(false);
   const trimmedComment = commentBody.trim();
@@ -91,6 +93,16 @@ export function PlaceDetailSheet({
   return (
     <aside className={styles.detailSheet} aria-label={`${place.name} 상세 정보`}>
       <div className={styles.sheetHandle} />
+      <button
+        className={styles.sheetPhotoHero}
+        style={heroPhotoStyle}
+        type="button"
+        onClick={onReport}
+        aria-label={`${place.name} 지금컷 올리기`}
+      >
+        <span>{photos.length > 0 ? `사진 ${photos.length}장 · 최근 ${place.updated}` : "첫 사진을 기다리는 중"}</span>
+        <strong>{heroPhoto?.label ?? `${place.name} 지금컷 올리기`}</strong>
+      </button>
       <div className={styles.detailHeader}>
         <div>
           <p className={styles.eyebrow}>{place.address}</p>
@@ -119,8 +131,8 @@ export function PlaceDetailSheet({
         <button className={liked ? styles.sheetActionActive : ""} type="button" onClick={onLike} aria-label="좋아요">
           <Heart size={17} /> 좋아요
         </button>
-        <button type="button" onClick={onReport} aria-label="현장 제보 작성">
-          현장 제보
+        <button type="button" onClick={onReport} aria-label="지금컷 올리기">
+          지금컷 올리기
         </button>
         <button type="button" onClick={onReportPlace} aria-label="장소 신고">
           <Flag size={17} /> 신고
@@ -197,10 +209,31 @@ function realtimeModeLabel(mode: "connecting" | "live" | "polling") {
   }
 
   if (mode === "live") {
-    return "Cloudflare DO";
+    return "실시간 연결";
   }
 
-  return "Polling";
+  return "자동 갱신";
+}
+
+function photoPreviewBackground(previewUrl: string | undefined): CSSProperties | undefined {
+  if (!previewUrl) {
+    return undefined;
+  }
+
+  if (previewUrl.startsWith("/")) {
+    return { backgroundImage: `url(${JSON.stringify(previewUrl)})` };
+  }
+
+  try {
+    const url = new URL(previewUrl);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return undefined;
+    }
+
+    return { backgroundImage: `url(${JSON.stringify(url.href)})` };
+  } catch {
+    return undefined;
+  }
 }
 
 function realtimeEventLabel(event: PlaceRealtimeEvent) {

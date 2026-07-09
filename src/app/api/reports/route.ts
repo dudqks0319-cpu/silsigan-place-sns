@@ -10,7 +10,6 @@ export async function GET(request: Request) {
       placeId: url.searchParams.get("placeId") ?? undefined,
       regionId: url.searchParams.get("regionId") ?? url.searchParams.get("region") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
-      includeExpired: url.searchParams.get("includeExpired") ?? undefined,
     });
 
     return ok(listReports(filters), {

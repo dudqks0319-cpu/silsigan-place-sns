@@ -159,6 +159,7 @@ async function main() {
       placeId: config.placeId,
       placeName: config.placeName,
       regionId: config.regionId,
+      sharePostId: config.sharePostId,
       mutating: config.mutating,
       report: config.report,
       requirePhoto: config.requirePhoto,
@@ -213,6 +214,7 @@ function resolveConfig(flags, options, env) {
     placeId: options.get("place-id") ?? env.SILSIGAN_STAGING_BROWSER_PLACE_ID ?? DEFAULT_PLACE_ID,
     placeName: options.get("place-name") ?? env.SILSIGAN_STAGING_BROWSER_PLACE_NAME ?? DEFAULT_PLACE_NAME,
     regionId: options.get("region-id") ?? env.SILSIGAN_STAGING_BROWSER_REGION_ID ?? DEFAULT_REGION_ID,
+    sharePostId: options.get("share-post-id") ?? env.SILSIGAN_STAGING_BROWSER_SHARE_POST_ID ?? "",
     timeoutMs: numberOption(options.get("timeout-ms") ?? env.SILSIGAN_STAGING_BROWSER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     mutating: flags.has("mutating") || env.SILSIGAN_STAGING_BROWSER_MUTATION === "1",
     report: flags.has("report") || env.SILSIGAN_STAGING_BROWSER_REPORT === "1",
@@ -347,6 +349,13 @@ async function runBrowserSmoke(client, config) {
     record(config.checks, "browser.mutation", "skip", "--mutating 또는 SILSIGAN_STAGING_BROWSER_MUTATION=1 이 없어 쓰기 UI smoke를 건너뜁니다.");
   }
 
+  if (config.sharePostId) {
+    await runSharePostChecks(client, config, networkEvents);
+  } else {
+    record(config.checks, "share.postPage", "skip", "--share-post-id 또는 SILSIGAN_STAGING_BROWSER_SHARE_POST_ID가 없어 공유 페이지 smoke를 건너뜁니다.");
+    record(config.checks, "share.opengraphImage", "skip", "--share-post-id 또는 SILSIGAN_STAGING_BROWSER_SHARE_POST_ID가 없어 OG 이미지 smoke를 건너뜁니다.");
+  }
+
   const screenshot = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 
   return {
@@ -354,6 +363,49 @@ async function runBrowserSmoke(client, config) {
     networkEvents,
     consoleMessages,
   };
+}
+
+async function runSharePostChecks(client, config, networkEvents) {
+  const shareUrl = new URL(`/share/post/${encodeURIComponent(config.sharePostId)}`, config.pagesUrl);
+  await client.send("Page.navigate", { url: shareUrl.toString() });
+  await waitFor(() => hasPageResponse(networkEvents, shareUrl), "share.postPage.response", config.timeoutMs);
+  await waitForEvaluate(
+    client,
+    `
+      (() => {
+        const card = document.querySelector('[aria-label="#실시간 공유 카드"]');
+        return card instanceof HTMLElement &&
+          card.innerText.includes(${JSON.stringify(config.placeName)}) &&
+          card.innerText.includes('#실시간');
+      })()
+    `,
+    "share.postPage",
+    config.timeoutMs,
+  );
+  record(config.checks, "share.postPage", "pass", "공유 페이지가 Worker-backed 게시물 카드로 렌더링됐습니다.", { postId: config.sharePostId });
+
+  const imageResult = await evaluate(
+    client,
+    `
+      (async () => {
+        const response = await fetch(${JSON.stringify(`${shareUrl.pathname}/opengraph-image`)}, { cache: 'no-store' });
+        const blob = await response.blob();
+        return {
+          ok: response.ok,
+          status: response.status,
+          contentType: response.headers.get('content-type'),
+          byteSize: blob.size,
+        };
+      })()
+    `,
+  );
+  if (imageResult?.ok !== true || imageResult.contentType !== "image/png" || !(imageResult.byteSize > 0)) {
+    throw new SmokeError("SHARE_OG_IMAGE_FAILED", `공유 OG 이미지 응답이 올바르지 않습니다. detail=${JSON.stringify(imageResult)}`);
+  }
+  record(config.checks, "share.opengraphImage", "pass", "공유 OG 이미지가 image/png로 렌더링됐습니다.", {
+    postId: config.sharePostId,
+    byteSize: imageResult.byteSize,
+  });
 }
 
 async function runMutatingBrowserChecks(client, config, networkEvents) {
@@ -475,6 +527,8 @@ async function runMapControlChecks(client, config) {
   await assertTextButtonAboveBottomNav(client, "이 지역 다시 검색");
   await assertTextButtonAboveBottomNav(client, "현재 위치");
   record(config.checks, "map.controlsUncovered", "pass", "초기 지도 도구와 현재 위치 버튼이 하단 내비게이션에 가려지지 않습니다.");
+  await assertBottomNavOpaque(client, config.timeoutMs);
+  record(config.checks, "layout.bottomNavOpaque", "pass", "하단 내비게이션이 뒤쪽 버튼을 비쳐 보이게 하지 않습니다.");
 
   await clickHitTestedTextButton(client, "교통 켜기");
   await waitForEvaluate(
@@ -554,6 +608,22 @@ async function runMapControlChecks(client, config) {
   await clickHitTestedTextButton(client, "지도", { exact: true });
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "bottomNav.map", config.timeoutMs);
   record(config.checks, "bottomNav.map", "pass", "하단 지도 버튼이 실제 hit-test 가능한 영역에서 화면을 전환했습니다.");
+}
+
+async function assertBottomNavOpaque(client, timeoutMs) {
+  await waitForEvaluate(
+    client,
+    `
+      (() => {
+        const nav = document.querySelector('[class*="bottomNav"]');
+        if (!(nav instanceof HTMLElement)) return false;
+        const color = getComputedStyle(nav).backgroundColor.replaceAll(' ', '');
+        return color === 'rgb(255,255,255)' || color === 'rgba(255,255,255,1)';
+      })()
+    `,
+    "layout.bottomNavOpaque",
+    timeoutMs,
+  );
 }
 
 async function dismissOnboardingIfPresent(client, timeoutMs) {
@@ -963,12 +1033,12 @@ async function createFieldReportFromBrowser(client, config, networkEvents) {
     ariaIncludes: "현장 제보 작성",
   });
   if (openedFromSheet !== true) {
-    await clickHitTestedTextButton(client, "제보", { exact: true });
+    await clickHitTestedTextButton(client, "올리기", { exact: true });
   }
 
-  await waitForEvaluate(client, `document.body.innerText.includes('현장 제보')`, "fieldReports.form", config.timeoutMs);
+  await waitForEvaluate(client, `document.body.innerText.includes('올리기')`, "fieldReports.form", config.timeoutMs);
   await fillTextareaById(client, "reportText", `browser field report ${new Date().toISOString()}`);
-  await clickHitTestedTextButton(client, "제보 등록하기");
+  await clickHitTestedTextButton(client, "상태 올리기");
   await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/reports", "POST"), "fieldReports.create", config.timeoutMs);
   record(config.checks, "fieldReports.create", "pass", "상태 제보 작성 UI가 Worker /api/reports로 POST 됐습니다.");
 }
@@ -1072,6 +1142,21 @@ async function delay(ms) {
 
 function hasResponse(events, origin) {
   return events.some((event) => event.type === "response" && event.url?.startsWith(origin) && event.status >= 200 && event.status < 500);
+}
+
+function hasPageResponse(events, expectedUrl) {
+  return events.some((event) => {
+    if (event.type !== "response" || typeof event.url !== "string" || event.status < 200 || event.status >= 400) {
+      return false;
+    }
+
+    try {
+      const url = new URL(event.url);
+      return url.origin === expectedUrl.origin && url.pathname === expectedUrl.pathname;
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function hasApiRequest(events, apiBaseUrl, path, method = "GET") {
@@ -1326,6 +1411,7 @@ Environment:
   SILSIGAN_STAGING_API_BASE_URL
   SILSIGAN_STAGING_BROWSER_MUTATION=1
   SILSIGAN_STAGING_BROWSER_REPORT=1   # requires mutation; creates place/comment/photo reports
+  SILSIGAN_STAGING_BROWSER_SHARE_POST_ID=post_id_for_share_smoke
   SILSIGAN_CHROME_PATH=/path/to/chrome
 `);
 }

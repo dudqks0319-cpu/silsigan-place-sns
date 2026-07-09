@@ -1,0 +1,157 @@
+[
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/_next/static/css/app/layout.css?v=1782108023522"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/_next/static/css/app/page.css?v=1782108023522"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/_next/static/chunks/webpack.js?v=1782108023522"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/_next/static/chunks/main-app.js?v=1782108023522"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/_next/static/chunks/app-pages-internals.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/_next/static/chunks/app/page.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/manifest.webmanifest"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/_next/static/css/app/layout.css?v=1782108023522"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/_next/static/css/app/page.css?v=1782108023522"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/manifest.webmanifest"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/_next/static/chunks/webpack.js?v=1782108023522"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/_next/static/chunks/app-pages-internals.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/_next/static/chunks/app/page.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/_next/static/chunks/main-app.js?v=1782108023522"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/favicon.svg"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/favicon.svg"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/api/places?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/api/reports?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/api/posts?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/api/hashtags"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/api/questions?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "http://localhost:3000/api/my-questions"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/api/places?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/api/reports?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/api/posts?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/api/hashtags"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/api/questions?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "http://localhost:3000/api/my-questions"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=5coqaq388h&callback=__silsiganNaverMapReady"
+  }
+]

@@ -1,0 +1,15 @@
+Total messages: 7 (Errors: 1, Warnings: 0)
+
+[INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ webpack-internal:///(app-pages-browser)/./node_modules/.pnpm/next@16.2.6_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/dist/next-devtools/shared/forward-logs-shared.js:27
+[LOG] [HMR] connected @ webpack-internal:///(app-pages-browser)/./node_modules/.pnpm/next@16.2.6_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/dist/next-devtools/shared/forward-logs-shared.js:27
+[ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://oapi.map.naver.com/v3/auth?ncpKeyId=5coqaq388h&url=http%3A%2F%2F127.0.0.1%3A3016%2F&time=1781876134234&callback=__naver_maps_callback__0:0
+[INFO] %c NAVER Maps JavaScript API v3 %c
+
+잠시 후에 다시 요청해 주세요.,  * Error Code / Error Message: 500 / Internal Server Error (내부 서버 오류),  * Client ID: 5coqaq388h,  * URI: http://127.0.0.1:3016/ background:#f00;color:#fff;display:block; font-family:helvetica,dotum;font-size:14px;background: #fff; color: #334231; display: inline; @ webpack-internal:///(app-pages-browser)/./node_modules/.pnpm/next@16.2.6_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/dist/next-devtools/shared/forward-logs-shared.js:27
+[LOG] %c NAVER Maps JavaScript API v3
+
+%c안드로이드 9 이상에서는 HTTP 평문 통신이 기본적으로 사용되지 않습니다.
+%c앱에서 네트워크 보안 구성 (https://developer.android.com/training/articles/security-config) 을 통해 *.map.naver.com, *.map.naver.net 에 대한 평문 통신을 허용해 주세요.
+ font-family:helvetica,dotum;font-size:16px;background: #2db400; color: white; display: block; font-family:helvetica,dotum; font-size:14px;color:green; font-family:helvetica,dotum; font-size:14px; @ webpack-internal:///(app-pages-browser)/./node_modules/.pnpm/next@16.2.6_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/dist/next-devtools/shared/forward-logs-shared.js:27
+[INFO] [silsigan:event] click_place {placeId: busan-gwangalli, source: ranking} @ webpack-internal:///(app-pages-browser)/./node_modules/.pnpm/next@16.2.6_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/dist/next-devtools/shared/forward-logs-shared.js:27
+[INFO] [silsigan:event] click_photo {photoId: photo_click_smoke_1, created: true} @ webpack-internal:///(app-pages-browser)/./node_modules/.pnpm/next@16.2.6_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/dist/next-devtools/shared/forward-logs-shared.js:27

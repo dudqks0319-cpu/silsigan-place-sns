@@ -636,13 +636,25 @@ function postToReport(post: StoredPost): StoredReport {
     parkingStatus: post.parkingStatus,
     weatherFeel: post.weatherFeel,
     comment: post.caption,
-    photoUrl: post.photoCount > 0 ? `demo://${post.photoLabel}` : null,
+    photoUrl: post.photoCount > 0 ? fallbackPhotoUrlForPlace(post.placeId) : null,
     verifiedRadiusM: post.verifiedRadiusM,
     createdAt: post.createdAt,
     expiresAt: getReportExpiry(createdAt).toISOString(),
     flagCount: 0,
     hiddenAt: post.hiddenAt,
   };
+}
+
+function fallbackPhotoUrlForPlace(placeId: string): string {
+  if (placeId === "busan-gwangalli") {
+    return "/silsigan/fallback/gwangalli.png";
+  }
+
+  if (placeId === "gyeongju-hwangridan") {
+    return "/silsigan/fallback/hwangridan.png";
+  }
+
+  return "/silsigan/fallback/taehwagang.png";
 }
 
 function makeSeedPost(input: Omit<StoredPost, "userId" | "locationVerified" | "verifiedRadiusM" | "hiddenAt" | "createdAt"> & { minutesAgo: number }): StoredPost {

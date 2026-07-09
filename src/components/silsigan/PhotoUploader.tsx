@@ -45,7 +45,7 @@ export function PhotoUploader({
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<"idle" | "processing" | "uploading" | "done" | "error">("idle");
-  const [message, setMessage] = useState("JPEG 또는 WebP 1장, 최대 3MB");
+  const [message, setMessage] = useState("JPEG 또는 WebP 1장, 최대 3MB. iPhone HEIC는 사진 앱에서 JPEG로 저장한 뒤 올려주세요.");
   const [clickingPhotoId, setClickingPhotoId] = useState<string | null>(null);
   const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
   const busy = status === "processing" || status === "uploading";
@@ -73,10 +73,10 @@ export function PhotoUploader({
       setMessage("사진을 서버에 저장하는 중");
       await onUpload(prepared);
       setStatus("done");
-      setMessage("사진 제보가 등록됐습니다.");
+      setMessage("사진이 등록됐습니다.");
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "사진 제보에 실패했습니다.");
+      setMessage(error instanceof Error ? error.message : "사진을 올리지 못했습니다.");
     }
   };
 
@@ -132,7 +132,7 @@ export function PhotoUploader({
       />
       <button className={styles.photoUploadButton} type="button" onClick={selectPhoto} disabled={busy} aria-describedby={`${inputId}-status`}>
         <Camera size={18} />
-        {busy ? "처리 중" : "사진 제보"}
+        {busy ? "처리 중" : "사진 올리기"}
       </button>
       <p id={`${inputId}-status`} className={`${styles.photoUploadStatus} ${status === "error" ? styles.photoUploadError : ""}`}>
         {message}
@@ -306,13 +306,17 @@ function photoPreviewStyle(previewUrl: string | undefined): CSSProperties | unde
     return undefined;
   }
 
+  if (previewUrl.startsWith("/")) {
+    return { backgroundImage: `url(${JSON.stringify(previewUrl)})` };
+  }
+
   try {
     const url = new URL(previewUrl);
     if (url.protocol !== "https:" && url.protocol !== "http:") {
       return undefined;
     }
 
-    return { backgroundImage: `url("${url.href}")` };
+    return { backgroundImage: `url(${JSON.stringify(url.href)})` };
   } catch {
     return undefined;
   }

@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS likes (
 
 CREATE TABLE IF NOT EXISTS reports (
   id TEXT PRIMARY KEY,
-  target_type TEXT NOT NULL CHECK (target_type IN ('place', 'comment', 'photo')),
+  target_type TEXT NOT NULL CHECK (target_type IN ('place', 'post', 'comment', 'photo')),
   target_id TEXT NOT NULL,
   anonymous_user_id TEXT NOT NULL REFERENCES anonymous_users(id) ON DELETE RESTRICT,
   reason TEXT NOT NULL CHECK (reason IN ('false_content', 'spam', 'privacy_face', 'privacy_plate', 'sensitive_info', 'other')),

@@ -125,7 +125,7 @@ type QuestionData = {
 type ModerationAlertPayload = {
   type: "moderation.report.created";
   reportId: string;
-  targetType: "place" | "comment" | "photo";
+  targetType: "place" | "post" | "comment" | "photo";
   targetId: string;
   reason: "false_content" | "spam" | "privacy_face" | "privacy_plate" | "sensitive_info" | "other";
   priority: "normal" | "high" | "urgent";
@@ -274,6 +274,9 @@ test("release state check separates ready fixtures from external release blocker
     const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
     const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
     const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const realDeviceQaPath = join(tempDir, "real-device-qa.md");
+    const privacyPagePath = join(tempDir, "privacy-page.tsx");
+    const supportPagePath = join(tempDir, "support-page.tsx");
     const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
     writeFileSync(
       readyConfigPath,
@@ -299,6 +302,8 @@ test("release state check separates ready fixtures from external release blocker
     writeUgcModerationRunbook(ugcRunbookPath);
     writeCloudflareCostUsageRunbook(costUsageRunbookPath);
     writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeRealDeviceQaLedger(realDeviceQaPath);
+    writePublicPolicySupportPages(privacyPagePath, supportPagePath);
     writeFileSync(
       externalStateReportPath,
       [
@@ -345,6 +350,9 @@ test("release state check separates ready fixtures from external release blocker
       `--ugc-runbook=${ugcRunbookPath}`,
       `--cost-usage-runbook=${costUsageRunbookPath}`,
       `--review-notes=${testFlightReviewNotesPath}`,
+      `--real-device-qa=${realDeviceQaPath}`,
+      `--privacy-page=${privacyPagePath}`,
+      `--support-page=${supportPagePath}`,
     ], {
       encoding: "utf8",
       env: createReadyPreflightProcessEnv(),
@@ -372,6 +380,12 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_cost_usage.runbook.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.privacy" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.privacy.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.support" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.support.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.support" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy.support" && check.status === "pass"));
@@ -386,6 +400,9 @@ test("release state check separates ready fixtures from external release blocker
         `--ugc-runbook=${ugcRunbookPath}`,
         `--cost-usage-runbook=${costUsageRunbookPath}`,
         `--review-notes=${testFlightReviewNotesPath}`,
+        `--real-device-qa=${realDeviceQaPath}`,
+        `--privacy-page=${privacyPagePath}`,
+        `--support-page=${supportPagePath}`,
         `--cloudflare-external-state-report=${externalStateReportPath}`,
         "--strict",
       ], {
@@ -596,6 +613,148 @@ test("release state check requires operable TestFlight review notes", () => {
       assert.ok(tokenCheck?.missingTokens?.includes("SILSIGAN_STAGING_PAGES_URL"));
       assert.ok(tokenCheck?.missingTokens?.includes("privacy policy URL"));
       assert.ok(tokenCheck?.missingTokens?.includes("UGC moderation"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires an operable real-device QA ledger", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-real-device-qa-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const incompleteRealDeviceQaPath = join(tempDir, "real-device-qa.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeFileSync(incompleteRealDeviceQaPath, "# #실시간 real-device QA ledger\n\n## Scope\n\niPhone only\n", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        `--real-device-qa=${incompleteRealDeviceQaPath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when the real-device QA ledger is incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const tokenCheck = payload.checks.find((check) => check.name === "real_device_qa.ledger.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("real_device_qa.ledger.environment"));
+      assert.ok(payload.blockers.includes("real_device_qa.ledger.required_tokens"));
+      assert.equal(tokenCheck?.status, "fail");
+      assert.ok(tokenCheck?.missingTokens?.includes("Staging Pages URL"));
+      assert.ok(tokenCheck?.missingTokens?.includes("Android internal/debug build"));
+      assert.ok(tokenCheck?.missingTokens?.includes("Photo upload/preview"));
+      assert.ok(tokenCheck?.missingTokens?.includes("network-redacted.json"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check requires public privacy and support pages", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-public-policy-pages-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const realDeviceQaPath = join(tempDir, "real-device-qa.md");
+    const incompletePrivacyPagePath = join(tempDir, "privacy-page.tsx");
+    const incompleteSupportPagePath = join(tempDir, "support-page.tsx");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeRealDeviceQaLedger(realDeviceQaPath);
+    writeFileSync(incompletePrivacyPagePath, "export default function Privacy(){return <main>개인정보 처리방침</main>;}", "utf8");
+    writeFileSync(incompleteSupportPagePath, "export default function Support(){return <main>지원 및 신고 안내</main>;}", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        `--real-device-qa=${realDeviceQaPath}`,
+        `--privacy-page=${incompletePrivacyPagePath}`,
+        `--support-page=${incompleteSupportPagePath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when public privacy/support pages are incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const privacyTokenCheck = payload.checks.find((check) => check.name === "public_policy_page.privacy.required_tokens");
+      const supportTokenCheck = payload.checks.find((check) => check.name === "public_policy_page.support.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("public_policy_page.privacy.required_tokens"));
+      assert.ok(payload.blockers.includes("public_policy_page.support.required_tokens"));
+      assert.equal(privacyTokenCheck?.status, "fail");
+      assert.equal(supportTokenCheck?.status, "fail");
+      assert.ok(privacyTokenCheck?.missingTokens?.includes("raw coordinate"));
+      assert.ok(privacyTokenCheck?.missingTokens?.includes("Cloudflare D1"));
+      assert.ok(supportTokenCheck?.missingTokens?.includes("TestFlight"));
+      assert.ok(supportTokenCheck?.missingTokens?.includes("privacy_face"));
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1552,6 +1711,49 @@ test("Cloudflare external state check requires configured R2 buckets when R2 is 
   assert.deepEqual(check.missingBuckets, ["silsigan-photos-production"]);
 });
 
+test("Cloudflare external state check canonicalizes missing auth before remote checks", () => {
+  const authCheck = externalState.classifyCloudflareAuthResult({
+    exitCode: 1,
+    stdout: "",
+    stderr:
+      "In a non-interactive environment, set CLOUDFLARE_API_TOKEN. Account user@example.com /accounts/2a0a85b82393ae6cfb2dea0b41853458 failed.",
+  });
+  const r2Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.r2.enabled", "R2 bucket visibility check");
+  const d1Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.d1.staging.migration_0002", "Remote staging D1 migration evidence check");
+
+  assert.equal(authCheck.name, "cloudflare.auth");
+  assert.equal(authCheck.status, "fail");
+  assert.equal(authCheck.code, "CLOUDFLARE_AUTH_REQUIRED");
+  assert.equal(JSON.stringify(authCheck).includes("user@example.com"), false);
+  assert.equal(JSON.stringify(authCheck).includes("2a0a85b82393ae6cfb2dea0b41853458"), false);
+  assert.deepEqual(externalState.summarizeExternalStateBlockers([authCheck, r2Check, d1Check]), ["CLOUDFLARE_AUTH_REQUIRED"]);
+});
+
+test("Cloudflare external state check classifies missing Worker deployments without leaking account details", () => {
+  const check = externalState.classifyWorkerDeploymentResult(
+    {
+      exitCode: 1,
+      stdout: "",
+      stderr:
+        "A request to the Cloudflare API (/accounts/2a0a85b82393ae6cfb2dea0b41853458/workers/scripts/silsigan-api-staging/deployments) failed. This Worker does not exist on your account. [code: 10007] user@example.com",
+    },
+    {
+      envName: "staging",
+      kind: "api",
+      workerName: "silsigan-api-staging",
+      configPath: "workers/api/wrangler.jsonc",
+    },
+  );
+
+  assert.equal(check.name, "worker_deployment.staging.api");
+  assert.equal(check.status, "fail");
+  assert.equal(check.code, "WORKER_DEPLOYMENT_MISSING");
+  assert.equal(check.workerName, "silsigan-api-staging");
+  assert.equal(JSON.stringify(check).includes("user@example.com"), false);
+  assert.equal(JSON.stringify(check).includes("2a0a85b82393ae6cfb2dea0b41853458"), false);
+  assert.deepEqual(externalState.summarizeExternalStateBlockers([check]), ["worker_deployment.staging.api"]);
+});
+
 test("Cloudflare external state check classifies remote D1 migration and seed evidence", () => {
   const missingMigration = externalState.classifyD1MigrationResult(
     {
@@ -2446,6 +2648,92 @@ function writeTestFlightReviewNotes(path: string) {
   );
 }
 
+function writeRealDeviceQaLedger(path: string) {
+  writeFileSync(
+    path,
+    [
+      "# #실시간 real-device QA ledger",
+      "",
+      "## Scope",
+      "",
+      "This ledger records iPhone and Android real-device evidence required before TestFlight internal testing.",
+      "",
+      "## Environment",
+      "",
+      "| Item | Current state |",
+      "| --- | --- |",
+      "| Staging Pages URL | ready |",
+      "| Staging Worker API URL | ready |",
+      "| R2 staging bucket visibility | guarded against R2_NOT_ENABLED |",
+      "| TestFlight build | selected |",
+      "| Android internal/debug build | selected |",
+      "",
+      "## iPhone QA Matrix",
+      "",
+      "| Flow | Required evidence | Result |",
+      "| --- | --- | --- |",
+      "| Naver map display | Map or fallback marker hit-test works | pass |",
+      "| Location allow | Permission prompt, current marker, no raw coordinates | pass |",
+      "| Location deny | Region selection remains usable | pass |",
+      "| Camera and photo library | Camera permission and photo library permission are captured | pass |",
+      "| Photo upload/preview | Upload succeeds and preview loads | pass |",
+      "| Like/unlike | State changes are bounded | pass |",
+      "| Ranking refresh | TOP 10 refresh is recorded | pass |",
+      "| Report/moderation | Report and hide/delete moderation are recorded | pass |",
+      "| Crash check | No crash during the full script | pass |",
+      "",
+      "## Android QA Matrix",
+      "",
+      "| Flow | Required evidence | Result |",
+      "| --- | --- | --- |",
+      "| Naver map display | Map or fallback marker hit-test works | pass |",
+      "| Location allow | Permission prompt, current marker, no raw coordinates | pass |",
+      "| Location deny | Region selection remains usable | pass |",
+      "| Camera and photo library | Camera permission and photo library permission are captured | pass |",
+      "| Photo upload/preview | Upload succeeds and preview loads | pass |",
+      "| Like/unlike | State changes are bounded | pass |",
+      "| Ranking refresh | TOP 10 refresh is recorded | pass |",
+      "| Report/moderation | Report and hide/delete moderation are recorded | pass |",
+      "| Crash check | No crash during the full script | pass |",
+      "",
+      "## Evidence Naming",
+      "",
+      "Use `network-redacted.json`, `known-issues.md`, screenshots, and console logs. Do not store raw coordinates, original filenames, tokens, or anonymous IDs.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writePublicPolicySupportPages(privacyPagePath: string, supportPagePath: string) {
+  writeFileSync(
+    privacyPagePath,
+    [
+      "export default function PrivacyPage() {",
+      "  return <main>",
+      "    <h1>개인정보 처리방침</h1>",
+      "    <p>위치정보 raw coordinate Cloudflare D1 R2 EXIF/GPS 원본 파일명 신고 delete support URL privacy policy URL</p>",
+      "  </main>;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  writeFileSync(
+    supportPagePath,
+    [
+      "export default function SupportPage() {",
+      "  return <main>",
+      "    <h1>지원 및 신고 안내</h1>",
+      "    <p>TestFlight iPhone Android 지도 위치 권한 privacy_face privacy_plate sensitive_info 삭제 요청 support URL privacy policy URL</p>",
+      "  </main>;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
 function writeReleaseHarnessFiles(
   rootDir: string,
   sourceLedgerPath: string,
@@ -2809,7 +3097,7 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
 test("D1 migration chain and core seed are release-order idempotent", { skip: !sqlite3Available() }, () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-migrations-"));
   const dbPath = join(tempDir, "migrations.db");
-  const migrations = ["0001_initial.sql", "0002_posts_questions.sql"]
+  const migrations = ["0001_initial.sql", "0002_posts_questions.sql", "0003_post_moderation_targets.sql"]
     .map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8"))
     .join("\n");
   const seed = readFileSync(new URL("../workers/api/seeds/001_core_seed.sql", import.meta.url), "utf8");
@@ -2879,6 +3167,28 @@ test("D1 posts hashtags and questions use Cloudflare schema", { skip: !sqlite3Av
     assert.equal(hashtagsPayload.meta?.storage, "d1");
     assert.equal(hashtagsPayload.data.some((tag) => tag.name === "서울" && tag.postCount >= 2), true);
 
+    const postReport = await d1Post<SuccessPayload<{ id: string; targetType: string; targetId: string; status: string }>>(
+      db,
+      "https://api.test/api/moderation/reports",
+      "anon_d1_post_reporter",
+      {
+        targetType: "post",
+        targetId: createdPost.data.post.id,
+        reason: "privacy_face",
+      },
+    );
+    assert.equal(postReport.meta?.storage, "d1");
+    assert.equal(postReport.data.targetType, "post");
+    assert.equal(postReport.data.targetId, createdPost.data.post.id);
+    assert.equal(postReport.data.status, "open");
+
+    const postsAfterPostReport = await d1Get<SuccessPayload<FeedPost[]>>(
+      db,
+      "https://api.test/api/posts?placeId=seoul-yeouido&limit=20",
+      anonymousId,
+    );
+    assert.equal(postsAfterPostReport.data.some((postItem) => postItem.id === createdPost.data.post.id), false);
+
     const createdQuestion = await d1Post<SuccessPayload<{ question: QuestionData; balance: number }>>(
       db,
       "https://api.test/api/questions",
@@ -2896,6 +3206,45 @@ test("D1 posts hashtags and questions use Cloudflare schema", { skip: !sqlite3Av
 
     const mine = await d1Get<SuccessPayload<QuestionData[]>>(db, "https://api.test/api/my-questions", anonymousId);
     assert.equal(mine.data.some((question) => question.id === createdQuestion.data.question.id && question.status === "pending"), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 public posts ignore includeHidden query parameter", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const anonymousId = "anon_d1_public_posts_hidden_guard";
+    const createdPost = await d1Post<SuccessPayload<{ post: FeedPost; credits: Array<{ amount: number }>; privacyNotice: string }>>(
+      db,
+      "https://api.test/api/posts",
+      anonymousId,
+      {
+        placeId: "seoul-yeouido",
+        crowdLevel: "normal",
+        lineStatus: "short",
+        parkingStatus: "limited",
+        weatherFeel: "good",
+        caption: "숨김 공개 조회 방지 테스트입니다.",
+        photoCount: 1,
+        hashtagNames: ["서울", "숨김방지"],
+      },
+    );
+    await db
+      .prepare("UPDATE posts SET status = 'hidden', hidden_at = ?, updated_at = ? WHERE id = ?")
+      .bind("2026-07-02T00:00:00.000Z", "2026-07-02T00:00:00.000Z", createdPost.data.post.id)
+      .run();
+
+    const visibleOnly = await d1Get<SuccessPayload<FeedPost[]>>(
+      db,
+      "https://api.test/api/posts?placeId=seoul-yeouido&includeHidden=true&limit=20",
+      anonymousId,
+    );
+
+    assert.equal(visibleOnly.meta?.storage, "d1");
+    assert.equal(visibleOnly.data.some((postItem) => postItem.id === createdPost.data.post.id), false);
+    assert.equal(visibleOnly.data.every((postItem) => postItem.hiddenAt === null), true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -3395,6 +3744,16 @@ test("D1 field reports store coarse realtime status without client coordinates",
     assert.equal(serializedList.includes("129.1186"), false);
     assert.equal(serializedList.includes("images.example.test"), false);
     assert.equal(serializedList.includes(anonymousId), false);
+
+    await db.prepare("UPDATE place_events SET expires_at = ? WHERE id = ?").bind("2026-01-01T00:00:00.000Z", payload.data.report.id).run();
+    const expiredList = await d1Get<SuccessPayload<Array<{ id: string; placeId: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&includeExpired=true&limit=5",
+      anonymousId,
+    );
+    assert.equal(expiredList.meta?.storage, "d1");
+    assert.equal(expiredList.meta?.includeExpired, false);
+    assert.equal(expiredList.data.some((report) => report.id === payload.data.report.id), false);
 
     const rejected = await rawD1Post(db, "https://api.test/api/reports", "anon_d1_field_far", {
       placeId: "busan-gwangalli",
@@ -3937,7 +4296,7 @@ test("admin bulk moderation hides and restores D1 targets with partial results a
     succeeded: number;
     failed: number;
     results: Array<{
-      targetType: "place" | "comment" | "photo";
+      targetType: "place" | "post" | "comment" | "photo";
       targetId: string;
       status: "ok" | "not_found";
     }>;

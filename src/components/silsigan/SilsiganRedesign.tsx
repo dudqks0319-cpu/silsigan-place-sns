@@ -22,6 +22,7 @@ import {
   Map as MapIcon,
   MapPin,
   MessageCircleQuestion,
+  MoreHorizontal,
   Plus,
   Search,
   Settings,
@@ -37,7 +38,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cloudflareApiUrl, fetchJson, isCloudflareApiConfigured } from "@/lib/api-client";
 import { buildScopedApiPath, normalizeRegionScope } from "@/lib/api-scope";
 import type { CloudflareRealtimeEvent, CloudflareRealtimeRoom } from "@/lib/cloudflare-api";
@@ -69,9 +70,10 @@ import { RankingPanel } from "./RankingPanel";
 import { RegionTabs, type RegionTabId } from "./RegionTabs";
 import styles from "./SilsiganRedesign.module.css";
 
-type View = "home" | "map" | "place" | "report" | "ask" | "my";
+type View = "home" | "search" | "upload" | "map" | "place" | "ask" | "my";
 type StatusTone = "calm" | "normal" | "busy" | "danger";
 type Category = ReportCategory;
+type DataMode = "live" | "sample";
 type ApiPlaceInput = ApiPlace & {
   rankingScore?: number;
 };
@@ -113,6 +115,7 @@ type Report = {
   tone: StatusTone;
   verified: boolean;
   hasPhoto: boolean;
+  photoUrl?: string | null;
   createdAt: string;
   hiddenAt: string | null;
   crowdLevel: CrowdLevel;
@@ -147,13 +150,6 @@ type PublicReport = {
   expiresAt: string;
   flagCount?: number;
   hiddenAt?: string | null;
-};
-
-type FieldReportSubmitResult = {
-  report: PublicReport;
-  credits: { amount: number }[];
-  safetyWarning: string | null;
-  privacyNotice: string;
 };
 
 type PublicQuestion = {
@@ -193,6 +189,7 @@ type PublicPost = {
   verifiedRadiusM: 50 | 150 | 300 | null;
   photoCount: number;
   photoLabel: string;
+  previewUrl?: string | null;
   helpfulCount: number;
   commentCount: number;
   hashtagNames: string[];
@@ -202,6 +199,29 @@ type PublicPost = {
   safetyWarning: string | null;
   hiddenAt: string | null;
   createdAt: string;
+};
+
+type PostSubmitResult = {
+  post: PublicPost;
+  credits: { amount: number }[];
+  recommendedHashtags?: string[];
+  safetyWarning?: string | null;
+  privacyNotice?: string;
+};
+
+type NaverLocalSearchResult = {
+  title: string;
+  category: string;
+  roadAddress: string;
+  address: string;
+  mapx: string;
+  mapy: string;
+  link: string;
+};
+
+type NaverLocalSearchPayload = {
+  items: NaverLocalSearchResult[];
+  coordinateNote: string;
 };
 
 type WorkerPhoto = {
@@ -271,7 +291,7 @@ type PlaceClickResult = {
 
 type ModerationReportResult = {
   id: string;
-  targetType: "place" | "comment" | "photo";
+  targetType: "place" | "post" | "comment" | "photo";
   targetId: string;
   status: "open" | "accepted" | "rejected";
   createdAt: string;
@@ -328,14 +348,14 @@ const presentationByPlaceId: Record<string, Pick<Place, "distance" | "x" | "y">>
 
 const navItems: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "home", label: "홈", icon: Home },
+  { id: "search", label: "검색", icon: Search },
+  { id: "upload", label: "올리기", icon: Plus },
   { id: "map", label: "지도", icon: MapIcon },
-  { id: "report", label: "제보", icon: Plus },
-  { id: "ask", label: "질문", icon: MessageCircleQuestion },
   { id: "my", label: "마이", icon: User },
 ];
 
-const filterLabels = ["전체", "사람 많음", "주차 만차", "줄 있음", "사진 있음"];
-const feedTabLabels = ["전체", "내 주변", "팔로우", "관광지", "맛집", "주차", "야경"] as const;
+const filterLabels = ["전체", "사람 많음", "주차 만차", "줄 있음", "사진/상태 있음"];
+const feedTabLabels = ["전체", "내 주변", "관광지", "주차"] as const;
 const reportChips = ["사람 없음", "보통", "많음", "매우 많음"];
 const parkingChips = ["널널", "여유 있음", "거의 없음", "만차"];
 const lineChips = ["없음", "보통", "있음", "매우 김"];
@@ -366,12 +386,12 @@ const quickReportPresets: QuickReportPreset[] = [
     description: "현장이 꽤 붐벼요.",
     patch: { pickedCrowd: "많음", reportText: "지금 사람이 많아서 출발 전 확인이 필요해요.", photoAttached: false },
   },
-  {
-    id: "photo-spot",
-    label: "사진스팟 좋아요",
-    description: "사진 찍기 좋은 상태예요.",
-    patch: { pickedCrowd: "보통", pickedWeather: "맑음", reportText: "사진 찍기 좋은 상태예요.", photoAttached: true },
-  },
+    {
+      id: "photo-spot",
+      label: "사진스팟 상태",
+      description: "사진 찍기 좋은 상태예요.",
+      patch: { pickedCrowd: "보통", pickedWeather: "맑음", reportText: "사진 찍기 좋은 상태예요.", photoAttached: false },
+    },
 ];
 const postFlagReasonOptions: Array<{ id: FlagReason; label: string; body: string }> = [
   { id: "privacy_face", label: "얼굴이 보여요", body: "특정인을 알아볼 수 있는 얼굴이 포함됐습니다." },
@@ -389,6 +409,7 @@ const persistedSetKeys = {
 } as const;
 const notificationEnabledKey = "silsigan.notificationEnabled.v1";
 const firstVisitSeenKey = "silsigan.firstVisitSeen.v1";
+const initialDataFetchTimeoutMs = 6_000;
 const workerPhotoPlaceScopeLimit = 20;
 const workerPhotoLimitPerPlace = 12;
 const challenges: Challenge[] = [
@@ -404,10 +425,10 @@ const challenges: Challenge[] = [
   },
   {
     id: "hwangridan-waiting",
-    title: "황리단길 웨이팅 제보",
+    title: "황리단길 웨이팅 지금컷",
     hashtagName: "황리단길웨이팅",
     region: "gyeongju",
-    description: "카페와 골목 대기 상황을 짧게 제보해 주세요.",
+    description: "카페와 골목 대기 상황을 사진이나 한 줄 상태로 알려주세요.",
     rewardBadge: "경주 웨이팅 답변왕",
     startsAt: "2026-05-27",
     endsAt: "2026-06-02",
@@ -418,7 +439,7 @@ const challenges: Challenge[] = [
     hashtagName: "태화강산책",
     region: "ulsan",
     description: "산책로 혼잡도, 주차 여유, 노을 상태를 공유해 주세요.",
-    rewardBadge: "태화강 제보왕",
+    rewardBadge: "태화강 지금컷",
     startsAt: "2026-05-27",
     endsAt: "2026-06-02",
   },
@@ -458,8 +479,290 @@ const fieldQuests: FieldQuest[] = [
   },
 ];
 
+type LiveDataset = {
+  apiPlaces: ApiPlaceInput[];
+  apiReports: PublicReport[];
+  apiPosts: PublicPost[];
+  apiHashtags: PublicHashtag[];
+  apiQuestions: PublicQuestion[];
+  apiMyQuestions: MyQuestion[];
+};
+
+function createInitialFallbackDataset(): LiveDataset {
+  const now = Date.now();
+  const timestamp = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+  const expiresAt = new Date(now + 3 * 60 * 60_000).toISOString();
+  const apiPlaces: ApiPlaceInput[] = [
+    {
+      id: "busan-gwangalli",
+      name: "광안리해수욕장",
+      address: "부산 수영구 광안해변로",
+      category: "tourism",
+      latitude: 35.1532,
+      longitude: 129.1186,
+      region: "busan",
+      regionId: "busan",
+      launchStage: "beta",
+      rankingScore: 92,
+    },
+    {
+      id: "gyeongju-hwangridan",
+      name: "황리단길",
+      address: "경북 경주시 포석로",
+      category: "restaurant_cafe",
+      latitude: 35.8381,
+      longitude: 129.2107,
+      region: "gyeongju",
+      regionId: "gyeongju",
+      launchStage: "beta",
+      rankingScore: 84,
+    },
+    {
+      id: "ulsan-taehwagang",
+      name: "태화강 국가정원",
+      address: "울산 중구 태화강국가정원길",
+      category: "tourism",
+      latitude: 35.5481,
+      longitude: 129.2985,
+      region: "ulsan",
+      regionId: "ulsan",
+      launchStage: "beta",
+      rankingScore: 78,
+    },
+    {
+      id: "ulsan-city-hall",
+      name: "울산광역시청",
+      address: "울산 남구 중앙로",
+      category: "public_office",
+      latitude: 35.5384,
+      longitude: 129.3114,
+      region: "ulsan",
+      regionId: "ulsan",
+      launchStage: "seed",
+      rankingScore: 51,
+    },
+  ];
+  const apiHashtags: PublicHashtag[] = [
+    { id: "hashtag_주차만차", name: "주차만차", tagType: "status", postCount: 12, createdAt: timestamp(12) },
+    { id: "hashtag_노을좋음", name: "노을좋음", tagType: "time", postCount: 10, createdAt: timestamp(18) },
+    { id: "hashtag_웨이팅", name: "웨이팅", tagType: "status", postCount: 8, createdAt: timestamp(24) },
+    { id: "hashtag_사진스팟", name: "사진스팟", tagType: "purpose", postCount: 7, createdAt: timestamp(31) },
+    { id: "hashtag_한산함", name: "한산함", tagType: "status", postCount: 5, createdAt: timestamp(35) },
+  ];
+  const hashtag = (name: string) => apiHashtags.find((tag) => tag.name === name) ?? apiHashtags[0];
+  const apiReports: PublicReport[] = [
+    {
+      id: "fallback_report_gwangalli",
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "packed",
+      lineStatus: "medium",
+      parkingStatus: "full",
+      weatherFeel: "good",
+      comment: "공영주차장 입구부터 막혀요. 민락 쪽이 그나마 나아요.",
+      photoUrl: "/silsigan/fallback/gwangalli.png",
+      verifiedRadiusM: 150,
+      locationVerified: true,
+      createdAt: timestamp(12),
+      expiresAt,
+      flagCount: 0,
+      hiddenAt: null,
+    },
+    {
+      id: "fallback_report_hwangridan",
+      placeId: "gyeongju-hwangridan",
+      category: "restaurant_cafe",
+      crowdLevel: "busy",
+      lineStatus: "long",
+      parkingStatus: "limited",
+      weatherFeel: "good",
+      comment: "메인 골목 카페 줄이 길어요. 사진 찍기는 괜찮습니다.",
+      photoUrl: "/silsigan/fallback/hwangridan.png",
+      verifiedRadiusM: 150,
+      locationVerified: true,
+      createdAt: timestamp(28),
+      expiresAt,
+      flagCount: 0,
+      hiddenAt: null,
+    },
+    {
+      id: "fallback_report_taehwagang",
+      placeId: "ulsan-taehwagang",
+      category: "tourism",
+      crowdLevel: "normal",
+      lineStatus: "none",
+      parkingStatus: "available",
+      weatherFeel: "good",
+      comment: "산책로는 여유 있고 노을 보기 좋아요.",
+      photoUrl: "/silsigan/fallback/taehwagang.png",
+      verifiedRadiusM: 300,
+      locationVerified: true,
+      createdAt: timestamp(37),
+      expiresAt,
+      flagCount: 0,
+      hiddenAt: null,
+    },
+  ];
+  const apiPosts: PublicPost[] = [
+    {
+      id: "fallback_post_gwangalli",
+      userId: "fallback-user",
+      creatorName: "부산 현장러",
+      creatorBadge: "광안리 주차 도우미",
+      placeId: "busan-gwangalli",
+      caption: "공영주차장 입구부터 막혀요. 민락 쪽이 그나마 나아요.",
+      crowdLevel: "packed",
+      parkingStatus: "full",
+      lineStatus: "medium",
+      weatherFeel: "good",
+      locationVerified: true,
+      verifiedRadiusM: 150,
+      photoCount: 1,
+      photoLabel: "광안리 방금 사진",
+      previewUrl: "/silsigan/fallback/gwangalli.png",
+      helpfulCount: 24,
+      commentCount: 6,
+      hashtagNames: ["주차만차", "노을좋음", "사람많음"],
+      hashtags: [hashtag("주차만차"), hashtag("노을좋음")],
+      shareCard: {
+        headline: "광안리 주차 만차래요",
+        body: "방금 올라온 사진 기준, 공영주차장 입구부터 막힙니다.",
+        url: "/share/post/fallback_post_gwangalli",
+        hashtags: ["주차만차", "노을좋음"],
+        variant: "parking_full",
+      },
+      judgement: "지금은 비추",
+      safetyWarning: null,
+      hiddenAt: null,
+      createdAt: timestamp(12),
+    },
+    {
+      id: "fallback_post_hwangridan",
+      userId: "fallback-user",
+      creatorName: "경주 골목러",
+      creatorBadge: "웨이팅 답변왕",
+      placeId: "gyeongju-hwangridan",
+      caption: "메인 골목 카페 줄이 길어요. 사진 찍기는 괜찮습니다.",
+      crowdLevel: "busy",
+      parkingStatus: "limited",
+      lineStatus: "long",
+      weatherFeel: "good",
+      locationVerified: true,
+      verifiedRadiusM: 150,
+      photoCount: 1,
+      photoLabel: "황리단길 현장 사진",
+      previewUrl: "/silsigan/fallback/hwangridan.png",
+      helpfulCount: 18,
+      commentCount: 4,
+      hashtagNames: ["웨이팅", "사진스팟"],
+      hashtags: [hashtag("웨이팅"), hashtag("사진스팟")],
+      shareCard: {
+        headline: "황리단길 웨이팅 많음",
+        body: "메인 골목 카페 줄이 길고, 사진스팟은 아직 괜찮아요.",
+        url: "/share/post/fallback_post_hwangridan",
+        hashtags: ["웨이팅", "사진스팟"],
+        variant: "waiting",
+      },
+      judgement: "주의",
+      safetyWarning: null,
+      hiddenAt: null,
+      createdAt: timestamp(28),
+    },
+    {
+      id: "fallback_post_taehwagang",
+      userId: "fallback-user",
+      creatorName: "울산 산책러",
+      creatorBadge: "태화강 제보왕",
+      placeId: "ulsan-taehwagang",
+      caption: "산책로는 여유 있고 노을 보기 좋아요.",
+      crowdLevel: "normal",
+      parkingStatus: "available",
+      lineStatus: "none",
+      weatherFeel: "good",
+      locationVerified: true,
+      verifiedRadiusM: 300,
+      photoCount: 1,
+      photoLabel: "태화강 노을 사진",
+      previewUrl: "/silsigan/fallback/taehwagang.png",
+      helpfulCount: 15,
+      commentCount: 3,
+      hashtagNames: ["한산함", "사진스팟"],
+      hashtags: [hashtag("한산함"), hashtag("사진스팟")],
+      shareCard: {
+        headline: "태화강 지금 한산함",
+        body: "산책로가 여유 있고 노을 보기 좋은 상태입니다.",
+        url: "/share/post/fallback_post_taehwagang",
+        hashtags: ["한산함", "사진스팟"],
+        variant: "good",
+      },
+      judgement: "가도 좋음",
+      safetyWarning: null,
+      hiddenAt: null,
+      createdAt: timestamp(37),
+    },
+  ];
+  const apiQuestions: PublicQuestion[] = [
+    {
+      id: "fallback_question_gwangalli",
+      placeId: "busan-gwangalli",
+      questionType: "parking",
+      body: "지금 광안리 공영주차장 자리 있나요?",
+      creditCost: 1,
+      answeredReportId: null,
+      createdAt: timestamp(9),
+    },
+    {
+      id: "fallback_question_taehwagang",
+      placeId: "ulsan-taehwagang",
+      questionType: "photo_request",
+      body: "태화강 노을 사진으로 볼 수 있나요?",
+      creditCost: 2,
+      answeredReportId: null,
+      createdAt: timestamp(17),
+    },
+  ];
+
+  return {
+    apiPlaces,
+    apiReports,
+    apiPosts,
+    apiHashtags,
+    apiQuestions,
+    apiMyQuestions: [],
+  };
+}
+
+async function fetchJsonWithTimeout<T>(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = initialDataFetchTimeoutMs): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const parentSignal = init.signal;
+  const abortFromParent = () => controller.abort();
+
+  if (parentSignal?.aborted) {
+    controller.abort();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  try {
+    return await fetchJson<T>(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("실시간 API 응답이 늦습니다.");
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
 export default function SilsiganRedesign() {
-  const [activeView, setActiveView] = useState<View>("map");
+  const [activeView, setActiveView] = useState<View>("home");
   const phoneBodyRef = useRef<HTMLDivElement>(null);
   const [places, setPlaces] = useState<Place[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
@@ -474,14 +777,14 @@ export default function SilsiganRedesign() {
   const [activeFilter, setActiveFilter] = useState(filterLabels[0]);
   const [reportText, setReportText] = useState("");
   const [questionText, setQuestionText] = useState("");
-  const [toast, setToast] = useState("현장 인증 제보를 올리면 물어보기권을 받을 수 있어요.");
+  const [toast, setToast] = useState("출발 전, 방금 올라온 사진으로 지금 분위기를 확인하세요.");
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pickedCrowd, setPickedCrowd] = useState("많음");
   const [pickedParking, setPickedParking] = useState("거의 없음");
   const [pickedLine, setPickedLine] = useState("있음");
   const [pickedWeather, setPickedWeather] = useState("맑음");
-  const [photoAttached, setPhotoAttached] = useState(true);
+  const [photoAttached, setPhotoAttached] = useState(false);
   const [locationVerificationStatus, setLocationVerificationStatus] = useState<LocationVerificationStatus>("idle");
   const [verifiedLocation, setVerifiedLocation] = useState<ClientLocation | null>(null);
   const [selectedHashtagName, setSelectedHashtagName] = useState<string | null>(null);
@@ -489,6 +792,7 @@ export default function SilsiganRedesign() {
   const [followedHashtagNames, setFollowedHashtagNames] = useState<Set<string>>(() => new Set());
   const [helpfulPostIds, setHelpfulPostIds] = useState<Set<string>>(() => new Set());
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(() => new Set());
+  const [hiddenCreatorNames, setHiddenCreatorNames] = useState<Set<string>>(() => new Set());
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -497,15 +801,18 @@ export default function SilsiganRedesign() {
   const [activeRegion, setActiveRegion] = useState<RegionTabId>("nationwide");
   const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
   const [mapSearchQuery, setMapSearchQuery] = useState("");
+  const [mapRequerying, setMapRequerying] = useState(false);
   const mapBoundsRef = useRef<MapBounds | null>(null);
   const lastMapBoundsFetchKeyRef = useRef("");
   const previousMapSearchQueryRef = useRef("");
+  const hasLoadedLiveDataRef = useRef(false);
   const [mapPreviewPlaceId, setMapPreviewPlaceId] = useState("");
   const [mapLocationPermission, setMapLocationPermission] = useState<LocationPermissionState>("idle");
   const [mapCurrentLocation, setMapCurrentLocation] = useState<UiLocation | null>(null);
   const [likedPlaceIds, setLikedPlaceIds] = useState<Set<string>>(() => new Set());
   const [liveConnection, setLiveConnection] = useState<"connecting" | "live" | "polling">("polling");
   const [realtimeEventsByPlaceId, setRealtimeEventsByPlaceId] = useState<Record<string, CloudflareRealtimeEvent[]>>({});
+  const [dataMode, setDataMode] = useState<DataMode>("live");
   const cloudflareApiConfigured = useMemo(() => isCloudflareApiConfigured(), []);
   const activeDataRegionId = useMemo(() => normalizeRegionScope(activeRegion), [activeRegion]);
   const mapBoundsKey = mapBounds ? mapBoundsToBboxParam(mapBounds) : "";
@@ -514,23 +821,27 @@ export default function SilsiganRedesign() {
   const rankedPosts = useMemo(
     () =>
       rankPostsForFeed(
-        posts.map((post) => ({
-          ...post,
-          helpfulCount: post.helpfulCount + (helpfulPostIds.has(post.id) ? 1 : 0),
-        })),
+        posts
+          .filter((post) => !hiddenCreatorNames.has(post.creatorName))
+          .map((post) => ({
+            ...post,
+            helpfulCount: post.helpfulCount + (helpfulPostIds.has(post.id) ? 1 : 0),
+          })),
       ),
-    [helpfulPostIds, posts],
+    [helpfulPostIds, hiddenCreatorNames, posts],
   );
 
   const allRankedPosts = useMemo(
     () =>
       rankPostsForFeed(
-        allPosts.map((post) => ({
-          ...post,
-          helpfulCount: post.helpfulCount + (helpfulPostIds.has(post.id) ? 1 : 0),
-        })),
+        allPosts
+          .filter((post) => !hiddenCreatorNames.has(post.creatorName))
+          .map((post) => ({
+            ...post,
+            helpfulCount: post.helpfulCount + (helpfulPostIds.has(post.id) ? 1 : 0),
+          })),
       ),
-    [allPosts, helpfulPostIds],
+    [allPosts, helpfulPostIds, hiddenCreatorNames],
   );
 
   const selectedPlace = useMemo(
@@ -605,23 +916,23 @@ export default function SilsiganRedesign() {
         q: normalizePlaceSearchQuery(options.query),
       };
       const placesRequest: Promise<ApiPlaceInput[]> = cloudflareApiConfigured
-        ? fetchJson<WorkerPlace[]>(cloudflareApiUrl(buildScopedApiPath("/api/places", placesScope))).then(workerPlacesToAppPlaces)
-        : fetchJson<ApiPlace[]>(buildScopedApiPath("/api/places", placesScope));
+        ? fetchJsonWithTimeout<WorkerPlace[]>(cloudflareApiUrl(buildScopedApiPath("/api/places", placesScope))).then(workerPlacesToAppPlaces)
+        : fetchJsonWithTimeout<ApiPlace[]>(buildScopedApiPath("/api/places", placesScope));
       const reportsRequest = cloudflareApiConfigured
-        ? fetchJson<PublicReport[]>(cloudflareApiUrl(buildScopedApiPath("/api/reports", listScope)))
-        : fetchJson<PublicReport[]>(buildScopedApiPath("/api/reports", listScope));
+        ? fetchJsonWithTimeout<PublicReport[]>(cloudflareApiUrl(buildScopedApiPath("/api/reports", listScope)))
+        : fetchJsonWithTimeout<PublicReport[]>(buildScopedApiPath("/api/reports", listScope));
       const postsRequest = cloudflareApiConfigured
-        ? fetchJson<PublicPost[]>(cloudflareApiUrl(buildScopedApiPath("/api/posts", listScope)))
-        : fetchJson<PublicPost[]>(buildScopedApiPath("/api/posts", listScope));
+        ? fetchJsonWithTimeout<PublicPost[]>(cloudflareApiUrl(buildScopedApiPath("/api/posts", listScope)))
+        : fetchJsonWithTimeout<PublicPost[]>(buildScopedApiPath("/api/posts", listScope));
       const hashtagsRequest = cloudflareApiConfigured
-        ? fetchJson<PublicHashtag[]>(cloudflareApiUrl("/api/hashtags"))
-        : fetchJson<PublicHashtag[]>("/api/hashtags");
+        ? fetchJsonWithTimeout<PublicHashtag[]>(cloudflareApiUrl("/api/hashtags"))
+        : fetchJsonWithTimeout<PublicHashtag[]>("/api/hashtags");
       const questionsRequest = cloudflareApiConfigured
-        ? fetchJson<PublicQuestion[]>(cloudflareApiUrl(buildScopedApiPath("/api/questions", listScope)))
-        : fetchJson<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope));
+        ? fetchJsonWithTimeout<PublicQuestion[]>(cloudflareApiUrl(buildScopedApiPath("/api/questions", listScope)))
+        : fetchJsonWithTimeout<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope));
       const myQuestionsRequest = cloudflareApiConfigured
-        ? fetchJson<MyQuestion[]>(cloudflareApiUrl("/api/my-questions")).catch(() => [])
-        : fetchJson<MyQuestion[]>("/api/my-questions").catch(() => []);
+        ? fetchJsonWithTimeout<MyQuestion[]>(cloudflareApiUrl("/api/my-questions")).catch(() => [])
+        : fetchJsonWithTimeout<MyQuestion[]>("/api/my-questions").catch(() => []);
       const [apiPlaces, apiReports, apiPosts, apiHashtags, apiQuestions, apiMyQuestions] = await Promise.all([
         placesRequest,
         reportsRequest,
@@ -645,8 +956,30 @@ export default function SilsiganRedesign() {
       setQuestions(mappedQuestions);
       setMyQuestions(apiMyQuestions);
       setSelectedPlaceId((current) => mappedPlaces.find((place) => place.id === current)?.id ?? mappedPlaces[0]?.id ?? "");
+      hasLoadedLiveDataRef.current = true;
+      setDataMode("live");
     } catch (error) {
       if (!options.silent) {
+        if (!hasLoadedLiveDataRef.current) {
+          const fallback = createInitialFallbackDataset();
+          const mappedReports = mapReports(fallback.apiReports, fallback.apiPlaces);
+          const mappedQuestions = mapQuestions(fallback.apiQuestions);
+          const mappedPlaces = mapPlaces(fallback.apiPlaces, mappedReports, mappedQuestions);
+
+          setPlaces(mappedPlaces);
+          setReports(mappedReports);
+          setPosts(fallback.apiPosts);
+          setAllPosts(fallback.apiPosts);
+          setWorkerPhotos([]);
+          setHashtags(fallback.apiHashtags);
+          setQuestions(mappedQuestions);
+          setMyQuestions(fallback.apiMyQuestions);
+          setSelectedPlaceId((current) => mappedPlaces.find((place) => place.id === current)?.id ?? mappedPlaces[0]?.id ?? "");
+          setDataMode("sample");
+          setToast("실시간 API 응답이 늦어 샘플 미리보기로 전환했습니다. 실제 데이터가 연결되면 자동으로 바뀝니다.");
+          return;
+        }
+
         setToast(error instanceof Error ? error.message : "실시간 데이터를 불러오지 못했습니다.");
       }
     } finally {
@@ -681,6 +1014,21 @@ export default function SilsiganRedesign() {
 
     return () => window.clearInterval(timer);
   }, [activeView, loadData, normalizedMapSearchQuery]);
+
+  const requeryCurrentMap = useCallback(async () => {
+    if (mapRequerying) {
+      return;
+    }
+
+    setMapRequerying(true);
+    try {
+      lastMapBoundsFetchKeyRef.current = "";
+      await loadData({ silent: true, bounds: mapBoundsRef.current, query: normalizedMapSearchQuery });
+      setToast(mapBoundsRef.current ? "현재 지도 화면 기준으로 다시 불러왔습니다." : "현재 검색어 기준으로 장소를 다시 불러왔습니다.");
+    } finally {
+      setMapRequerying(false);
+    }
+  }, [loadData, mapRequerying, normalizedMapSearchQuery]);
 
   useEffect(() => {
     mapBoundsRef.current = mapBounds;
@@ -834,8 +1182,8 @@ export default function SilsiganRedesign() {
     setLocationVerificationStatus("idle");
     setVerifiedLocation(null);
     setSelectedPlaceId(place.id);
-    setActiveView("report");
-    setToast(`${place.name} 현장 제보를 작성합니다. 위치 인증은 선택 사항입니다.`);
+    setActiveView("upload");
+    setToast(`${place.name} 지금 상태를 올립니다. 위치 인증은 선택 사항입니다.`);
   };
 
   const previewMapPlace = (place: Place, source: "map_marker" | "ranking" = "map_marker") => {
@@ -970,7 +1318,7 @@ export default function SilsiganRedesign() {
         targetId: target.targetId,
         source: "local-preview",
       });
-      setToast("Worker API base 설정 후 운영 검토 큐에 접수됩니다.");
+      setToast("운영 연결이 준비되면 검토 큐에 접수됩니다.");
       setPendingModerationTarget(null);
       return;
     }
@@ -1051,36 +1399,22 @@ export default function SilsiganRedesign() {
         ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
       };
 
-      if (cloudflareApiConfigured) {
-        const result = await fetchJson<FieldReportSubmitResult>(cloudflareApiUrl("/api/reports"), {
-          method: "POST",
-          body: JSON.stringify({
-            placeId: payload.placeId,
-            category: selectedPlace.category,
-            crowdLevel: payload.crowdLevel,
-            lineStatus: payload.lineStatus,
-            parkingStatus: payload.parkingStatus,
-            weatherFeel: payload.weatherFeel,
-            comment: payload.caption,
-            ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
-          }),
-        });
-        const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
-        const badge = result.report.verifiedRadiusM ? "현장 인증" : "상태 제보";
-        const safetyNotice = result.safetyWarning ? ` · ${result.safetyWarning}` : "";
-        trackEvent("submit_report", { placeId: selectedPlace.id, locationVerified: Boolean(result.report.verifiedRadiusM) });
-        setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}${safetyNotice}`);
-      } else {
-        const result = await fetchJson<{ post: PublicPost; credits: { amount: number }[] }>("/api/posts", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
-        const badge = result.post.locationVerified ? "현장 인증" : "상태 제보";
-        trackEvent("submit_post", { placeId: selectedPlace.id, locationVerified: result.post.locationVerified });
-        setToast(`${badge} 완료! 이 제보가 ${selectedPlace.name} 방문자에게 도움이 됩니다. 물어보기권 +${earned}`);
-      }
+      const result = await fetchJson<PostSubmitResult>(cloudflareApiConfigured ? cloudflareApiUrl("/api/posts") : "/api/posts", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
+      const badge = result.post.locationVerified ? "현장 인증" : result.post.photoCount > 0 ? "지금컷" : "상태 제보";
+      const photoNotice = result.post.photoCount > 0 ? "사진과 상태가 함께 등록됐습니다." : "상태가 먼저 등록됐습니다.";
+      const safetyNotice = result.safetyWarning ? ` · ${result.safetyWarning}` : "";
+      trackEvent("submit_post", {
+        placeId: selectedPlace.id,
+        locationVerified: result.post.locationVerified,
+        photoCount: result.post.photoCount,
+      });
+      setToast(`${badge} 완료! ${photoNotice} 질문권 +${earned}${safetyNotice}`);
       setReportText("");
+      setPhotoAttached(false);
       setLocationVerificationStatus("idle");
       setVerifiedLocation(null);
       setActiveView("place");
@@ -1120,11 +1454,12 @@ export default function SilsiganRedesign() {
       });
 
       setWorkerPhotos((current) => mergeWorkerPhotos([{ ...result.photo, ownedByCurrentSession: true }], current).slice(0, 80));
+      setPhotoAttached(true);
       appendRealtimeEvent(place.id, "photo.ready", result.photo.createdAt, { id: result.photo.id, placeId: place.id });
       trackEvent("upload_photo", { placeId: place.id, mimeType: photo.mimeType, byteSize: photo.byteSize });
-      setToast(`${place.name} 사진 제보가 등록됐습니다.`);
+      setToast(`${place.name} 지금 사진이 등록됐습니다.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "사진 제보에 실패했습니다.";
+      const message = error instanceof Error ? error.message : "사진을 올리지 못했습니다.";
       setToast(message);
       throw error;
     }
@@ -1137,7 +1472,7 @@ export default function SilsiganRedesign() {
     }
 
     if (!cloudflareApiConfigured) {
-      const message = "사진 확인은 Worker API base 설정 후 반영됩니다.";
+      const message = "사진 확인은 운영 사진 서버 연결 후 반영됩니다.";
       setToast(message);
       throw new Error(message);
     }
@@ -1169,7 +1504,7 @@ export default function SilsiganRedesign() {
     trackEvent("delete_photo", { placeId: place.id, photoId: workerPhotoId });
 
     if (!cloudflareApiConfigured) {
-      const message = "사진 삭제는 Worker API base 설정 후 사용할 수 있습니다.";
+      const message = "사진 삭제는 운영 사진 서버 연결 후 사용할 수 있습니다.";
       setToast(message);
       throw new Error(message);
     }
@@ -1236,7 +1571,7 @@ export default function SilsiganRedesign() {
         verified: false,
       });
       appendRealtimeEvent(place.id, "comment.created", createdAt, { placeId: place.id, source: "local-preview" });
-      setToast("로컬 미리보기 댓글을 추가했습니다. Worker API base를 설정하면 D1에 저장됩니다.");
+      setToast("미리보기 댓글을 추가했습니다. 운영 연결 후에는 서버에 저장됩니다.");
       return;
     }
 
@@ -1266,7 +1601,7 @@ export default function SilsiganRedesign() {
     trackEvent("like_comment", { placeId: place.id, commentId: workerCommentId });
 
     if (!cloudflareApiConfigured) {
-      const message = "댓글 도움은 Worker API base 설정 후 반영됩니다.";
+      const message = "댓글 도움은 운영 연결 후 반영됩니다.";
       setToast(message);
       throw new Error(message);
     }
@@ -1316,7 +1651,7 @@ export default function SilsiganRedesign() {
         },
       );
       const balance = typeof result.balance === "number" ? result.balance : Math.max(0, 3 + (result.creditEvent?.amount ?? -1));
-      setToast(`질문이 등록됐습니다. 물어보기권 잔액 ${balance}개입니다.`);
+      setToast(`질문이 등록됐습니다. 질문권 잔액 ${balance}개입니다.`);
       setQuestionText("");
       setActiveView("place");
       await loadData();
@@ -1327,20 +1662,33 @@ export default function SilsiganRedesign() {
     }
   };
 
+  const hidePostCreatorLocally = (post: PublicPost) => {
+    setHiddenCreatorNames((current) => {
+      if (current.has(post.creatorName)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.add(post.creatorName);
+      return next;
+    });
+  };
+
   const flagPost = async (post: PublicPost, reason: FlagReason) => {
     try {
       if (cloudflareApiConfigured) {
         await fetchJson<ModerationReportResult>(cloudflareApiUrl("/api/moderation/reports"), {
           method: "POST",
           body: JSON.stringify({
-            targetType: "place",
-            targetId: post.placeId,
+            targetType: "post",
+            targetId: post.id,
             reason,
-            note: `게시물 신고: ${post.id}`,
+            note: `게시물 신고: ${post.id}; place=${post.placeId}`,
           }),
         });
         trackEvent("flag_post", { postId: post.id, reason });
-        setToast("신고가 접수되어 운영 검토 대기열에 등록했습니다.");
+        hidePostCreatorLocally(post);
+        setToast("신고가 접수됐습니다. 이 작성자의 게시물을 내 화면에서 숨겼습니다.");
         setPendingFlagPost(null);
         return;
       }
@@ -1353,7 +1701,8 @@ export default function SilsiganRedesign() {
         }),
       });
       trackEvent("flag_post", { postId: post.id, reason });
-      setToast(result.hidden ? "신고가 접수되어 게시물을 임시 숨김 처리했습니다." : `신고가 접수됐습니다. 누적 ${result.flagCount}건`);
+      hidePostCreatorLocally(post);
+      setToast(result.hidden ? "신고가 접수되어 게시물을 임시 숨김 처리했고, 이 작성자의 게시물을 내 화면에서 숨겼습니다." : `신고가 접수됐습니다. 이 작성자의 게시물을 내 화면에서 숨겼습니다. 누적 ${result.flagCount}건`);
       setPendingFlagPost(null);
       await loadData();
     } catch (error) {
@@ -1382,14 +1731,12 @@ export default function SilsiganRedesign() {
     if (quest.questionType === "crowd") {
       setPickedCrowd("많음");
     }
-    if (quest.questionType === "photo_request") {
-      setPhotoAttached(true);
-    }
+    setPhotoAttached(false);
     setReportText(quest.prompt);
     setSelectedPlaceId(quest.placeId);
-    setActiveView("report");
+    setActiveView("upload");
     trackEvent("answer_field_quest", { questId: quest.id, placeId: quest.placeId });
-    setToast("현장 질문을 제보 작성으로 연결했습니다. 위치 인증은 선택 사항입니다.");
+    setToast("현장 질문을 올리기 화면으로 연결했습니다. 위치 인증은 선택 사항입니다.");
   };
 
   const selectHashtag = async (hashtagName: string) => {
@@ -1433,7 +1780,7 @@ export default function SilsiganRedesign() {
     setFollowedPlaceIds((current) => toggleSetValue(current, place.id));
     const isFollowing = followedPlaceIds.has(place.id);
     trackEvent("follow_place", { placeId: place.id, following: !isFollowing });
-    setToast(isFollowing ? `${place.name} 팔로우를 해제했습니다.` : `${place.name} 새 현장 제보를 팔로우합니다.`);
+    setToast(isFollowing ? `${place.name} 팔로우를 해제했습니다.` : `${place.name} 새 지금컷을 팔로우합니다.`);
   };
 
   const toggleHashtagFollow = (hashtagName: string) => {
@@ -1457,8 +1804,8 @@ export default function SilsiganRedesign() {
 
     setToast(
       followCount > 0
-        ? `새 현장 알림을 켰습니다. 팔로우 ${followCount}개 기준으로 알려드립니다.`
-        : "새 현장 알림을 켰습니다. 장소나 해시태그를 팔로우하면 알림 기준에 추가됩니다.",
+        ? `앱 안 새 현장 알림 기준을 켰습니다. 팔로우 ${followCount}개를 마이에 표시합니다.`
+        : "앱 안 새 현장 알림 기준을 켰습니다. 장소나 해시태그를 팔로우하면 마이에 표시됩니다.",
     );
   };
 
@@ -1522,7 +1869,7 @@ export default function SilsiganRedesign() {
         trackEvent("share_post", { postId: post.id, method: "clipboard_fallback" });
         setToast("공유가 어려워 링크를 복사했습니다.");
       } catch {
-        setToast(shareText);
+        setToast("공유 기능을 사용할 수 없습니다. 공유 페이지는 운영 URL 연결 후 다시 확인해 주세요.");
       }
     }
   };
@@ -1540,6 +1887,7 @@ export default function SilsiganRedesign() {
           <StatusBar />
           <TopHeader
             activeView={activeView}
+            dataMode={dataMode}
             selectedPlace={selectedPlace}
             toast={toast}
             onBack={() => setActiveView("home")}
@@ -1551,12 +1899,22 @@ export default function SilsiganRedesign() {
           <div className={styles.phoneBody} ref={phoneBodyRef}>
             {loading && <SharedEmptyState title="실시간 데이터를 불러오는 중입니다" body="최근 제보와 질문을 확인하고 있어요." />}
             {!loading && activeView !== "map" && places.length === 0 && (
-              <SharedEmptyState title="아직 이 지역 제보가 없습니다" body="다른 지역 탭을 선택하거나 첫 제보가 올라오면 최근 3시간 기준으로 랭킹과 지도에 반영됩니다." />
+              <SharedEmptyState
+                title="아직 이 지역 제보가 없습니다"
+                body="다른 지역 탭을 선택하거나 첫 제보가 올라오면 최근 3시간 기준으로 랭킹과 지도에 반영됩니다."
+                action={(
+                  <div className={styles.emptyActionRow}>
+                    <button type="button" onClick={() => setActiveView("search")}>검색으로 넓히기</button>
+                    <button type="button" onClick={() => setActiveView("map")}>지도에서 다른 지역 보기</button>
+                  </div>
+                )}
+              />
             )}
             {!loading && (
               <>
                 {activeView === "home" && selectedPlace && (
                   <HomeScreen
+                    dataMode={dataMode}
                     places={places}
                     questions={questions}
                     posts={rankedPosts}
@@ -1577,20 +1935,47 @@ export default function SilsiganRedesign() {
                     onSharePost={sharePost}
                     onSelectHashtag={selectHashtag}
                     onGoMap={() => setActiveView("map")}
-                    onGoMapWithFilter={(filter) => {
-                      setActiveFilter(filter);
-                      setActiveView("map");
+                    onGoSearch={(query?: string) => {
+                      if (query) setMapSearchQuery(query);
+                      setActiveView("search");
                     }}
-                    onGoReport={() => setActiveView("report")}
+                    onGoReport={(place?: Place) => {
+                      if (place) setSelectedPlaceId(place.id);
+                      setActiveView("upload");
+                    }}
+                  />
+                )}
+                {activeView === "search" && (
+                  <SearchScreen
+                    hashtags={hashtags}
+                    places={places}
+                    posts={rankedPosts}
+                    query={mapSearchQuery}
+                    reports={reports}
+                    onGoMap={(query) => {
+                      setMapSearchQuery(query);
+                      setActiveView("map");
+                      setToast(query ? `${query} 기준으로 지도에서 볼게요.` : "지도에서 주변 장소를 볼게요.");
+                    }}
+                    onGoUpload={(place) => {
+                      setSelectedPlaceId(place.id);
+                      setActiveView("upload");
+                      setToast(`${place.name} 지금 상태를 올립니다.`);
+                    }}
+                    onOpenPlace={openPlace}
+                    onQueryChange={setMapSearchQuery}
+                    onSelectHashtag={selectHashtag}
                   />
                 )}
                 {activeView === "map" && (
                   <MapScreen
                     activeFilter={activeFilter}
+                    dataMode={dataMode}
                     activeRegion={activeRegion}
                     currentLocation={mapCurrentLocation}
                     likedPlaceIds={likedPlaceIds}
                     liveConnection={liveConnection}
+                    mapRequerying={mapRequerying}
                     mapBounds={mapBounds}
                     previewPlace={mapPreviewPlace}
                     realtimeEventsByPlaceId={realtimeEventsByPlaceId}
@@ -1604,6 +1989,7 @@ export default function SilsiganRedesign() {
                     onLocation={setMapCurrentLocation}
                     onLocationPermissionChange={setMapLocationPermission}
                     onMapBoundsChange={updateMapBounds}
+                    onRequery={requeryCurrentMap}
                     onRegionChange={changeActiveRegion}
                     onReport={startReportForPlace}
                     onReportPlace={reportMapPlace}
@@ -1639,7 +2025,7 @@ export default function SilsiganRedesign() {
                     helpfulPostIds={helpfulPostIds}
                     savedPostIds={savedPostIds}
                     onHelpfulPost={markHelpful}
-                    onReport={() => setActiveView("report")}
+                    onReport={() => setActiveView("upload")}
                     onPhotoDelete={deletePlacePhoto}
                     onPhotoClick={clickPlacePhoto}
                     onPhotoUpload={uploadPlacePhoto}
@@ -1650,10 +2036,12 @@ export default function SilsiganRedesign() {
                     workerPhotos={workerPhotos}
                   />
                 )}
-                {activeView === "report" && selectedPlace && (
+                {activeView === "upload" && selectedPlace && (
                   <ReportScreen
                     isSubmitting={isSubmitting}
+                    photoUploadReady={cloudflareApiConfigured}
                     place={selectedPlace}
+                    places={places}
                     sensitiveWarning={sensitivePhotoWarningFor(selectedPlace)}
                     pickedCrowd={pickedCrowd}
                     pickedParking={pickedParking}
@@ -1664,13 +2052,23 @@ export default function SilsiganRedesign() {
                     reportText={reportText}
                     recommendedTags={recommendedTags}
                     quickReportPresets={quickReportPresets}
+                    photos={photosForPlace(
+                      selectedPosts,
+                      selectedReports,
+                      workerPhotos.filter((photo) => photo.placeId === selectedPlace.id && photo.status === "ready"),
+                    )}
                     setPickedCrowd={setPickedCrowd}
                     setPickedParking={setPickedParking}
                     setPickedLine={setPickedLine}
                     setPickedWeather={setPickedWeather}
-                    setPhotoAttached={setPhotoAttached}
                     setReportText={setReportText}
+                    onSelectPlace={(place) => setSelectedPlaceId(place.id)}
                     onApplyPreset={applyQuickReportPreset}
+                    onOpenPlace={() => setActiveView("place")}
+                    onPhotoDelete={(photo) => deletePlacePhoto(selectedPlace, photo)}
+                    onPhotoClick={clickPlacePhoto}
+                    onPhotoUpload={(photo) => uploadPlacePhoto(selectedPlace, photo)}
+                    onReportPhoto={(photo) => openPhotoReport(selectedPlace, photo)}
                     onRequestLocation={requestFieldVerification}
                     onSubmit={submitReport}
                   />
@@ -1688,8 +2086,8 @@ export default function SilsiganRedesign() {
                   <MyScreen
                     followedHashtagNames={followedHashtagNames}
                     followedPlaces={places.filter((place) => followedPlaceIds.has(place.id))}
+                    hiddenCreatorNames={hiddenCreatorNames}
                     myQuestions={myQuestions}
-                    questions={questions}
                     reports={reports}
                     savedPosts={allRankedPosts.filter((post) => savedPostIds.has(post.id))}
                     userReputation={userReputation}
@@ -1710,7 +2108,7 @@ export default function SilsiganRedesign() {
               }}
               onGoReport={() => {
                 closeOnboarding();
-                setActiveView("report");
+                setActiveView("upload");
               }}
             />
           )}
@@ -1747,6 +2145,7 @@ function StatusBar() {
 
 function TopHeader({
   activeView,
+  dataMode,
   notificationEnabled,
   onNotify,
   onSafety,
@@ -1755,6 +2154,7 @@ function TopHeader({
   onBack,
 }: {
   activeView: View;
+  dataMode: DataMode;
   notificationEnabled: boolean;
   onNotify: () => void;
   onSafety: () => void;
@@ -1762,12 +2162,13 @@ function TopHeader({
   toast: string;
   onBack: () => void;
 }) {
-  const isDetail = ["place", "report", "ask"].includes(activeView);
+  const isDetail = ["place", "ask"].includes(activeView);
   const titleMap: Record<View, string> = {
     home: "실시간",
+    search: "검색",
+    upload: "올리기",
     map: "지도",
     place: selectedPlace?.name ?? "장소 상세",
-    report: "현장 제보하기",
     ask: "물어보기",
     my: "마이",
   };
@@ -1779,7 +2180,7 @@ function TopHeader({
           {isDetail ? <X size={18} /> : <ShieldCheck size={18} />}
         </button>
         <div>
-          <p className={styles.eyebrow}>전국 실시간 베타</p>
+          <p className={styles.eyebrow}>지금 장소 사진</p>
           <h1>{titleMap[activeView]}</h1>
         </div>
         <button
@@ -1792,12 +2193,21 @@ function TopHeader({
           <Bell size={18} />
         </button>
       </div>
+      <div className={`${styles.dataModeBanner} ${dataMode === "sample" ? styles.dataModeBannerSample : ""}`}>
+        <strong>{dataMode === "sample" ? "샘플 미리보기" : "실시간 데이터"}</strong>
+        <span>
+          {dataMode === "sample"
+            ? "현재 화면은 예시 데이터입니다. 실제 사진/상태는 API 연결 후 표시됩니다."
+            : "최근 장소 사진과 상태를 불러오는 중입니다."}
+        </span>
+      </div>
       <div className={styles.toast}>{toast}</div>
     </header>
   );
 }
 
 function HomeScreen({
+  dataMode,
   places,
   questions,
   posts,
@@ -1817,10 +2227,11 @@ function HomeScreen({
   onSelectChallenge,
   onSharePost,
   onSelectHashtag,
+  onGoSearch,
   onGoMap,
-  onGoMapWithFilter,
   onGoReport,
 }: {
+  dataMode: DataMode;
   places: Place[];
   questions: Question[];
   posts: PublicPost[];
@@ -1840,9 +2251,9 @@ function HomeScreen({
   onSelectChallenge: (challenge: Challenge) => void;
   onSharePost: (post: PublicPost) => void;
   onSelectHashtag: (hashtagName: string) => void;
+  onGoSearch: (query?: string) => void;
   onGoMap: () => void;
-  onGoMapWithFilter: (filter: string) => void;
-  onGoReport: () => void;
+  onGoReport: (place?: Place) => void;
 }) {
   const [activeFeedTab, setActiveFeedTab] = useState<FeedTab>("전체");
   const featured = places[0];
@@ -1851,68 +2262,85 @@ function HomeScreen({
     () =>
       posts
         .filter((post) => !post.hiddenAt)
-        .filter((post) => postMatchesFeedTab(post, placeById.get(post.placeId), activeFeedTab, followedHashtagNames))
-        .slice(0, 4),
-    [activeFeedTab, followedHashtagNames, placeById, posts],
+        .filter((post) => postMatchesFeedTab(post, placeById.get(post.placeId), activeFeedTab))
+        .slice(0, 3),
+    [activeFeedTab, placeById, posts],
   );
   const goodCount = places.filter((place) => place.signal === "가도 좋음").length;
   const cautionCount = places.filter((place) => place.signal === "혼잡 주의" || place.signal === "대기 보통").length;
   const avoidCount = places.filter((place) => place.signal === "출발 전 확인").length;
+  const leadPost = filteredPosts.find((post) => post.photoCount > 0) ?? filteredPosts[0] ?? posts.find((post) => !post.hiddenAt) ?? null;
+  const leadPlace = leadPost ? placeById.get(leadPost.placeId) ?? featured : featured;
+  const leadPhotoUrl = leadPost ? photoUrlForPost(leadPost, reports) : null;
+  const leadIsSample = dataMode === "sample" || Boolean(leadPost?.id.startsWith("fallback_"));
+  const leadTags = (leadPost?.hashtagNames.length ? leadPost.hashtagNames : hashtags.map((tag) => tag.name)).slice(0, 3);
+  const keywordQueries = ["광안리 주차", "황리단길 웨이팅", "태화강 산책"];
 
   return (
     <div className={styles.screenStack}>
-      <section className={styles.searchCard}>
-        <div className={styles.searchBox}>
-          <Search size={18} />
-          <span>오늘 어디 가세요?</span>
-        </div>
-        <div className={styles.keywordRow}>
-          {["광안리 주차", "황리단길 웨이팅", "태화강 산책"].map((keyword) => (
-            <button key={keyword} type="button" onClick={() => onSelectHashtag(keyword.replaceAll(" ", ""))}>{keyword}</button>
-          ))}
+      <section className={styles.photoLeadCard}>
+        <button
+          className={styles.photoLeadPreview}
+          style={photoBackgroundStyle(leadPhotoUrl)}
+          type="button"
+          onClick={() => leadPlace && onOpenPlace(leadPlace)}
+          disabled={!leadPlace}
+        >
+          <span className={styles.photoLeadMeta}>{leadIsSample ? "예시 사진" : "방금 올라온 사진"} · {leadPost ? minutesAgo(leadPost.createdAt) : "방금 전"}</span>
+          <span className={styles.photoLeadKicker}>출발 전 10초 확인</span>
+          <strong>{leadPlace?.name ?? "#실시간"}</strong>
+          <p>{leadPost?.caption ?? leadPost?.shareCard.headline ?? leadPlace?.summary ?? "지금 올라온 장소 사진을 기다리고 있어요."}</p>
+          <div className={styles.photoLeadTags}>
+            {leadTags.map((tag) => (
+              <span key={tag}>#{tag}</span>
+            ))}
+          </div>
+        </button>
+        <div className={styles.photoLeadActions}>
+          <button type="button" onClick={() => leadPlace && onOpenPlace(leadPlace)} disabled={!leadPlace}>
+            실시간 사진 보기
+          </button>
+          <button type="button" onClick={() => onGoReport(leadPlace ?? undefined)}>
+            지금컷 올리기
+          </button>
         </div>
       </section>
 
-      <section className={`${styles.heroCard} ${styles.busyHero}`}>
-        <div>
-          <span className={styles.badge}>장소 기반 실시간 SNS</span>
-          <h2>예쁜 사진보다, 지금 가도 되는지 먼저.</h2>
-          <p>사진, 현장 인증, 주차, 줄, 질문을 장소별 피드로 모읍니다.</p>
-        </div>
-        <button type="button" onClick={() => featured && onOpenPlace(featured)} disabled={!featured}>
-          대표 현장 보기 <ChevronRight size={16} />
+      {leadIsSample && (
+        <section className={styles.sampleDataNotice} aria-label="오프라인 샘플 안내">
+          <strong>현재는 샘플 미리보기입니다</strong>
+          <p>실제 운영에서는 이 자리가 사용자 사진, 최근 제보 시간, 신고 처리 상태로 바뀝니다.</p>
+        </section>
+      )}
+
+      <section className={styles.searchCard}>
+        <button className={`${styles.searchBox} ${styles.homeSearchButton}`} type="button" onClick={() => onGoSearch()}>
+          <Search size={18} />
+          <span>장소, 해시태그, 지역 검색</span>
+          <ChevronRight size={16} />
         </button>
+        <div className={styles.keywordRow}>
+          {keywordQueries.map((keyword) => (
+            <button key={keyword} type="button" onClick={() => onGoSearch(keyword)}>{keyword}</button>
+          ))}
+        </div>
       </section>
 
       <section className={styles.decisionRail} aria-label="현재 판단 요약">
-        <button type="button" onClick={() => onGoMapWithFilter("전체")}>
+        <div className={styles.decisionItem}>
           <CheckCircle2 size={17} />
           <span>가도 좋음</span>
           <strong>{goodCount}</strong>
-        </button>
-        <button type="button" onClick={() => onGoMapWithFilter("사람 많음")}>
+        </div>
+        <div className={styles.decisionItem}>
           <AlertTriangle size={17} />
           <span>주의</span>
           <strong>{cautionCount}</strong>
-        </button>
-        <button type="button" onClick={() => onGoMapWithFilter("주차 만차")}>
+        </div>
+        <div className={styles.decisionItem}>
           <ShieldAlert size={17} />
           <span>지금은 비추</span>
           <strong>{avoidCount}</strong>
-        </button>
-      </section>
-
-      <section className={styles.challengeSection}>
-        <SectionTitle title="이번 주 실시간 챌린지" caption="해시태그로 참여" />
-        <div className={styles.challengeList}>
-          {challenges.map((challenge) => (
-            <button key={challenge.id} type="button" onClick={() => onSelectChallenge(challenge)}>
-              <span>#{challenge.hashtagName}</span>
-              <strong>{challenge.title}</strong>
-              <p>{challenge.description}</p>
-              <small>{challenge.rewardBadge} 뱃지</small>
-            </button>
-          ))}
         </div>
       </section>
 
@@ -1937,6 +2365,7 @@ function HomeScreen({
                 key={post.id}
                 post={post}
                 place={place}
+                reports={reports}
                 onFlag={() => onFlagPost(post)}
                 onHelpful={() => onHelpfulPost(post)}
                 onOpenPlace={() => onOpenPlace(place)}
@@ -1948,14 +2377,34 @@ function HomeScreen({
               />
             );
           })}
-          {filteredPosts.length === 0 && <p className={styles.emptyText}>{activeFeedTab} 조건에 맞는 현장 게시물이 없습니다.</p>}
+          {filteredPosts.length === 0 && (
+            <div className={styles.emptyActionRow}>
+              <p className={styles.emptyText}>{activeFeedTab} 조건에 맞는 현장 게시물이 없습니다.</p>
+              <button type="button" onClick={() => onGoReport(leadPlace ?? undefined)}>첫 지금컷 올리기</button>
+              <button type="button" onClick={onGoMap}>다른 지역 보기</button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className={styles.challengeSection}>
+        <SectionTitle title="오늘 필요한 지금컷" caption="사진과 해시태그 중심" />
+        <div className={styles.challengeList}>
+          {challenges.slice(0, 2).map((challenge) => (
+            <button key={challenge.id} type="button" onClick={() => onSelectChallenge(challenge)}>
+              <span>#{challenge.hashtagName}</span>
+              <strong>{challenge.title}</strong>
+              <p>{challenge.description}</p>
+              <small>{challenge.rewardBadge} 뱃지</small>
+            </button>
+          ))}
         </div>
       </section>
 
       <section className={styles.sectionBlock}>
         <SectionTitle title="인기 해시태그" caption="최대 5개 추천 구조" />
         <div className={styles.hashtagCloud}>
-          {hashtags.slice(0, 10).map((tag) => (
+          {hashtags.slice(0, 4).map((tag) => (
             <button key={tag.id} type="button" onClick={() => onSelectHashtag(tag.name)}>
               <Hash size={13} />
               {tag.name}
@@ -1972,9 +2421,9 @@ function HomeScreen({
       </section>
 
       <section className={styles.sectionBlock}>
-        <SectionTitle title="지금 많이 확인하는 곳" caption="제보 · 질문 · 길찾기 기준" />
+        <SectionTitle title="지금 많이 확인하는 곳" caption="사진 · 질문 · 길찾기 기준" />
         <div className={styles.rankingList}>
-          {places.map((place, index) => (
+          {places.slice(0, 3).map((place, index) => (
             <button key={place.id} className={styles.rankingItem} type="button" onClick={() => onOpenPlace(place)}>
               <span className={styles.rank}>{index + 1}</span>
               <div>
@@ -1987,22 +2436,9 @@ function HomeScreen({
         </div>
       </section>
 
-      <section className={styles.ctaGrid}>
-        <button className={styles.ctaCard} type="button" onClick={onGoMap}>
-          <MapPin size={20} />
-          <strong>내 주변 지도</strong>
-          <span>상태 핀으로 보기</span>
-        </button>
-        <button className={styles.ctaCard} type="button" onClick={onGoReport}>
-          <Camera size={20} />
-          <strong>현장 제보</strong>
-          <span>물어보기권 받기</span>
-        </button>
-      </section>
-
       {reports.length > 0 && (
         <section className={styles.sectionBlock}>
-          <SectionTitle title="상태 제보 큐" caption="신고/숨김 대상 포함" />
+          <SectionTitle title="최근 현장 코멘트" caption="최근순" />
           <div className={styles.reportGrid}>
             {reports.slice(0, 2).map((report) => {
               const place = places.find((item) => item.id === report.placeId) ?? places[0];
@@ -2017,14 +2453,263 @@ function HomeScreen({
   );
 }
 
+function SearchScreen({
+  hashtags,
+  onGoMap,
+  onGoUpload,
+  onOpenPlace,
+  onQueryChange,
+  onSelectHashtag,
+  places,
+  posts,
+  query,
+  reports,
+}: {
+  hashtags: PublicHashtag[];
+  onGoMap: (query: string) => void;
+  onGoUpload: (place: Place) => void;
+  onOpenPlace: (place: Place) => void;
+  onQueryChange: (query: string) => void;
+  onSelectHashtag: (hashtagName: string) => void;
+  places: Place[];
+  posts: PublicPost[];
+  query: string;
+  reports: Report[];
+}) {
+  const trimmedQuery = query.trim();
+  const placeById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
+  const [externalSearchStatus, setExternalSearchStatus] = useState<"idle" | "loading" | "ready" | "unconfigured" | "error">("idle");
+  const [externalPlaces, setExternalPlaces] = useState<NaverLocalSearchResult[]>([]);
+  const [externalSearchMessage, setExternalSearchMessage] = useState("");
+  const matchedPlaces = searchPlaces(places, trimmedQuery).slice(0, 6);
+  const matchedHashtags = hashtags
+    .filter((tag) => !trimmedQuery || tag.name.toLocaleLowerCase("ko-KR").includes(trimmedQuery.toLocaleLowerCase("ko-KR")))
+    .slice(0, 8);
+  const matchedPosts = posts
+    .filter((post) => !post.hiddenAt)
+    .filter((post) => {
+      if (!trimmedQuery) return true;
+      const place = placeById.get(post.placeId);
+      const haystack = [post.shareCard.headline, post.caption, place?.name, place?.address, ...post.hashtagNames].join(" ");
+      return haystack.toLocaleLowerCase("ko-KR").includes(trimmedQuery.toLocaleLowerCase("ko-KR"));
+    })
+    .sort((left, right) => Number(right.photoCount > 0) - Number(left.photoCount > 0) || Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, 4);
+  const hotRegions = ["광안리", "황리단길", "태화강", "주차", "웨이팅", "사진스팟"];
+  const externalSearchEnabled = trimmedQuery.length >= 2;
+  const visibleExternalSearchStatus = externalSearchEnabled ? externalSearchStatus : "idle";
+  const visibleExternalPlaces = externalSearchEnabled ? externalPlaces : [];
+  const fallbackUploadPlace = matchedPlaces[0] ?? places[0];
+  const shouldShowExternalFallback =
+    visibleExternalSearchStatus === "unconfigured" ||
+    visibleExternalSearchStatus === "error" ||
+    (visibleExternalSearchStatus === "ready" && visibleExternalPlaces.length === 0);
+
+  useEffect(() => {
+    if (trimmedQuery.length < 2) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setExternalSearchStatus("loading");
+      setExternalSearchMessage("");
+      void fetchJson<NaverLocalSearchPayload>(`/api/external/naver/local-search?query=${encodeURIComponent(trimmedQuery)}`, {
+        signal: controller.signal,
+      })
+        .then((payload) => {
+          if (controller.signal.aborted) return;
+          setExternalPlaces(payload.items);
+          setExternalSearchStatus("ready");
+          setExternalSearchMessage(payload.coordinateNote);
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          const message = error instanceof Error ? error.message : "네이버 장소 검색에 실패했습니다.";
+          setExternalPlaces([]);
+          setExternalSearchStatus(message.includes("설정") ? "unconfigured" : "error");
+          setExternalSearchMessage(message);
+        });
+    }, 360);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [trimmedQuery]);
+
+  return (
+    <div className={styles.screenStack}>
+      <section className={styles.searchPanel}>
+        <label className={styles.searchBox}>
+          <Search size={18} aria-hidden="true" />
+          <input
+            aria-label="장소, 해시태그, 지역 검색"
+            autoComplete="off"
+            placeholder="예: 광안리 주차, 성수 웨이팅"
+            type="search"
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+        </label>
+        <div className={styles.searchQuickGrid} aria-label="빠른 지역 검색">
+          {hotRegions.map((region) => (
+            <button key={region} type="button" onClick={() => onGoMap(region)}>
+              {region}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="사진 있는 최근 결과" caption={`${matchedPosts.length}개`} />
+        <div className={styles.searchPhotoList}>
+          {matchedPosts.map((post) => {
+            const place = placeById.get(post.placeId) ?? places[0];
+            const photoUrl = photoUrlForPost(post, reports);
+            const isSample = post.id.startsWith("fallback_");
+
+            return (
+              <article key={post.id} className={styles.searchPhotoItem}>
+                <button className={styles.searchPhotoButton} type="button" onClick={() => place && onOpenPlace(place)}>
+                  <span className={styles.searchPhotoThumb} style={photoBackgroundStyle(photoUrl)} aria-hidden="true" />
+                  <span className={styles.searchPhotoCopy}>
+                    <span>{isSample ? "샘플 사진" : post.photoCount > 0 ? "사진 있음" : "상태"}</span>
+                    <strong>{place?.name ?? "장소"}</strong>
+                    <p>{post.caption ?? post.shareCard.headline}</p>
+                  </span>
+                </button>
+                {place && (
+                  <button type="button" onClick={() => onGoUpload(place)}>
+                    지금컷 추가
+                  </button>
+                )}
+              </article>
+            );
+          })}
+        </div>
+        {matchedPosts.length === 0 && (
+          <div className={styles.emptyActionRow}>
+            <p className={styles.emptyText}>아직 검색어와 맞는 최근 사진이 없습니다.</p>
+            <button type="button" onClick={() => onGoMap(trimmedQuery)}>지도에서 찾기</button>
+            {fallbackUploadPlace && <button type="button" onClick={() => onGoUpload(fallbackUploadPlace)}>지금컷 추가</button>}
+          </div>
+        )}
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="앱 안 장소" caption={`${matchedPlaces.length}곳`} />
+        <div className={styles.rankingList}>
+          {matchedPlaces.map((place, index) => (
+            <button key={place.id} className={styles.rankingItem} type="button" onClick={() => onOpenPlace(place)}>
+              <span className={styles.rank}>{index + 1}</span>
+              <div>
+                <strong>{place.name}</strong>
+                <p>{place.summary}</p>
+              </div>
+              <span className={styles.visitors}>{place.visitors}</span>
+            </button>
+          ))}
+        </div>
+        {matchedPlaces.length === 0 && <p className={styles.emptyText}>장소 결과가 없습니다. 지도로 넓혀서 볼 수 있어요.</p>}
+        <button className={styles.inlineActionButton} type="button" onClick={() => onGoMap(trimmedQuery)}>
+          지도에서 보기
+        </button>
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle
+          title="네이버 장소 검색"
+          caption={visibleExternalSearchStatus === "loading" ? "검색 중" : visibleExternalPlaces.length ? `${visibleExternalPlaces.length}곳` : "외부 검색"}
+        />
+        {visibleExternalSearchStatus === "idle" && <p className={styles.emptyText}>두 글자 이상 입력하면 앱 밖 장소도 함께 확인합니다.</p>}
+        {visibleExternalSearchStatus === "loading" && <p className={styles.emptyText}>네이버 장소를 확인하는 중입니다.</p>}
+        {visibleExternalSearchStatus === "unconfigured" && (
+          <div className={styles.emptyActionRow}>
+            <p className={styles.emptyText}>장소 추가 검색은 준비 중입니다. 지금은 사진이 있는 앱 안 장소를 먼저 보여드려요.</p>
+          </div>
+        )}
+        {visibleExternalSearchStatus === "error" && (
+          <div className={styles.emptyActionRow}>
+            <p className={styles.emptyText}>{externalSearchMessage}</p>
+          </div>
+        )}
+        {visibleExternalSearchStatus === "ready" && visibleExternalPlaces.length === 0 && (
+          <div className={styles.emptyActionRow}>
+            <p className={styles.emptyText}>외부 장소 결과가 없습니다. 검색어를 조금 넓혀보세요.</p>
+          </div>
+        )}
+        {shouldShowExternalFallback && (
+          <div className={styles.emptyActionRow}>
+            <button type="button" onClick={() => onGoMap(trimmedQuery)}>앱 안 지도에서 보기</button>
+            {fallbackUploadPlace ? (
+              <button type="button" onClick={() => onGoUpload(fallbackUploadPlace)}>
+                {matchedPlaces[0] ? "이 장소 지금컷 추가" : "인기 장소 지금컷 추가"}
+              </button>
+            ) : (
+              <button type="button" onClick={() => onGoMap("")}>인기 지역 보기</button>
+            )}
+          </div>
+        )}
+        {visibleExternalPlaces.length > 0 && (
+          <div className={styles.searchPhotoList}>
+            {visibleExternalPlaces.map((item) => {
+              const address = item.roadAddress || item.address || "주소 정보 없음";
+              const openExternalPlace = () => {
+                onQueryChange(item.title);
+                onGoMap(item.title);
+              };
+
+              return (
+                <article key={`${item.title}:${item.mapx}:${item.mapy}`} className={styles.searchPhotoItem}>
+                  <button type="button" onClick={openExternalPlace}>
+                    <span>{item.category || "네이버 장소"}</span>
+                    <strong>{item.title}</strong>
+                    <p>{address}</p>
+                  </button>
+                  <button type="button" onClick={openExternalPlace}>
+                    지도
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className={styles.sectionBlock}>
+        <SectionTitle title="인기 해시태그" caption={`${matchedHashtags.length}개`} />
+        <div className={styles.hashtagCloud}>
+          {matchedHashtags.map((tag) => (
+            <button key={tag.id} type="button" onClick={() => onSelectHashtag(tag.name)}>
+              <Hash size={13} />
+              {tag.name}
+              <span>{tag.postCount}</span>
+            </button>
+          ))}
+        </div>
+        {matchedHashtags.length === 0 && (
+          <div className={styles.emptyActionRow}>
+            <p className={styles.emptyText}>맞는 해시태그가 아직 없습니다.</p>
+            <button type="button" onClick={() => onGoMap(trimmedQuery)}>관련 장소 보기</button>
+            {fallbackUploadPlace && <button type="button" onClick={() => onGoUpload(fallbackUploadPlace)}>해시태그로 지금컷 올리기</button>}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function MapScreen({
   activeFilter,
+  dataMode,
   activeRegion,
   currentLocation,
   likedPlaceIds,
   liveConnection,
   locationPermission,
   mapBounds,
+  mapRequerying,
   onFilterChange,
   onClosePreview,
   onCommentSubmit,
@@ -2037,6 +2722,7 @@ function MapScreen({
   onPhotoClick,
   onPhotoUpload,
   onPreviewPlace,
+  onRequery,
   onReport,
   onReportComment,
   onRegionChange,
@@ -2054,12 +2740,14 @@ function MapScreen({
   workerPhotos,
 }: {
   activeFilter: string;
+  dataMode: DataMode;
   activeRegion: RegionTabId;
   currentLocation: UiLocation | null;
   likedPlaceIds: Set<string>;
   liveConnection: "connecting" | "live" | "polling";
   locationPermission: LocationPermissionState;
   mapBounds: MapBounds | null;
+  mapRequerying: boolean;
   onFilterChange: (filter: string) => void;
   onClosePreview: () => void;
   onCommentSubmit: (place: Place, body: string) => Promise<void>;
@@ -2072,6 +2760,7 @@ function MapScreen({
   onPhotoClick: (photo: PlacePhoto) => Promise<void>;
   onPhotoUpload: (place: Place, photo: PreparedPhotoUpload) => Promise<void>;
   onPreviewPlace: (place: Place, source?: "map_marker" | "ranking") => void;
+  onRequery: () => Promise<void>;
   onReport: (place: Place) => void;
   onReportComment: (place: Place, comment: PlaceComment) => void;
   onRegionChange: (region: RegionTabId) => void;
@@ -2092,8 +2781,6 @@ function MapScreen({
   const [requeryHintVisible, setRequeryHintVisible] = useState(false);
   const filteredPlaces = searchPlaces(filterPlaces(filterPlacesByRegion(places, activeRegion), activeFilter), searchQuery);
   const mapAreaPlaces = mapBounds ? filteredPlaces.filter((place) => isPlaceInBounds(place, mapBounds)) : filteredPlaces;
-  const nationwideTop = rankPlaces(searchPlaces(places, searchQuery));
-  const regionTop = rankPlaces(filteredPlaces);
   const mapTop = rankPlaces(mapAreaPlaces);
   const detailPlace = previewPlace;
   const detailPosts = detailPlace ? posts.filter((post) => post.placeId === detailPlace.id && !post.hiddenAt) : [];
@@ -2135,10 +2822,10 @@ function MapScreen({
     <div className={styles.mapScreen}>
       <section className={styles.mapHeroControls} aria-label="지도 탐색 컨트롤">
         <div>
-          <p className={styles.eyebrow}>전국 실시간 장소</p>
-          <h2>지도에서 보고, 바로 랭킹으로 좁히세요</h2>
+          <p className={styles.eyebrow}>사진 올라온 장소</p>
+          <h2>지금 사진이 있는 곳을 지도에서 보세요</h2>
         </div>
-        <span className={styles.liveBadge}>{visibleLiveConnection === "live" ? "실시간 연결" : "Polling 갱신"}</span>
+        <span className={styles.liveBadge}>{visibleLiveConnection === "live" ? "실시간 연결" : "자동 갱신"}</span>
       </section>
 
       <section className={styles.realMapFrame} aria-label="네이버 지도 기반 현장 지도">
@@ -2152,13 +2839,38 @@ function MapScreen({
           onSelectPlace={selectMapPlace}
         />
       </section>
+      <p className={styles.mapTruthNote}>
+        {dataMode === "sample"
+          ? "샘플 미리보기라 지도 핀도 예시입니다. 실제 API 연결 후 최근 사진이 있는 장소만 표시됩니다."
+          : "네이버 지도 타일이 불안정하면 대체 지도가 먼저 표시됩니다. 장소 판단은 사진과 최근 상태를 함께 확인하세요."}
+      </p>
+
+      {detailPlace && (
+        <section className={styles.mapSelectedPlaceBar} aria-live="polite">
+          <div>
+            <span>
+              {photos.length > 0 ? `사진 ${photos.length}장` : "상태 제보"} · {detailReports[0]?.meta ?? (detailPosts[0] ? minutesAgo(detailPosts[0].createdAt) : "방금 전")}
+            </span>
+            <strong>{detailPlace.name}</strong>
+            <p>{detailReports[0]?.body ?? detailPosts[0]?.caption ?? detailPlace.summary}</p>
+          </div>
+          <div className={styles.mapSelectedActions}>
+            <button type="button" onClick={() => detailSheetRef.current?.scrollIntoView({ block: "start", behavior: "smooth" })}>
+              실시간 사진 보기
+            </button>
+            <button type="button" onClick={() => onReport(detailPlace)}>
+              지금컷 올리기
+            </button>
+          </div>
+        </section>
+      )}
 
       <div className={styles.mapSearchRow}>
         <label className={styles.searchBox}>
           <Search size={17} aria-hidden="true" />
           <input
-            aria-label="장소 검색"
-            placeholder="장소명 검색"
+            aria-label="사진 올라온 장소 검색"
+            placeholder="사진 올라온 장소 검색"
             type="search"
             value={searchQuery}
             onChange={(event) => onSearchQueryChange(event.target.value)}
@@ -2177,11 +2889,11 @@ function MapScreen({
           type="button"
           onClick={() => {
             setRequeryHintVisible(false);
-            onFilterChange("전체");
-            onToast("현재 지도 화면 안 TOP 10을 다시 정렬했습니다.");
+            void onRequery();
           }}
+          disabled={mapRequerying}
         >
-          이 지역 다시 검색
+          {mapRequerying ? "다시 불러오는 중" : "이 지역 다시 검색"}
         </button>
       </div>
       {requeryHintVisible && <p className={styles.mapRequeryHint}>지도를 움직였습니다. 이 지역 기준으로 다시 검색할 수 있어요.</p>}
@@ -2246,24 +2958,6 @@ function MapScreen({
       )}
 
       <section className={styles.rankingGrid} aria-label="실시간 장소 랭킹">
-        <RankingPanel
-          title="전국 TOP 10"
-          places={nationwideTop}
-          onOpenPlace={(place) => {
-            const fullPlace = places.find((candidate) => candidate.id === place.id);
-            if (fullPlace) onPreviewPlace(fullPlace, "ranking");
-          }}
-          emptyBody="전국 후보 장소를 불러오는 중입니다. 데이터가 도착하면 즉시 순위가 채워집니다."
-        />
-        <RankingPanel
-          title={`${regionLabel(activeRegion)} TOP 10`}
-          places={regionTop}
-          onOpenPlace={(place) => {
-            const fullPlace = places.find((candidate) => candidate.id === place.id);
-            if (fullPlace) onPreviewPlace(fullPlace, "ranking");
-          }}
-          emptyBody="이 지역은 스테이징 중입니다. 주변 핵심 장소가 활성화되면 먼저 표시됩니다."
-        />
         <RankingPanel
           title="지도 화면 안 TOP 10"
           places={mapTop}
@@ -2335,12 +3029,14 @@ function PlaceScreen({
   const placeHashtags = [...new Set(posts.flatMap((post) => post.hashtagNames))].slice(0, 8);
   const photos = photosForPlace(posts, reports, workerPhotos.filter((photo) => photo.placeId === place.id && photo.status === "ready"));
   const photoCount = photos.length;
+  const heroPhotoUrl = photos[0]?.previewUrl ?? null;
   const todayReports = posts.length || reports.length;
   const tabPosts = placeActiveTab === "사진" ? posts.filter((post) => post.photoCount > 0) : posts;
+  const focusPhotoTab = () => setPlaceActiveTab("사진");
 
   return (
     <div className={styles.screenStack}>
-      <section className={`${styles.placeHero} ${styles[place.tone]}`}>
+      <section className={`${styles.placeHero} ${styles[place.tone]}`} style={photoBackgroundStyle(heroPhotoUrl)}>
         <div className={styles.placePhotoOverlay}>
           <span>{place.signal}</span>
         </div>
@@ -2397,12 +3093,18 @@ function PlaceScreen({
               <MessageCircleQuestion size={17} />
               <div>
                 <strong>{quest.prompt}</strong>
-                <span>답변하면 +{quest.rewardCredits} 물어보기권</span>
+                <span>답변하면 질문권 +{quest.rewardCredits}</span>
               </div>
               <ChevronRight size={15} />
             </button>
           ))}
-          {fieldQuests.length === 0 && <p className={styles.emptyText}>현재 이 장소에 열린 현장 질문이 없습니다.</p>}
+          {fieldQuests.length === 0 && (
+            <div className={styles.emptyActionRow}>
+              <p className={styles.emptyText}>현재 이 장소에 열린 현장 질문이 없습니다.</p>
+              <button type="button" onClick={onAsk}>질문 남기기</button>
+              <button type="button" onClick={onReport}>지금컷 올리기</button>
+            </div>
+          )}
         </div>
       </section>
 
@@ -2421,9 +3123,10 @@ function PlaceScreen({
                 key={post.id}
                 post={post}
                 place={place}
+                reports={reports}
                 onFlag={() => onFlagPost(post)}
                 onHelpful={() => onHelpfulPost(post)}
-                onOpenPlace={() => undefined}
+                onOpenPlace={focusPhotoTab}
                 onSave={() => onSavePost(post)}
                 onShare={() => onSharePost(post)}
                 onSelectHashtag={onSelectHashtag}
@@ -2431,7 +3134,13 @@ function PlaceScreen({
                 saved={savedPostIds.has(post.id)}
               />
             ))}
-            {tabPosts.length === 0 && <p className={styles.emptyText}>{placeActiveTab === "사진" ? "아직 사진이 있는 게시물이 없습니다." : "아직 장소별 피드가 없습니다. 첫 제보를 남겨주세요."}</p>}
+            {tabPosts.length === 0 && (
+              <div className={styles.emptyActionRow}>
+                <p className={styles.emptyText}>{placeActiveTab === "사진" ? "아직 사진이 있는 게시물이 없습니다." : "아직 장소별 피드가 없습니다."}</p>
+                <button type="button" onClick={onReport}>첫 지금컷 올리기</button>
+                <button type="button" onClick={onAsk}>질문 남기기</button>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -2450,7 +3159,13 @@ function PlaceScreen({
                 <span>{question.reward}</span>
               </article>
             ))}
-            {placeQuestions.length === 0 && <p className={styles.emptyText}>아직 이 장소에 올라온 질문이 없습니다.</p>}
+            {placeQuestions.length === 0 && (
+              <div className={styles.emptyActionRow}>
+                <p className={styles.emptyText}>아직 이 장소에 올라온 질문이 없습니다.</p>
+                <button type="button" onClick={onAsk}>첫 질문 남기기</button>
+                <button type="button" onClick={onReport}>지금컷 올리기</button>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -2462,7 +3177,12 @@ function PlaceScreen({
             {placeHashtags.map((tag) => (
               <button key={tag} type="button" onClick={() => onSelectHashtag(tag)}><Hash size={13} />{tag}</button>
             ))}
-            {placeHashtags.length === 0 && <p className={styles.emptyText}>아직 이 장소에 연결된 해시태그가 없습니다.</p>}
+            {placeHashtags.length === 0 && (
+              <div className={styles.emptyActionRow}>
+                <p className={styles.emptyText}>아직 이 장소에 연결된 해시태그가 없습니다.</p>
+                <button type="button" onClick={onReport}>해시태그로 지금컷 올리기</button>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -2481,7 +3201,12 @@ function PlaceScreen({
                 <span className={`${styles.statusChip} ${styles[nearbyPlace.tone]}`}>{nearbyPlace.signal}</span>
               </article>
             ))}
-            {nearbyPlaces.length === 0 && <p className={styles.emptyText}>같은 지역의 근처 장소가 아직 없습니다.</p>}
+            {nearbyPlaces.length === 0 && (
+              <div className={styles.emptyActionRow}>
+                <p className={styles.emptyText}>같은 지역의 근처 장소가 아직 없습니다.</p>
+                <button type="button" onClick={onReport}>이 장소 지금컷 올리기</button>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -2515,7 +3240,7 @@ function PlaceScreen({
 
       <div className={styles.stickyActions}>
         <button className={styles.secondaryButton} type="button" onClick={onAsk}>물어보기</button>
-        <button className={styles.primaryButton} type="button" onClick={onReport}>사진/상태 제보</button>
+        <button className={styles.primaryButton} type="button" onClick={onReport}>지금컷 올리기</button>
       </div>
     </div>
   );
@@ -2523,7 +3248,9 @@ function PlaceScreen({
 
 function ReportScreen({
   isSubmitting,
+  photoUploadReady,
   place,
+  places,
   sensitiveWarning,
   pickedCrowd,
   pickedParking,
@@ -2534,18 +3261,26 @@ function ReportScreen({
   reportText,
   recommendedTags,
   quickReportPresets,
+  photos,
   setPickedCrowd,
   setPickedParking,
   setPickedLine,
   setPickedWeather,
-  setPhotoAttached,
   setReportText,
+  onSelectPlace,
   onApplyPreset,
+  onOpenPlace,
+  onPhotoDelete,
+  onPhotoClick,
+  onPhotoUpload,
+  onReportPhoto,
   onRequestLocation,
   onSubmit,
 }: {
   isSubmitting: boolean;
+  photoUploadReady: boolean;
   place: Place;
+  places: Place[];
   sensitiveWarning: string | null;
   pickedCrowd: string;
   pickedParking: string;
@@ -2556,13 +3291,19 @@ function ReportScreen({
   reportText: string;
   recommendedTags: string[];
   quickReportPresets: QuickReportPreset[];
+  photos: PlacePhoto[];
   setPickedCrowd: (value: string) => void;
   setPickedParking: (value: string) => void;
   setPickedLine: (value: string) => void;
   setPickedWeather: (value: string) => void;
-  setPhotoAttached: (value: boolean) => void;
   setReportText: (value: string) => void;
+  onSelectPlace: (place: Place) => void;
   onApplyPreset: (preset: QuickReportPreset) => void;
+  onOpenPlace: () => void;
+  onPhotoDelete: (photo: PlacePhoto) => Promise<void>;
+  onPhotoClick: (photo: PlacePhoto) => Promise<void>;
+  onPhotoUpload: (photo: PreparedPhotoUpload) => Promise<void>;
+  onReportPhoto: (photo: PlacePhoto) => void;
   onRequestLocation: () => void;
   onSubmit: () => void;
 }) {
@@ -2584,13 +3325,70 @@ function ReportScreen({
       <section className={styles.formIntroCard}>
         <BadgeCheck size={22} />
         <div>
-          <h2>{place.name} 현장 제보</h2>
-          <p>사진이 없어도 등록 가능하고, 현장 인증 때만 반경을 확인합니다.</p>
+          <h2>{place.name} 올리기</h2>
+          <p>사진 1장을 먼저 고르고, 장소와 해시태그, 한 줄만 남기면 됩니다.</p>
+          <ol className={styles.uploadSteps} aria-label="지금컷 올리기 5단계">
+            <li>사진</li>
+            <li>장소</li>
+            <li>태그</li>
+            <li>한 줄</li>
+            <li>올리기</li>
+          </ol>
+          <ul className={styles.uploadGuidanceList} aria-label="지금컷 올리기 안내">
+            <li>사진 1장을 먼저 올리면 피드 상단 지금컷으로 표시돼요.</li>
+            <li>긴급 상황만 사진 없이 상태로 남길 수 있어요.</li>
+            <li>얼굴, 차량번호, 서류는 가려주세요.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section className={styles.photoUploadCard} aria-label="사진 선택">
+        <div className={`${styles.uploadBox} ${photoAttached ? styles.uploadAttached : ""}`}>
+          <Camera size={26} />
+          <strong>{photoAttached ? "사진 업로드 완료" : "지금컷 올리기"}</strong>
+          <span>얼굴, 차량번호, 서류가 보이면 가린 뒤 올려주세요.</span>
+        </div>
+        <PhotoUploader
+          photos={photos}
+          onDeletePhoto={onPhotoDelete}
+          onPhotoClick={onPhotoClick}
+          onReportPhoto={onReportPhoto}
+          onUpload={onPhotoUpload}
+          safetyNotice={sensitiveWarning}
+        />
+        {!photoUploadReady && (
+          <p className={styles.uploadReadinessNote}>
+            사진 저장 준비 중입니다. 지금은 사진 선택과 미리보기를 확인하고, 긴급한 장소 상태는 먼저 남길 수 있어요.
+          </p>
+        )}
+        <button type="button" onClick={onOpenPlace}>
+          <ImageIcon size={16} /> 장소 사진 더 보기
+        </button>
+      </section>
+
+      <section className={styles.uploadPlaceCard} aria-label="사진을 올릴 장소 선택">
+        <div>
+          <span>어디인가요?</span>
+          <strong>{place.name}</strong>
+          <p>{place.address}</p>
+        </div>
+        <div className={styles.uploadPlaceList}>
+          {places.slice(0, 6).map((candidate) => (
+            <button
+              key={candidate.id}
+              className={candidate.id === place.id ? styles.uploadPlaceActive : ""}
+              type="button"
+              onClick={() => onSelectPlace(candidate)}
+              aria-pressed={candidate.id === place.id}
+            >
+              {candidate.name}
+            </button>
+          ))}
         </div>
       </section>
 
       <section className={styles.quickReportCard}>
-        <SectionTitle title="10초 빠른 제보" caption="버튼으로 자동 입력" />
+        <SectionTitle title="사진 보완 상태" caption="버튼으로 10초 입력" />
         <div className={styles.quickReportGrid}>
           {quickReportPresets.map((preset) => (
             <button key={preset.id} type="button" onClick={() => onApplyPreset(preset)}>
@@ -2599,18 +3397,6 @@ function ReportScreen({
             </button>
           ))}
         </div>
-      </section>
-
-      <section className={styles.photoUploadCard}>
-        <div className={`${styles.uploadBox} ${photoAttached ? styles.uploadAttached : ""}`}>
-          <Camera size={26} />
-          <strong>{photoAttached ? "현장 사진 1장 추가됨" : "사진 없이 상태만 제보"}</strong>
-          <span>EXIF 제거 · 얼굴/차량번호 신고 시 숨김</span>
-        </div>
-        <button type="button" onClick={() => setPhotoAttached(!photoAttached)}>
-          <ImageIcon size={16} /> {photoAttached ? "사진 빼기" : "사진 추가"}
-        </button>
-        {sensitiveWarning && <p className={styles.photoSafetyNotice}>{sensitiveWarning}</p>}
       </section>
 
       <ChoiceGroup title="사람 상태" options={reportChips} value={pickedCrowd} onChange={setPickedCrowd} />
@@ -2654,7 +3440,7 @@ function ReportScreen({
       </section>
 
       <button className={styles.submitButton} type="button" onClick={onSubmit} disabled={isSubmitting}>
-        {isSubmitting ? "등록 중..." : "제보 등록하기"}
+        {isSubmitting ? "등록 중..." : photoAttached ? "지금컷 올리기" : "사진 없이 상태만 올리기"}
       </button>
     </div>
   );
@@ -2692,7 +3478,7 @@ function AskScreen({
       <section className={styles.askHeroCard}>
         <Ticket size={24} />
         <div>
-          <p className={styles.eyebrow}>내 물어보기권 3개</p>
+          <p className={styles.eyebrow}>내 질문권 3개</p>
           <h2>{place.name} 근처 사용자에게 물어보세요.</h2>
           <span>사진 요청은 2개, 일반 질문은 1개가 차감됩니다.</span>
         </div>
@@ -2746,18 +3532,18 @@ function AskScreen({
 function MyScreen({
   followedHashtagNames,
   followedPlaces,
+  hiddenCreatorNames,
   myQuestions,
   onToast,
-  questions,
   reports,
   savedPosts,
   userReputation,
 }: {
   followedHashtagNames: Set<string>;
   followedPlaces: Place[];
+  hiddenCreatorNames: Set<string>;
   myQuestions: MyQuestion[];
   onToast: (message: string) => void;
-  questions: Question[];
   reports: Report[];
   savedPosts: PublicPost[];
   userReputation: UserReputation;
@@ -2774,18 +3560,18 @@ function MyScreen({
     .filter((report) => !report.hiddenAt)
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
     .slice(0, 4);
-  const latestQuestions = (myQuestions.length ? myQuestions : questions).slice(0, 4);
+  const latestQuestions = myQuestions.slice(0, 4);
   const questionStatusMeta = (question: MyQuestion | Question) => {
     const reward = "reward" in question ? question.reward : question.questionType === "photo_request" ? "+2" : "+1";
     return `${question.answeredReportId ? "답변 완료" : "답변 대기"} · ${reward}`;
   };
   const menuItems = [
-    { icon: Camera, label: "내 제보", message: "내 최근 제보로 이동했습니다.", target: "reports", ref: reportsRef },
+    { icon: Camera, label: "최근 사진", message: "최근 사진 활동으로 이동했습니다.", target: "reports", ref: reportsRef },
     { icon: MessageCircleQuestion, label: "내 질문", message: "내 질문 현황으로 이동했습니다.", target: "questions", ref: questionsRef },
     { icon: Bookmark, label: "저장한 게시물", message: "저장한 게시물로 이동했습니다.", target: "saved", ref: savedRef },
     { icon: Hash, label: "팔로우한 해시태그", message: "팔로우한 해시태그로 이동했습니다.", target: "hashtags", ref: hashtagsRef },
     { icon: Star, label: "지역 뱃지", message: "지역 뱃지로 이동했습니다.", target: "badges", ref: badgesRef },
-    { icon: UserX, label: "차단한 사용자", message: "차단/제한 보호 상태로 이동했습니다.", target: "safety", ref: safetyRef },
+    { icon: UserX, label: "숨긴 작성자", message: `${hiddenCreatorNames.size}명 숨김 상태를 확인합니다.`, target: "safety", ref: safetyRef },
     { icon: ShieldCheck, label: "안전 정책 및 이용 안내", message: "안전 정책으로 이동했습니다.", target: "safety", ref: safetyRef },
   ] satisfies Array<{ icon: LucideIcon; label: string; message: string; target: MyMenuTarget; ref: RefObject<HTMLElement | null> }>;
   const handleMenuClick = (item: (typeof menuItems)[number]) => {
@@ -2802,15 +3588,20 @@ function MyScreen({
       <section className={styles.profileCard}>
         <div className={styles.avatar}>실</div>
         <div>
-          <h2>실시간러버</h2>
-          <p>지역 제보자 · 신뢰 점수 {userReputation.trustScore}</p>
+          <h2>익명 현장러</h2>
+          <p>이 기기 기준 활동 · 신뢰 점수 {userReputation.trustScore}</p>
         </div>
         <Settings size={19} />
       </section>
 
+      <section className={styles.myDataNotice}>
+        <ShieldCheck size={17} />
+        <p>마이는 이 기기에서 저장한 장소, 게시물, 내 질문, 안전 설정을 보여줍니다. 계정 없이도 현재 기기 기준 활동은 유지됩니다.</p>
+      </section>
+
       <section className={styles.reputationCard}>
         <div>
-          <p className={styles.eyebrow}>당근식 로컬 신뢰</p>
+          <p className={styles.eyebrow}>현장 신뢰 점수</p>
           <h3>현장 인증과 도움돼요가 점수를 올립니다.</h3>
         </div>
         <div className={styles.reputationMeter}>
@@ -2823,8 +3614,8 @@ function MyScreen({
       </section>
 
       <section className={styles.myStatsGrid}>
-        <StatBox label="공개 제보" value={String(reports.length)} />
-        <StatBox label="내 질문" value={String(myQuestions.length || questions.length)} />
+        <StatBox label="최근 사진" value={String(reports.length)} />
+        <StatBox label="내 질문" value={String(myQuestions.length)} />
         <StatBox label="답변 완료" value={String(answeredCount)} />
         <StatBox label="저장" value={String(savedPosts.length)} />
       </section>
@@ -2835,17 +3626,17 @@ function MyScreen({
         tabIndex={-1}
         aria-label="지역 뱃지"
       >
-        {["태화강 제보왕", "부산 주차 도우미", "사진 스팟 헌터"].map((badge) => (
+        {["태화강 지금컷", "부산 주차 도우미", "사진 스팟 헌터"].map((badge) => (
           <span key={badge}><BadgeCheck size={14} />{badge}</span>
         ))}
       </section>
 
       <section className={styles.walletCard}>
         <div>
-          <p className={styles.eyebrow}>보유 현황</p>
-          <h3>물어보기권은 서버 잔액 기준</h3>
+          <p className={styles.eyebrow}>질문권</p>
+          <h3>기본 질문권 3개로 현장 질문을 보낼 수 있어요.</h3>
         </div>
-        <strong>{questions.length}Q</strong>
+        <strong>3개</strong>
       </section>
 
       <section
@@ -2854,7 +3645,7 @@ function MyScreen({
         tabIndex={-1}
         aria-labelledby="my-reports-heading"
       >
-        <SectionTitle title="내 최근 제보" caption={`${latestReports.length}건`} headingId="my-reports-heading" />
+        <SectionTitle title="최근 사진 활동" caption={`${latestReports.length}건`} headingId="my-reports-heading" />
         <div className={styles.followList}>
           {latestReports.map((report) => (
             <article key={report.id} className={styles.followListItem}>
@@ -2865,7 +3656,7 @@ function MyScreen({
               </div>
             </article>
           ))}
-          {latestReports.length === 0 && <p className={styles.emptyText}>최근 공개 제보가 없습니다.</p>}
+          {latestReports.length === 0 && <p className={styles.emptyText}>최근 사진 활동이 없습니다. 지금컷을 올리면 이 기기 활동에 먼저 쌓입니다.</p>}
         </div>
       </section>
 
@@ -2962,8 +3753,8 @@ function MyScreen({
           </div>
           <div>
             <UserX size={17} />
-            <strong>반복 악용 제한</strong>
-            <span>운영자 승인 후 write 제한</span>
+            <strong>내 화면 숨김</strong>
+            <span>{hiddenCreatorNames.size > 0 ? `${hiddenCreatorNames.size}명 숨김 상태` : "신고한 작성자 없음"}</span>
           </div>
         </div>
       </section>
@@ -2998,7 +3789,7 @@ function OperatorPanel({
     <aside className={styles.operatorPanel}>
       <div className={styles.operatorHeader}>
         <div>
-          <p className={styles.eyebrow}>Desktop Preview</p>
+          <p className={styles.eyebrow}>운영 요약</p>
           <h2>전국 현장 요약</h2>
         </div>
       </div>
@@ -3058,8 +3849,8 @@ function BottomNav({ activeView, onChange }: { activeView: View; onChange: (view
         const Icon = item.icon;
         const isActive = item.id === activeView;
         return (
-          <button key={item.id} className={`${styles.navButton} ${isActive ? styles.navActive : ""} ${item.id === "report" ? styles.reportNav : ""}`} type="button" onClick={() => onChange(item.id)}>
-            <Icon size={item.id === "report" ? 22 : 19} />
+          <button key={item.id} className={`${styles.navButton} ${isActive ? styles.navActive : ""} ${item.id === "upload" ? styles.reportNav : ""}`} type="button" onClick={() => onChange(item.id)}>
+            <Icon size={item.id === "upload" ? 22 : 19} />
             <span>{item.label}</span>
           </button>
         );
@@ -3085,17 +3876,17 @@ function OnboardingSheet({
         </button>
         <div>
           <span>처음 오셨나요?</span>
-          <h2>지도보다 먼저, 지금 상황을 보세요.</h2>
+          <h2>사진으로 지금 장소 분위기를 확인하세요.</h2>
         </div>
         <ol>
-          <li>출발 전 10초로 사람, 주차, 줄을 확인합니다.</li>
-          <li>사진 없이도 상태만 제보할 수 있습니다.</li>
+          <li>방금 올라온 사진으로 사람, 주차, 줄을 확인합니다.</li>
+          <li>해시태그로 웨이팅, 주차, 사진스팟을 빠르게 좁힙니다.</li>
           <li>현장 인증은 선택이고 정확한 좌표는 저장하지 않습니다.</li>
         </ol>
         <div className={styles.onboardingActions}>
           <button type="button" onClick={onClose}>바로 둘러보기</button>
-          <button type="button" onClick={onGoMap}>내 주변 보기</button>
-          <button type="button" onClick={onGoReport}>사진 없이 제보</button>
+          <button type="button" onClick={onGoMap}>사진 지도 보기</button>
+          <button type="button" onClick={onGoReport}>지금컷 올리기</button>
         </div>
       </section>
     </div>
@@ -3156,6 +3947,7 @@ function LiveReportCard({ report, place, onOpen }: { report: Report; place: Plac
 function FeedPostCard({
   post,
   place,
+  reports,
   onFlag,
   onHelpful,
   onOpenPlace,
@@ -3167,6 +3959,7 @@ function FeedPostCard({
 }: {
   post: PublicPost;
   place: Place;
+  reports?: Pick<Report, "photoUrl" | "placeId" | "hasPhoto" | "createdAt">[];
   onFlag: () => void;
   onHelpful: () => void;
   onOpenPlace: () => void;
@@ -3176,13 +3969,15 @@ function FeedPostCard({
   helpfulActive: boolean;
   saved: boolean;
 }) {
+  const [actionsOpen, setActionsOpen] = useState(false);
   const verificationTooltip = post.locationVerified
     ? "현장 인증: 실제 GPS와 장소 반경만 검증하고 정확한 좌표는 저장하지 않습니다."
     : "상태 제보: 위치 인증 없이 작성되어 판단에는 낮은 가중치로 반영됩니다.";
+  const photoUrl = photoUrlForPost(post, reports ?? []);
 
   return (
     <article className={styles.feedPostCard}>
-      <button className={`${styles.feedPhoto} ${styles[place.tone]}`} type="button" onClick={onOpenPlace}>
+      <button className={styles.feedPhoto} style={photoBackgroundStyle(photoUrl)} type="button" onClick={onOpenPlace}>
         <span>{post.photoLabel}</span>
         <strong>{post.judgement}</strong>
       </button>
@@ -3207,7 +4002,7 @@ function FeedPostCard({
           <span>줄 {lineLabels[post.lineStatus]}</span>
         </div>
         <div className={styles.feedHashtags}>
-          {post.hashtagNames.slice(0, 5).map((tag) => (
+          {post.hashtagNames.slice(0, 3).map((tag) => (
             <button key={tag} type="button" onClick={() => onSelectHashtag(tag)}>#{tag}</button>
           ))}
         </div>
@@ -3215,12 +4010,24 @@ function FeedPostCard({
           <button className={helpfulActive ? styles.feedActionActive : ""} type="button" onClick={onHelpful}>
             <Heart size={15} />도움돼요 {post.helpfulCount}
           </button>
-          <button className={saved ? styles.feedActionActive : ""} type="button" onClick={onSave}>
-            <Bookmark size={15} />{saved ? "저장됨" : "저장"}
+          <button
+            className={actionsOpen ? styles.feedActionActive : ""}
+            type="button"
+            onClick={() => setActionsOpen((open) => !open)}
+            aria-expanded={actionsOpen}
+          >
+            <MoreHorizontal size={15} />더보기
           </button>
-          <button type="button" onClick={onShare}><Share2 size={15} />공유</button>
-          <button type="button" onClick={onFlag}><Flag size={15} />신고</button>
         </div>
+        {actionsOpen && (
+          <div className={styles.feedSecondaryMenu}>
+            <button className={saved ? styles.feedActionActive : ""} type="button" onClick={onSave}>
+              <Bookmark size={15} />{saved ? "저장됨" : "저장"}
+            </button>
+            <button type="button" onClick={onShare}><Share2 size={15} />공유</button>
+            <button type="button" onClick={onFlag}><Flag size={15} />신고</button>
+          </div>
+        )}
         {post.safetyWarning && (
           <div className={styles.safetyInline}>
             <ShieldAlert size={14} />
@@ -3431,12 +4238,13 @@ function mapReports(reports: PublicReport[], apiPlaces: ApiPlace[]): Report[] {
       return {
         id: report.id,
         placeId: report.placeId,
-        title: place?.name ?? "현장 제보",
+        title: place?.name ?? "지금컷",
         body: report.comment ?? `${crowdLabels[report.crowdLevel]} · 주차 ${parkingLabels[report.parkingStatus]}`,
         meta: `${minutesAgo(report.createdAt)} · ${report.verifiedRadiusM ? "현장 인증" : "미인증"} · ${report.photoUrl ? "사진 있음" : "사진 없음"}`,
         tone,
         verified: Boolean(report.verifiedRadiusM),
         hasPhoto: Boolean(report.photoUrl),
+        photoUrl: report.photoUrl,
         createdAt: report.createdAt,
         hiddenAt: report.hiddenAt ?? null,
         crowdLevel: report.crowdLevel,
@@ -3474,8 +4282,8 @@ function filterPlaces(places: Place[], filter: string) {
     return places.filter((place) => place.lineStatus === "medium" || place.lineStatus === "long");
   }
 
-  if (filter === "사진 있음") {
-    return places;
+  if (filter === "사진/상태 있음") {
+    return places.filter((place) => Number.parseInt(place.visitors, 10) > 0 || place.score > 0);
   }
 
   return places;
@@ -3578,7 +4386,7 @@ function photosForPlace(posts: PublicPost[], reports: Report[], workerPhotos: Wo
     .filter((photo) => photo.status === "ready")
     .map((photo) => ({
       id: `photo:${photo.id}`,
-      label: `${Math.max(1, Math.round(photo.byteSize / 1024))}KB 현장 사진`,
+      label: "방금 올린 현장 사진",
       meta: `${minutesAgo(photo.createdAt)} · 클릭 ${photo.clickCount}`,
       ownedByCurrentSession: photo.ownedByCurrentSession,
       previewUrl: photo.previewUrl ?? undefined,
@@ -3590,6 +4398,7 @@ function photosForPlace(posts: PublicPost[], reports: Report[], workerPhotos: Wo
       id: `post:${post.id}`,
       label: post.photoLabel,
       meta: `${minutesAgo(post.createdAt)} · ${post.creatorBadge}`,
+      previewUrl: post.previewUrl ?? undefined,
     }));
   const reportPhotos = reports
     .filter((report) => report.hasPhoto)
@@ -3597,9 +4406,30 @@ function photosForPlace(posts: PublicPost[], reports: Report[], workerPhotos: Wo
       id: `report:${report.id}`,
       label: report.title,
       meta: report.meta,
+      previewUrl: report.photoUrl ?? undefined,
     }));
 
   return [...uploadedPhotos, ...postPhotos, ...reportPhotos].slice(0, 6);
+}
+
+type PhotoBackgroundStyle = CSSProperties & {
+  "--photo-url"?: string;
+};
+
+function photoBackgroundStyle(photoUrl: string | null | undefined): PhotoBackgroundStyle | undefined {
+  if (!photoUrl) {
+    return undefined;
+  }
+
+  return { "--photo-url": `url(${JSON.stringify(photoUrl)})` };
+}
+
+function photoUrlForPost(post: PublicPost, reports: Pick<Report, "photoUrl" | "placeId" | "hasPhoto" | "createdAt">[]) {
+  if (post.previewUrl) {
+    return post.previewUrl;
+  }
+
+  return reports.find((report) => report.placeId === post.placeId && report.hasPhoto)?.photoUrl ?? null;
 }
 
 function sensitivePhotoWarningFor(place: Pick<Place, "category">): string | null {
@@ -3686,13 +4516,6 @@ function locationPermissionCopy(permission: LocationPermissionState) {
   };
 }
 
-function regionLabel(region: RegionTabId) {
-  if (region === "seoul") return "서울";
-  if (region === "busan") return "부산";
-  if (region === "jeju") return "제주";
-  return "전국";
-}
-
 function postStatusText(post: Pick<PublicPost, "crowdLevel" | "parkingStatus">) {
   if (post.crowdLevel === "packed" || post.parkingStatus === "full") {
     return "지금은 비추";
@@ -3705,7 +4528,7 @@ function postStatusText(post: Pick<PublicPost, "crowdLevel" | "parkingStatus">) 
   return "가도 좋음";
 }
 
-function postMatchesFeedTab(post: PublicPost, place: Place | undefined, tab: FeedTab, followedHashtagNames: ReadonlySet<string>) {
+function postMatchesFeedTab(post: PublicPost, place: Place | undefined, tab: FeedTab) {
   if (tab === "전체") {
     return true;
   }
@@ -3714,23 +4537,15 @@ function postMatchesFeedTab(post: PublicPost, place: Place | undefined, tab: Fee
     return distanceKmFromLabel(place?.distance) <= 5;
   }
 
-  if (tab === "팔로우") {
-    return post.hashtagNames.some((tag) => followedHashtagNames.has(tag));
-  }
-
   if (tab === "관광지") {
     return place?.category === "tourism";
-  }
-
-  if (tab === "맛집") {
-    return place?.category === "restaurant_cafe";
   }
 
   if (tab === "주차") {
     return post.parkingStatus === "full" || post.parkingStatus === "limited" || post.hashtagNames.some((tag) => tag.includes("주차"));
   }
 
-  return post.hashtagNames.some((tag) => tag.includes("야경"));
+  return true;
 }
 
 function distanceKmFromLabel(distance: string | undefined) {

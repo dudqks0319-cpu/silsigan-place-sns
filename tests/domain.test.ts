@@ -25,6 +25,7 @@ const { getStore } = await import(new URL("../src/lib/store.ts", import.meta.url
 const { redactAnalyticsProperties, trackEvent } = await import(new URL("../src/lib/analytics.ts", import.meta.url).href);
 const { buildScopedApiPath, clampApiLimit, normalizeRegionScope } = await import(new URL("../src/lib/api-scope.ts", import.meta.url).href);
 const { workerPlaceToAppPlace } = await import(new URL("../src/lib/cloudflare-place-adapter.ts", import.meta.url).href);
+const { findSharedPost } = await import(new URL("../src/lib/shared-post.ts", import.meta.url).href);
 const { moderatePostSchema } = await import(new URL("../src/lib/validators.ts", import.meta.url).href);
 const { listWorkerModerationReports, moderateWorkerReport, workerAdminApiConfigured } = await import(new URL("../src/lib/worker-admin-api.ts", import.meta.url).href);
 const {
@@ -332,6 +333,92 @@ test("local demo lists support region-scoped bounded reads", () => {
   assert.equal(busanHashtagPosts.every((post: { placeId: string; hashtagNames: string[] }) => busanPlaceIds.has(post.placeId) && post.hashtagNames.includes("광안리주차살려줘")), true);
   assert.equal(listPosts({ regionId: "seoul", hashtagName: "광안리주차살려줘", limit: 100 }).length, 0);
   assert.equal(listQuestions({ regionId: "busan", limit: 100 }).every((question: { placeId: string }) => busanPlaceIds.has(question.placeId)), true);
+});
+
+test("shared post lookup reads from Worker API when configured", async () => {
+  const requests: Request[] = [];
+  const workerPost = {
+    ...listPosts({ includeHidden: true, limit: 1 })[0],
+    id: "worker_share_post",
+    shareCard: {
+      headline: "Worker 공유 카드",
+      body: "Worker API에서 내려온 공유 본문",
+      url: "https://silsigan.pages.dev/place/worker",
+      hashtags: ["worker", "share"],
+      variant: "good",
+    },
+  };
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    return Response.json({
+      success: true,
+      data: [workerPost],
+    });
+  };
+
+  const post = await findSharedPost("worker_share_post", {
+    env: { SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test/" },
+    fetcher,
+  });
+
+  assert.equal(post?.shareCard.headline, "Worker 공유 카드");
+  assert.equal(requests[0]?.url, "https://worker.example.test/api/posts?limit=200");
+  assert.equal(requests[0]?.headers.get("accept"), "application/json");
+});
+
+test("shared post lookup does not fall back to demo posts when Worker API is configured", async () => {
+  const demoPost = listPosts({ includeHidden: true, limit: 1 })[0];
+  const fetcher = async (): Promise<Response> =>
+    Response.json({
+      success: true,
+      data: [],
+    });
+
+  const post = await findSharedPost(demoPost.id, {
+    env: { SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test" },
+    fetcher,
+  });
+
+  assert.equal(post, null);
+});
+
+test("shared post lookup keeps demo fallback only when Worker API is not configured", async () => {
+  const demoPost = listPosts({ includeHidden: true, limit: 1 })[0];
+  const fetcher = async (): Promise<Response> => {
+    throw new Error("fetcher should not run without Worker API URL");
+  };
+
+  const post = await findSharedPost(demoPost.id, {
+    env: {},
+    fetcher,
+  });
+
+  assert.equal(post?.id, demoPost.id);
+  assert.equal(post?.shareCard.headline, demoPost.shareCard.headline);
+});
+
+test("shared post lookup does not expose hidden demo posts", async () => {
+  const created = createPost({
+    placeId: "busan-gwangalli",
+    crowdLevel: "packed",
+    lineStatus: "medium",
+    parkingStatus: "full",
+    weatherFeel: "good",
+    caption: "공개 공유에서 숨겨져야 하는 테스트 게시물입니다.",
+    photoCount: 1,
+    hashtagNames: ["#공유숨김"],
+  });
+  flagPost({ postId: created.post.id, reason: "privacy_plate" });
+
+  const post = await findSharedPost(created.post.id, {
+    env: {},
+    fetcher: async (): Promise<Response> => {
+      throw new Error("fetcher should not run without Worker API URL");
+    },
+  });
+
+  assert.equal(post, null);
 });
 
 test("worker place adapter maps Cloudflare place records into the frontend place contract", () => {

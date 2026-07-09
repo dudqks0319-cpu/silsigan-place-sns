@@ -1,0 +1,21 @@
+console.info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+console.log: [HMR] connected
+console.info: [silsigan:event] toggle_traffic_layer Object
+console.info: [silsigan:event] toggle_traffic_layer Object
+console.info: [silsigan:event] toggle_notifications Object
+console.info: [silsigan:event] view_home Object
+console.info: [silsigan:event] complete_onboarding Object
+console.info: [silsigan:event] click_place Object
+console.info: [silsigan:event] click_map_marker Object
+console.info: [silsigan:event] click_place Object
+console.info: [silsigan:event] like_place Object
+console.info: [silsigan:event] create_comment Object
+console.info: [silsigan:event] like_comment Object
+console.info: [silsigan:event] report_abuse Object
+console.info: [silsigan:event] click_photo Object
+console.info: [silsigan:event] report_abuse Object
+console.info: [silsigan:event] report_abuse Object
+console.info: [silsigan:event] delete_photo Object
+console.info: [silsigan:event] submit_report Object
+console.info: [silsigan:event] view_place Object
+console.info: [silsigan:event] view_place Object

@@ -333,7 +333,7 @@ type SanitizedPhoto = {
 
 type ReportRecord = {
   id: string;
-  targetType: "place" | "comment" | "photo";
+  targetType: "place" | "post" | "comment" | "photo";
   targetId: string;
   reason: "false_content" | "spam" | "privacy_face" | "privacy_plate" | "sensitive_info" | "other";
   anonymousUserId: string;
@@ -1154,12 +1154,8 @@ async function clickPlace(request: Request, placeId: string, session: AnonymousS
   if (env.DB) {
     const anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
     await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
-    const now = Date.now();
-    const userWindows = placeClickWindowsFor(anonymousUserId);
-    const previous = userWindows.get(place.id);
-    const created = !previous || now - previous >= 5 * 60_000;
+    const created = !(await hasRecentD1PlaceClick(env.DB, place.id, anonymousUserId));
     if (created) {
-      userWindows.set(place.id, now);
       await recordD1PlaceEvent(env.DB, place, anonymousUserId, "click", { source });
     }
     const clickCount = await countD1Events(env.DB, place.id, "click");
@@ -1439,15 +1435,11 @@ async function listPosts(url: URL, env: Env): Promise<Response> {
   const placeId = url.searchParams.get("placeId");
   const regionId = url.searchParams.get("region") ?? url.searchParams.get("regionId");
   const hashtagName = normalizeHashtagName(url.searchParams.get("hashtagName") ?? "");
-  const includeHidden = booleanFromSearch(url, "includeHidden", false);
   const limit = clampLimit(url.searchParams.get("limit"), 200, 100);
 
   if (env.DB) {
     const where = ["po.status = 'visible'", "po.hidden_at IS NULL", "pl.is_active = 1", "pl.coordinate_status = 'verified'"];
     const values: D1Value[] = [];
-    if (includeHidden) {
-      where.splice(0, 2);
-    }
     if (placeId) {
       where.push("po.place_id = ?");
       values.push(placeId);
@@ -1495,7 +1487,7 @@ async function listPosts(url: URL, env: Env): Promise<Response> {
   }
 
   const filtered = posts
-    .filter((post) => includeHidden || !post.hiddenAt)
+    .filter((post) => !post.hiddenAt)
     .filter((post) => !placeId || post.placeId === placeId)
     .filter((post) => !regionId || findPlaceRecord(post.placeId).regionId === regionId)
     .filter((post) => !hashtagName || post.hashtagNames.includes(hashtagName));
@@ -2616,7 +2608,7 @@ async function createModerationReport(request: Request, session: AnonymousSessio
 }
 
 async function createModerationReportFromBody(body: JsonObject, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const targetType = enumField(body, "targetType", ["place", "comment", "photo"] as const);
+  const targetType = enumField(body, "targetType", ["place", "post", "comment", "photo"] as const);
   const targetId = stringField(body, "targetId", 100);
   const reason = enumField(body, "reason", ["false_content", "spam", "privacy_face", "privacy_plate", "sensitive_info", "other"] as const);
   const note = optionalStringField(body, "note", 200);
@@ -3393,7 +3385,6 @@ async function listFieldReports(url: URL, env: Env): Promise<Response> {
   const placeId = url.searchParams.get("placeId");
   const regionId = url.searchParams.get("regionId") ?? url.searchParams.get("region");
   const limit = clampLimit(url.searchParams.get("limit"), 200, 100);
-  const includeExpired = booleanFromSearch(url, "includeExpired", false);
 
   if (env.DB) {
     const where = ["event_type = 'report'", "source = 'field_report'"];
@@ -3408,9 +3399,7 @@ async function listFieldReports(url: URL, env: Env): Promise<Response> {
       values.push(regionId);
     }
 
-    if (!includeExpired) {
-      where.push(`expires_at > ${D1_NOW_SQL}`);
-    }
+    where.push(`expires_at > ${D1_NOW_SQL}`);
 
     values.push(limit);
     const { results = [] } = await env.DB
@@ -3435,7 +3424,7 @@ async function listFieldReports(url: URL, env: Env): Promise<Response> {
 
     return json(results.map(publicD1FieldReport), {
       limit,
-      includeExpired,
+      includeExpired: false,
       storage: "d1",
       privacy: "clientLocation and photoUrl are not persisted in place_events or returned",
     });
@@ -3445,13 +3434,13 @@ async function listFieldReports(url: URL, env: Env): Promise<Response> {
   const data = fieldReports
     .filter((report) => !placeId || report.placeId === placeId)
     .filter((report) => !regionId || findPlaceRecord(report.placeId).regionId === regionId)
-    .filter((report) => includeExpired || new Date(report.expiresAt).getTime() > now.getTime())
+    .filter((report) => new Date(report.expiresAt).getTime() > now.getTime())
     .slice(0, limit)
     .map(publicFieldReport);
 
   return json(data, {
     limit,
-    includeExpired,
+    includeExpired: false,
     storage: "memory-fallback",
     privacy: "clientLocation and photoUrl are not persisted in field report responses",
   });
@@ -3552,7 +3541,7 @@ async function moderateContent(request: Request, env: Env, action: AdminModerati
   }
 
   const body = await readJson(request);
-  const targetType = enumField(body, "targetType", ["place", "comment", "photo"] as const);
+  const targetType = enumField(body, "targetType", ["place", "post", "comment", "photo"] as const);
   const targetId = stringField(body, "targetId", 100);
   const reason = action === "restore" ? optionalStringField(body, "reason", 500) ?? null : stringField(body, "reason", 500);
   const target = await getD1ModerationTarget(env.DB, targetType, targetId);
@@ -3799,6 +3788,11 @@ function moderationCacheKeys(targetType: ReportRecord["targetType"], targetId: s
 
   if (targetType === "comment" && target.placeId) {
     keys.add(`comments:${target.placeId}`);
+  }
+
+  if (targetType === "post" && target.placeId) {
+    keys.add(`posts:${target.placeId}`);
+    keys.add("posts:feed");
   }
 
   if (targetType === "photo" && target.placeId) {
@@ -4067,6 +4061,13 @@ async function resolveReportTarget(targetType: ReportRecord["targetType"], targe
   }
 
   if (env.DB) {
+    if (targetType === "post") {
+      const post = await getD1VisiblePost(env.DB, targetId);
+      if (post) {
+        return resolvePlaceRecord(post.placeId, env);
+      }
+    }
+
     if (targetType === "comment") {
       const comment = await getD1VisibleComment(env.DB, targetId);
       if (comment) {
@@ -4082,6 +4083,11 @@ async function resolveReportTarget(targetType: ReportRecord["targetType"], targe
     }
 
     throw new HttpError(404, "REPORT_TARGET_NOT_FOUND", "신고 대상을 찾을 수 없습니다.");
+  }
+
+  if (targetType === "post" && posts.some((post) => post.id === targetId && !post.hiddenAt)) {
+    const post = posts.find((candidate) => candidate.id === targetId && !candidate.hiddenAt);
+    return post ? findPlaceRecord(post.placeId) : null;
   }
 
   if (targetType === "comment" && comments.some((comment) => comment.id === targetId)) {
@@ -4204,6 +4210,39 @@ async function getD1VisiblePhoto(db: D1Database, photoId: string): Promise<D1Pho
     .first<D1PhotoRow>();
 }
 
+async function getD1VisiblePost(db: D1Database, postId: string): Promise<PostRecord | null> {
+  const row = await db
+    .prepare(
+      `SELECT
+        id,
+        place_id AS placeId,
+        anonymous_user_id AS anonymousUserId,
+        creator_name AS creatorName,
+        creator_badge AS creatorBadge,
+        caption,
+        crowd_level AS crowdLevel,
+        parking_status AS parkingStatus,
+        line_status AS lineStatus,
+        weather_feel AS weatherFeel,
+        location_verified AS locationVerified,
+        verified_radius_m AS verifiedRadiusM,
+        photo_count AS photoCount,
+        photo_label AS photoLabel,
+        helpful_count AS helpfulCount,
+        comment_count AS commentCount,
+        hashtag_names AS hashtagNames,
+        hidden_at AS hiddenAt,
+        created_at AS createdAt
+      FROM posts
+      WHERE id = ? AND status = 'visible' AND hidden_at IS NULL
+      LIMIT 1`,
+    )
+    .bind(postId)
+    .first<D1PostRow>();
+
+  return row ? d1PostRowToRecord(row) : null;
+}
+
 async function getD1PublicRecentPhoto(db: D1Database, photoId: string): Promise<D1PhotoRow | null> {
   return db
     .prepare(
@@ -4276,6 +4315,20 @@ async function getD1ModerationTarget(
     return { exists: Boolean(row), storageKey: null, placeId: row?.placeId ?? null, regionId: row?.regionId ?? null };
   }
 
+  if (targetType === "post") {
+    const row = await db
+      .prepare(
+        `SELECT po.id, po.place_id AS placeId, p.region_id AS regionId
+         FROM posts po
+         LEFT JOIN places p ON p.id = po.place_id
+         WHERE po.id = ?
+         LIMIT 1`,
+      )
+      .bind(targetId)
+      .first<{ id: string; placeId: string; regionId: string | null }>();
+    return { exists: Boolean(row), storageKey: null, placeId: row?.placeId ?? null, regionId: row?.regionId ?? null };
+  }
+
   const row = await db
     .prepare(
       `SELECT ph.id, ph.place_id AS placeId, p.region_id AS regionId, ph.r2_key AS storageKey
@@ -4329,6 +4382,21 @@ async function applyD1ModerationAction(
     return;
   }
 
+  if (targetType === "post") {
+    if (action === "restore") {
+      await db.prepare("UPDATE posts SET status = 'visible', hidden_at = NULL, updated_at = ? WHERE id = ?").bind(now, targetId).run();
+      return;
+    }
+
+    if (action === "delete") {
+      await db.prepare("UPDATE posts SET status = 'deleted', hidden_at = ?, updated_at = ? WHERE id = ?").bind(now, now, targetId).run();
+      return;
+    }
+
+    await db.prepare("UPDATE posts SET status = 'hidden', hidden_at = ?, updated_at = ? WHERE id = ?").bind(now, now, targetId).run();
+    return;
+  }
+
   if (action === "restore") {
     await db.prepare("UPDATE photos SET hidden_at = NULL WHERE id = ? AND deleted_at IS NULL").bind(targetId).run();
     return;
@@ -4368,6 +4436,24 @@ async function getD1InteractionId(
     .first<{ id: string }>();
 
   return row?.id ?? null;
+}
+
+async function hasRecentD1PlaceClick(db: D1Database, placeId: string, anonymousUserId: string): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT id
+       FROM place_events
+       WHERE place_id = ?
+         AND anonymous_user_id = ?
+         AND event_type = 'click'
+         AND created_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-5 minutes')
+         AND expires_at > ${D1_NOW_SQL}
+       LIMIT 1`,
+    )
+    .bind(placeId, anonymousUserId)
+    .first<{ id: string }>();
+
+  return Boolean(row);
 }
 
 async function createD1UniqueInteraction(
@@ -4573,6 +4659,10 @@ async function incrementD1HourlyAggregate(
 }
 
 async function incrementD1ReportCounter(db: D1Database, targetType: ReportRecord["targetType"], targetId: string): Promise<void> {
+  if (targetType === "post") {
+    return;
+  }
+
   if (targetType === "comment") {
     await db.prepare("UPDATE comments SET report_count = report_count + 1, updated_at = ? WHERE id = ?").bind(new Date().toISOString(), targetId).run();
     return;
@@ -4595,6 +4685,10 @@ async function applyD1ProtectionForReport(db: D1Database, report: Pick<ReportRec
   const reason = shouldHideImmediately ? `auto_${report.reason}` : "auto_report_threshold";
   if (report.targetType === "comment") {
     await db.prepare("UPDATE comments SET status = 'hidden', hidden_at = ?, hidden_reason = ?, updated_at = ? WHERE id = ?").bind(now, reason, now, report.targetId).run();
+  }
+
+  if (report.targetType === "post") {
+    await db.prepare("UPDATE posts SET status = 'hidden', hidden_at = ?, updated_at = ? WHERE id = ?").bind(now, now, report.targetId).run();
   }
 
   if (report.targetType === "photo") {
@@ -4821,7 +4915,7 @@ function bulkModerationTargetsField(body: JsonObject, maxTargets: number): Admin
     }
 
     return {
-      targetType: enumField(target, "targetType", ["place", "comment", "photo"] as const),
+      targetType: enumField(target, "targetType", ["place", "post", "comment", "photo"] as const),
       targetId: stringField(target, "targetId", 100),
     };
   });
@@ -4874,23 +4968,6 @@ function enumFromSearch<TValue extends string>(url: URL, field: string, values: 
   }
 
   return value as TValue;
-}
-
-function booleanFromSearch(url: URL, field: string, fallback: boolean): boolean {
-  const value = url.searchParams.get(field);
-  if (value === null || value === "") {
-    return fallback;
-  }
-
-  if (value === "true" || value === "1") {
-    return true;
-  }
-
-  if (value === "false" || value === "0") {
-    return false;
-  }
-
-  throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
 }
 
 function isRecord(value: unknown): value is JsonObject {

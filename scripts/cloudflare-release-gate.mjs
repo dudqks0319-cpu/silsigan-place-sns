@@ -13,6 +13,17 @@ const COORDINATE_STATUS_REQUIRED_ENV_KEYS = [
   "SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE",
   "SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE",
 ];
+const CANONICAL_BLOCKER_ALIASES = new Map([
+  ["PAGES_URL_REQUIRED", "deployment_url.staging.pages"],
+  ["BASE_URL_REQUIRED", "deployment_url.staging.worker_api"],
+  ["staging.pages.url", "deployment_url.staging.pages"],
+  ["staging.worker_api.url", "deployment_url.staging.worker_api"],
+  ["production.pages.url", "deployment_url.production.pages"],
+  ["production.worker_api.url", "deployment_url.production.worker_api"],
+  ["cloudflare.r2.enabled", "R2_NOT_ENABLED"],
+  ["cloudflare.d1.production.migration_0002", "D1_0002_NOT_APPLIED"],
+  ["DEPLOYMENT_URL_REQUIRED", null],
+]);
 
 if (isCliEntryPoint()) {
   await main();
@@ -157,6 +168,10 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
   steps.push(step("frontend.wranglerDryRun.staging", ["cf:web:dry-run:staging"]));
   steps.push(step("frontend.wranglerDryRun.production", ["cf:web:dry-run:production"]));
   steps.push(step("cloudflare.preflight", ["cf:preflight"]));
+  steps.push(step("cloudflare.r2Evidence.staging", ["cf:r2:evidence", "--", "--env=staging", "--check"]));
+  steps.push(step("cloudflare.d1Evidence.staging", ["cf:d1:evidence", "--", "--env=staging", "--check"]));
+  steps.push(step("cloudflare.r2Evidence.production", ["cf:r2:evidence", "--", "--env=production", "--check"]));
+  steps.push(step("cloudflare.d1Evidence.production", ["cf:d1:evidence", "--", "--env=production", "--check"]));
   steps.push(step("cloudflare.externalState", ["cf:external-state"]));
 
   if (!flags.has("skip-dry-run")) {
@@ -165,13 +180,16 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
   }
 
   const stagingSmokeArgs = ["smoke:staging"];
+  const stagingSmokeEnvKeys = ["SILSIGAN_STAGING_API_BASE_URL"];
   if (mutating) {
     stagingSmokeArgs.push("--", "--mutating", "--require-admin");
+    stagingSmokeEnvKeys.push(...MUTATING_REQUIRED_ENV_KEYS);
     if (coordinateStatus) {
       stagingSmokeArgs.push("--coordinate-status");
+      stagingSmokeEnvKeys.push(...COORDINATE_STATUS_REQUIRED_ENV_KEYS);
     }
   }
-  steps.push(step("staging.api.smoke", stagingSmokeArgs, mutating ? [...MUTATING_REQUIRED_ENV_KEYS, ...(coordinateStatus ? COORDINATE_STATUS_REQUIRED_ENV_KEYS : [])] : []));
+  steps.push(step("staging.api.smoke", stagingSmokeArgs, stagingSmokeEnvKeys));
 
   const pagesSmokeArgs = ["smoke:pages"];
   const pagesSmokeFlags = [];
@@ -181,7 +199,7 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
   if (pagesSmokeFlags.length > 0) {
     pagesSmokeArgs.push("--", ...pagesSmokeFlags);
   }
-  steps.push(step("pages.browser.smoke", pagesSmokeArgs));
+  steps.push(step("pages.browser.smoke", pagesSmokeArgs, RELEASE_CANDIDATE_REQUIRED_URL_ENV_KEYS));
 
   if (productionCandidate) {
     steps.push(
@@ -303,14 +321,17 @@ async function runStep(plannedStep, timeoutMs) {
       errorTail: redactOutput(tail(stderr, 2_000)),
     };
   } catch (error) {
+    const stdout = String(error?.stdout ?? "");
+    const stderr = String(error?.stderr ?? error?.message ?? "");
     return {
       name: plannedStep.name,
       status: "fail",
       durationMs: Date.now() - startedAt,
       exitCode: typeof error?.code === "number" ? error.code : null,
       signal: typeof error?.signal === "string" ? error.signal : null,
-      outputTail: redactOutput(tail(String(error?.stdout ?? ""), 4_000)),
-      errorTail: redactOutput(tail(String(error?.stderr ?? error?.message ?? ""), 4_000)),
+      blockers: extractTextBlockers(stdout, stderr),
+      outputTail: redactOutput(tail(stdout, 4_000)),
+      errorTail: redactOutput(tail(stderr, 4_000)),
     };
   }
 }
@@ -348,7 +369,23 @@ export function summarizeResults(results) {
 
 function extractResultBlockers(result) {
   const blockers = [];
+  if (Array.isArray(result.blockers)) {
+    for (const blocker of result.blockers) {
+      collectBlockerCode(blockers, blocker);
+    }
+  }
+
   for (const value of [result.outputTail, result.errorTail]) {
+    for (const payload of parseJsonPayloads(value)) {
+      collectPayloadBlockers(payload, blockers);
+    }
+  }
+  return blockers;
+}
+
+function extractTextBlockers(...values) {
+  const blockers = [];
+  for (const value of values) {
     for (const payload of parseJsonPayloads(value)) {
       collectPayloadBlockers(payload, blockers);
     }
@@ -416,7 +453,10 @@ function collectBlockerCode(blockers, value) {
 
   const blocker = value.trim();
   if (/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(blocker)) {
-    blockers.push(blocker);
+    const canonicalBlocker = CANONICAL_BLOCKER_ALIASES.has(blocker) ? CANONICAL_BLOCKER_ALIASES.get(blocker) : blocker;
+    if (canonicalBlocker) {
+      blockers.push(canonicalBlocker);
+    }
   }
 }
 
@@ -572,6 +612,10 @@ Runs the release evidence chain:
   pnpm release:status -- --strict
   pnpm audit --audit-level critical
   pnpm cf:preflight
+  pnpm cf:r2:evidence -- --env=staging --check
+  pnpm cf:d1:evidence -- --env=staging --check
+  pnpm cf:r2:evidence -- --env=production --check
+  pnpm cf:d1:evidence -- --env=production --check
   pnpm cf:dry-run:staging / cf:dry-run:production
   pnpm smoke:staging
   pnpm smoke:pages

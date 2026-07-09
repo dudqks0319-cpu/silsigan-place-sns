@@ -6,7 +6,7 @@
     linear-gradient(135deg, #f7fbf8 0%, #edf5f1 44%, #f8fafc 100%);
   color: #17211a;
   font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", sans-serif;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .redesign * {
@@ -130,6 +130,44 @@
   color: #15803d;
 }
 
+.dataModeBanner {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(22, 163, 74, 0.12);
+  border-radius: 14px;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.dataModeBanner strong {
+  font-size: 11px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.dataModeBanner span {
+  min-width: 0;
+  color: #166534;
+  font-size: 11px;
+  line-height: 1.35;
+  font-weight: 750;
+}
+
+.dataModeBannerSample {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.dataModeBannerSample span,
+.dataModeBannerSample strong {
+  color: #92400e;
+}
+
 .toast {
   margin-top: 10px;
   padding: 10px 12px;
@@ -144,9 +182,9 @@
 
 .phoneBody {
   min-height: 0;
-  overflow-y: auto;
-  padding: 16px 16px 96px;
-  scroll-padding-bottom: 104px;
+  overflow: hidden auto;
+  padding: 16px 16px 132px;
+  scroll-padding-bottom: 140px;
   scrollbar-width: none;
 }
 
@@ -276,6 +314,269 @@
 
 .searchBox input::placeholder {
   color: #64748b;
+}
+
+.homeSearchButton {
+  width: 100%;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.homeSearchButton span {
+  flex: 1;
+}
+
+.photoLeadCard {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.photoLeadPreview {
+  min-height: 218px;
+  width: 100%;
+  border: 0;
+  border-radius: 20px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  overflow: hidden;
+  position: relative;
+  text-align: left;
+  color: #ffffff;
+  background-color: #0f766e;
+  background-image:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0.82)),
+    var(--photo-url, url("/silsigan/fallback/gwangalli.png")),
+    linear-gradient(135deg, #0f766e, #22c55e 46%, #f59e0b);
+  background-position: center;
+  background-size: cover;
+}
+
+.photoLeadPreview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, transparent 35%, rgba(15, 23, 42, 0.3)),
+    radial-gradient(circle at 16% 14%, rgba(255, 255, 255, 0.18), transparent 20%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.photoLeadPreview:disabled {
+  cursor: default;
+  opacity: 0.92;
+}
+
+.photoLeadMeta,
+.photoLeadKicker,
+.photoLeadPreview strong,
+.photoLeadPreview p,
+.photoLeadTags {
+  position: relative;
+  z-index: 1;
+}
+
+.photoLeadMeta {
+  width: fit-content;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.38);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.photoLeadKicker {
+  width: fit-content;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.photoLeadPreview strong {
+  font-size: 23px;
+  line-height: 1.12;
+}
+
+.photoLeadPreview p {
+  max-width: 96%;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.42;
+  font-weight: 750;
+}
+
+.photoLeadTags,
+.photoLeadActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.photoLeadTags span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.34);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.photoLeadActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.photoLeadActions button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 15px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.photoLeadActions button:last-child {
+  background: #ecfdf3;
+  color: #15803d;
+}
+
+.sampleDataNotice {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.22);
+  border-radius: 16px;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.sampleDataNotice strong {
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.sampleDataNotice p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 780;
+}
+
+.searchPanel {
+  padding: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 20px;
+  background: #ffffff;
+}
+
+.searchQuickGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.searchQuickGrid button,
+.inlineActionButton {
+  min-height: 42px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 15px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.inlineActionButton {
+  width: 100%;
+  margin-top: 10px;
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.searchPhotoList {
+  display: grid;
+  gap: 9px;
+}
+
+.searchPhotoItem {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.searchPhotoItem button {
+  min-height: 68px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 17px;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.searchPhotoItem button:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.searchPhotoItem .searchPhotoButton {
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+}
+
+.searchPhotoThumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 13px;
+  background-color: #0f766e;
+  background-image:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.02), rgba(15, 23, 42, 0.18)),
+    var(--photo-url, url("/silsigan/fallback/taehwagang.png"));
+  background-position: center;
+  background-size: cover;
+}
+
+.searchPhotoCopy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.searchPhotoItem button:last-child {
+  min-width: 66px;
+  display: grid;
+  place-items: center;
+  background: #ecfdf3;
+  color: #15803d;
+  font-weight: 950;
+}
+
+.searchPhotoItem span {
+  color: #16a34a;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.searchPhotoItem strong {
+  font-size: 13px;
+}
+
+.searchPhotoItem p {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 750;
 }
 
 .keywordRow,
@@ -456,7 +757,7 @@
   gap: 8px;
 }
 
-.decisionRail button {
+.decisionItem {
   min-height: 78px;
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 20px;
@@ -469,15 +770,15 @@
   font-weight: 900;
 }
 
-.decisionRail button:nth-child(1) svg {
+.decisionItem:nth-child(1) svg {
   color: #16a34a;
 }
 
-.decisionRail button:nth-child(2) svg {
+.decisionItem:nth-child(2) svg {
   color: #f97316;
 }
 
-.decisionRail button:nth-child(3) svg {
+.decisionItem:nth-child(3) svg {
   color: #ef4444;
 }
 
@@ -544,6 +845,12 @@
   text-align: left;
   position: relative;
   overflow: hidden;
+  background-color: #0f766e;
+  background-image:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.04), rgba(15, 23, 42, 0.52)),
+    var(--photo-url, url("/silsigan/fallback/taehwagang.png"));
+  background-position: center;
+  background-size: cover;
 }
 
 .feedPhoto::after {
@@ -551,8 +858,8 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.38), transparent 23%),
-    linear-gradient(180deg, transparent, rgba(15, 23, 42, 0.34));
+    radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.18), transparent 23%),
+    linear-gradient(180deg, transparent, rgba(15, 23, 42, 0.42));
 }
 
 .feedPhoto span,
@@ -755,6 +1062,30 @@
 .feedActionActive {
   background: #dcfce7 !important;
   color: #15803d !important;
+}
+
+.feedSecondaryMenu {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.feedSecondaryMenu button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .safetyInline {
@@ -1099,6 +1430,14 @@
   border-color: rgba(22, 163, 74, 0.24) !important;
 }
 
+.mapTruthNote {
+  margin: -4px 2px 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.45;
+  font-weight: 750;
+}
+
 .mapRequeryHint {
   margin: -2px 2px 0;
   color: #64748b;
@@ -1333,33 +1672,22 @@
   position: absolute;
   z-index: 4;
   transform: translate(-50%, -50%);
-  max-width: 112px;
-  min-height: 42px;
+  width: 30px;
+  height: 30px;
   border: 2px solid rgba(255, 255, 255, 0.92);
   border-radius: 999px;
   box-shadow: 0 14px 24px rgba(15, 23, 42, 0.2);
   display: grid;
-  gap: 1px;
-  padding: 7px 10px;
+  place-items: center;
+  padding: 0;
   color: #fff;
-  text-align: left;
-}
-
-.realMapFrame :global(.naver-map__fallback-marker span),
-.realMapFrame :global(.naver-map__fallback-marker strong) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .realMapFrame :global(.naver-map__fallback-marker span) {
-  font-size: 10px;
-  font-weight: 950;
-}
-
-.realMapFrame :global(.naver-map__fallback-marker strong) {
-  font-size: 11px;
-  font-weight: 950;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .realMapFrame :global(.naver-map__fallback-marker:focus-visible) {
@@ -1396,14 +1724,12 @@
 }
 
 .realMapFrame :global(.naver-marker) {
-  min-width: 74px;
-  min-height: 34px;
+  width: 30px;
+  height: 30px;
   border: 2px solid #ffffff;
   border-radius: 999px;
   color: #ffffff;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.2);
-  font-size: 12px;
-  font-weight: 950;
 }
 
 .realMapFrame :global(.naver-marker--good) {
@@ -1420,6 +1746,65 @@
 
 .realMapFrame :global(.naver-marker--avoid) {
   background: #b91c1c;
+}
+
+.mapSelectedPlaceBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid rgba(22, 163, 74, 0.16);
+  border-radius: 20px;
+  background: #ecfdf3;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+}
+
+.mapSelectedPlaceBar span,
+.mapSelectedPlaceBar strong,
+.mapSelectedPlaceBar p {
+  display: block;
+}
+
+.mapSelectedPlaceBar span {
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.mapSelectedPlaceBar strong {
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.mapSelectedPlaceBar p {
+  margin: 6px 0 0;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 780;
+  line-height: 1.4;
+}
+
+.mapSelectedActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mapSelectedActions button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 14px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.mapSelectedActions button:last-child {
+  background: #ffffff;
+  color: #15803d;
 }
 
 .realMapFrame :global(.naver-user-marker) {
@@ -1506,6 +1891,51 @@
   border-radius: 24px 24px 0 0;
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 -18px 42px rgba(15, 23, 42, 0.16);
+}
+
+.sheetPhotoHero {
+  min-height: 148px;
+  width: 100%;
+  margin: 8px 0 13px;
+  border: 0;
+  border-radius: 20px;
+  padding: 13px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 5px;
+  overflow: hidden;
+  position: relative;
+  text-align: left;
+  color: #ffffff;
+  background-color: #0f766e;
+  background-image:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.08), rgba(15, 23, 42, 0.76)),
+    url("/silsigan/fallback/gwangalli.png");
+  background-position: center;
+  background-size: cover;
+}
+
+.sheetPhotoHero span,
+.sheetPhotoHero strong {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 14px rgba(15, 23, 42, 0.5);
+}
+
+.sheetPhotoHero span {
+  width: fit-content;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.42);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.sheetPhotoHero strong {
+  max-width: 92%;
+  font-size: 18px;
+  line-height: 1.18;
 }
 
 .detailHeader {
@@ -2142,7 +2572,7 @@
 .questionCard button,
 .operatorHeader button,
 .moderationItem button,
-.photoUploadCard button,
+.photoUploadCard > button,
 .verifyCard button {
   border: 0;
   border-radius: 16px;
@@ -2166,6 +2596,9 @@
   position: relative;
   overflow: hidden;
   border-radius: 28px;
+  background-position: center;
+  background-size: cover;
+  background-image: var(--photo-url, url("/silsigan/fallback/taehwagang.png"));
 }
 
 .placeHero::before {
@@ -2173,8 +2606,8 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 24% 26%, rgba(255,255,255,0.42), transparent 22%),
-    linear-gradient(180deg, rgba(255,255,255,0.08), rgba(15, 23, 42, 0.28));
+    radial-gradient(circle at 24% 26%, rgba(255,255,255,0.18), transparent 22%),
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(15, 23, 42, 0.48));
 }
 
 .placePhotoOverlay {
@@ -2479,6 +2912,117 @@
   font-weight: 750;
 }
 
+.uploadSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uploadSteps li {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #14532d;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.uploadGuidanceList {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.uploadGuidanceList li {
+  position: relative;
+  padding-left: 14px;
+  color: #166534;
+  font-size: 11px;
+  line-height: 1.35;
+  font-weight: 780;
+}
+
+.uploadGuidanceList li::before {
+  content: "";
+  position: absolute;
+  top: 0.55em;
+  left: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #22c55e;
+}
+
+.uploadPlaceCard {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.uploadPlaceCard span,
+.uploadPlaceCard strong,
+.uploadPlaceCard p {
+  display: block;
+}
+
+.uploadPlaceCard span {
+  color: #16a34a;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.uploadPlaceCard strong {
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.uploadPlaceCard p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 760;
+}
+
+.uploadPlaceList {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.uploadPlaceList button {
+  flex: 0 0 auto;
+  min-height: 44px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #334155;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.uploadPlaceList .uploadPlaceActive {
+  border-color: rgba(22, 163, 74, 0.28);
+  background: #dcfce7;
+  color: #15803d;
+}
+
 .quickReportCard {
   padding: 16px;
 }
@@ -2516,18 +3060,20 @@
 
 .photoUploadCard {
   display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
+  grid-template-columns: 1fr;
+  align-items: stretch;
   gap: 12px;
 }
 
 .uploadBox {
-  min-height: 116px;
+  min-height: 92px;
   border: 1.5px dashed rgba(22, 163, 74, 0.34);
   border-radius: 20px;
   display: grid;
   place-items: center;
   gap: 4px;
+  padding: 14px;
+  text-align: center;
   color: #16a34a;
   background: #f0fdf4;
 }
@@ -2549,7 +3095,20 @@
   font-weight: 750;
 }
 
-.photoUploadCard button {
+.uploadReadinessNote {
+  margin: -4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: 14px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 11px;
+  line-height: 1.45;
+  font-weight: 780;
+}
+
+.photoUploadCard > button {
+  width: fit-content;
   padding: 11px 12px;
   background: #0f172a;
   color: #fff;
@@ -2620,6 +3179,23 @@
   font-size: 13px;
   font-weight: 800;
   line-height: 1.45;
+}
+
+.emptyActionRow {
+  display: grid;
+  gap: 10px;
+}
+
+.emptyActionRow button {
+  width: fit-content;
+  min-height: 38px;
+  border: 0;
+  border-radius: 14px;
+  background: #0f172a;
+  color: #ffffff;
+  padding: 0 13px;
+  font-size: 12px;
+  font-weight: 950;
 }
 
 .emptyState {
@@ -2730,6 +3306,30 @@
   font-size: 19px;
 }
 
+.myDataNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  border-radius: 18px;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.myDataNotice svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.myDataNotice p {
+  margin: 0;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .myStatsGrid,
 .adminMetrics,
 .operatorMetrics {
@@ -2781,6 +3381,8 @@
   color: #64748b;
   font-size: 11px;
   font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .walletCard strong {
@@ -3032,9 +3634,10 @@
   align-items: center;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 26px;
-  background: rgba(255, 255, 255, 0.94);
+  background: #ffffff;
   backdrop-filter: blur(18px);
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+  isolation: isolate;
   z-index: 10;
 }
 
@@ -3067,8 +3670,8 @@
   position: absolute;
   right: 14px;
   top: 14px;
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 12px;
   display: grid;
@@ -3213,7 +3816,7 @@
   place-items: center;
   gap: 3px;
   color: #94a3b8;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 950;
 }
 

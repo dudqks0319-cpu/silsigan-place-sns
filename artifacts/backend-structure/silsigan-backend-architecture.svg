@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="980" viewBox="0 0 1320 980">
+  <defs>
+    <style>
+      .bg { fill: #f7fbff; }
+      .title { font: 800 34px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; fill: #172733; }
+      .subtitle { font: 700 16px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; fill: #657684; }
+      .box { fill: #fffffc; stroke: #cfe2ee; stroke-width: 2; rx: 22; }
+      .box-blue { fill: #eef7ff; stroke: #9bd2f0; stroke-width: 2; rx: 22; }
+      .box-green { fill: #effaf4; stroke: #a8dfc0; stroke-width: 2; rx: 22; }
+      .box-yellow { fill: #fff8e9; stroke: #f0cf8b; stroke-width: 2; rx: 22; }
+      .box-red { fill: #fff0f5; stroke: #efb4c4; stroke-width: 2; rx: 22; }
+      .box-gray { fill: #f2f6f8; stroke: #c8d5dd; stroke-width: 2; rx: 22; }
+      .label { font: 800 18px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; fill: #172733; }
+      .text { font: 700 14px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; fill: #314554; }
+      .small { font: 700 12px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; fill: #657684; }
+      .warn { font: 800 13px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; fill: #9b5f00; }
+      .arrow { stroke: #6d8aa0; stroke-width: 2.6; fill: none; marker-end: url(#arrow); }
+      .arrow-soft { stroke: #a2b6c3; stroke-width: 2.2; stroke-dasharray: 7 7; fill: none; marker-end: url(#arrow-soft); }
+      .pill { fill: #e8f6ff; stroke: #b7dff2; stroke-width: 1.5; rx: 14; }
+      .pill-text { font: 800 12px -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", sans-serif; fill: #2f6f9f; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#6d8aa0" />
+    </marker>
+    <marker id="arrow-soft" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#a2b6c3" />
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1320" height="980" />
+  <text x="60" y="64" class="title">#실시간 현재 백엔드 구조</text>
+  <text x="60" y="94" class="subtitle">Next.js API Routes + store driver 분기 + Supabase service-role 저장소. 일부 화면/엔드포인트는 아직 mock 기반.</text>
+
+  <rect x="60" y="140" width="250" height="180" class="box-blue" />
+  <text x="85" y="176" class="label">Frontend</text>
+  <text x="85" y="210" class="text">src/app/page.tsx</text>
+  <text x="85" y="236" class="text">SilsiganKoreanUX</text>
+  <text x="85" y="262" class="small">현재 메인 UI는 mock 데이터 중심</text>
+  <text x="85" y="286" class="small">기존 SilsiganRedesign은 API 연동 구조 보유</text>
+
+  <rect x="390" y="120" width="360" height="250" class="box" />
+  <text x="420" y="156" class="label">API Routes</text>
+  <text x="420" y="190" class="text">/api/posts</text>
+  <text x="420" y="216" class="text">/api/post-flags</text>
+  <text x="420" y="242" class="text">/api/hashtags</text>
+  <text x="420" y="268" class="text">/api/admin/moderation/posts</text>
+  <text x="420" y="294" class="text">/api/reports, /api/questions, /api/places</text>
+  <text x="420" y="320" class="text">/api/external/naver/local-search</text>
+  <rect x="420" y="336" width="210" height="28" class="pill" />
+  <text x="435" y="355" class="pill-text">ok/fail JSON response wrapper</text>
+
+  <rect x="830" y="120" width="410" height="250" class="box-yellow" />
+  <text x="860" y="156" class="label">Shared Backend Guards</text>
+  <text x="860" y="190" class="text">validators.ts: Zod 입력 검증</text>
+  <text x="860" y="216" class="text">rate-limit.ts: in-memory rate limit</text>
+  <text x="860" y="242" class="text">admin-auth.ts: admin token header/cookie</text>
+  <text x="860" y="268" class="text">domain.ts: 판단, 해시태그, 거리, 지역 stage</text>
+  <text x="860" y="294" class="text">site-url.ts, api.ts, errors.ts</text>
+  <text x="860" y="328" class="warn">주의: rate limit은 서버 인스턴스별 메모리 기반</text>
+
+  <rect x="390" y="450" width="360" height="250" class="box-green" />
+  <text x="420" y="486" class="label">Store Boundary</text>
+  <text x="420" y="520" class="text">src/lib/store.ts</text>
+  <text x="420" y="548" class="text">SILSIGAN_STORE_DRIVER</text>
+  <text x="442" y="580" class="text">demo/mock → mock-store.ts</text>
+  <text x="442" y="608" class="text">supabase → supabase-store.ts</text>
+  <text x="420" y="646" class="small">posts / hashtags / post-flags / admin moderation</text>
+  <text x="420" y="670" class="small">는 store 경유</text>
+
+  <rect x="60" y="450" width="250" height="250" class="box-gray" />
+  <text x="85" y="486" class="label">Mock Store</text>
+  <text x="85" y="520" class="text">mock-store.ts</text>
+  <text x="85" y="548" class="text">places, reports</text>
+  <text x="85" y="576" class="text">questions, posts</text>
+  <text x="85" y="604" class="text">flags, moderation queue</text>
+  <text x="85" y="642" class="warn">reports/questions/places API는</text>
+  <text x="85" y="666" class="warn">아직 mock-store 직결</text>
+
+  <rect x="830" y="450" width="410" height="250" class="box-green" />
+  <text x="860" y="486" class="label">Supabase Store</text>
+  <text x="860" y="520" class="text">supabase-server.ts</text>
+  <text x="860" y="548" class="text">SUPABASE_SERVICE_ROLE_KEY</text>
+  <text x="860" y="576" class="text">supabase-store.ts</text>
+  <text x="860" y="604" class="text">silsigan_posts / hashtags / flags</text>
+  <text x="860" y="632" class="text">admin_audit / joins / places</text>
+  <text x="860" y="666" class="small">정확 좌표 저장 안 함. verifiedRadiusM만 저장.</text>
+
+  <rect x="830" y="760" width="410" height="145" class="box-red" />
+  <text x="860" y="796" class="label">Supabase DB + RLS</text>
+  <text x="860" y="830" class="text">supabase/migrations/*</text>
+  <text x="860" y="858" class="text">public read: places, visible posts, hashtags</text>
+  <text x="860" y="886" class="text">own data: follows, saves, helpfuls, reputation</text>
+
+  <rect x="60" y="760" width="690" height="145" class="box" />
+  <text x="90" y="796" class="label">External / Admin</text>
+  <text x="90" y="830" class="text">/api/external/naver/local-search → NAVER_SEARCH_CLIENT_ID/SECRET 서버 env 사용</text>
+  <text x="90" y="858" class="text">/admin/login, /admin/moderation/posts → SILSIGAN_ADMIN_TOKEN</text>
+  <text x="90" y="886" class="small">Naver local search 좌표는 지도 표시 전 좌표계 검증 TODO로 남아 있음</text>
+
+  <path class="arrow" d="M310 230 C345 230, 350 230, 390 230" />
+  <path class="arrow" d="M750 245 C790 245, 790 245, 830 245" />
+  <path class="arrow" d="M570 370 L570 450" />
+  <path class="arrow" d="M750 575 C790 575, 790 575, 830 575" />
+  <path class="arrow" d="M1035 700 L1035 760" />
+  <path class="arrow-soft" d="M390 610 C350 610, 350 610, 310 610" />
+  <path class="arrow-soft" d="M570 700 L570 760" />
+  <path class="arrow-soft" d="M185 700 L185 760" />
+
+  <text x="332" y="220" class="small">HTTP</text>
+  <text x="780" y="236" class="small">검증/제한/인증</text>
+  <text x="585" y="420" class="small">store</text>
+  <text x="770" y="558" class="small">driver=supabase</text>
+  <text x="330" y="596" class="small">direct mock</text>
+</svg>

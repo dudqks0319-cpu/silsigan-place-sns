@@ -80,7 +80,7 @@ export type CloudflarePhoto = {
 
 export type CloudflareReport = {
   id: string;
-  targetType: "place" | "comment" | "photo";
+  targetType: "place" | "post" | "comment" | "photo";
   targetId: string;
   reason: "false_content" | "spam" | "privacy_face" | "privacy_plate" | "sensitive_info" | "other";
   anonymousUserId: string;

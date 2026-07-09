@@ -30,6 +30,8 @@
     "cf:dry-run": "npx --yes wrangler deploy --dry-run --env=\"\" --config workers/api/wrangler.jsonc",
     "cf:dry-run:staging": "npx --yes wrangler deploy --dry-run --env staging --config workers/api/wrangler.jsonc",
     "cf:dry-run:production": "npx --yes wrangler deploy --dry-run --env production --config workers/api/wrangler.jsonc",
+    "cf:d1:evidence": "node scripts/cloudflare-d1-release-evidence.mjs",
+    "cf:r2:evidence": "node scripts/cloudflare-r2-release-evidence.mjs",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {

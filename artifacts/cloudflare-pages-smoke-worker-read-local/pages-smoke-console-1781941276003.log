@@ -1,0 +1,11 @@
+console.info: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+console.log: [HMR] connected
+console.log: [Fast Refresh] rebuilding
+console.log: [Fast Refresh] done in 141ms
+console.log: [Fast Refresh] rebuilding
+console.info: [silsigan:event] toggle_traffic_layer Object
+console.log: [Fast Refresh] done in 202ms
+console.info: [silsigan:event] toggle_traffic_layer Object
+console.info: [silsigan:event] view_home Object
+console.info: [silsigan:event] click_map_marker Object
+console.info: [silsigan:event] click_place Object

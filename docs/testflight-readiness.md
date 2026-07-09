@@ -1,6 +1,6 @@
 # #실시간 TestFlight readiness
 
-Updated: 2026-06-26
+Updated: 2026-06-27
 Source of truth: `docs/current-release-state.md`
 Operator packet: `docs/cloudflare-staging-operator-packet.md`
 
@@ -21,7 +21,7 @@ The earlier release assessment correctly warns against App Store submission, but
 
 - Backend is no longer a Supabase-first MVP in the current release branch. README, package dependencies, release checks, and tests now target Cloudflare Workers, D1, R2, Durable Objects, and OpenNext Cloudflare.
 - Nationwide map and ranking scope are not just roadmap text. Local smoke and tests cover nationwide/region/map-bounds ranking panels, current-location controls, bbox place loading, and Worker ranking API query propagation.
-- Remaining release blockers are mostly external-state and evidence blockers, not missing local code paths: `R2_NOT_ENABLED`, staging/production deployment URLs, and real staging smoke.
+- Remaining release blockers are mostly external-state and evidence blockers, not missing local code paths: `R2_NOT_ENABLED`, missing configured API/web Worker deployments, staging/production deployment URLs, and real staging smoke.
 - App Store submission remains the wrong next milestone. The correct milestone is a TestFlight MVP with live Cloudflare staging and real-device QA.
 
 ## TestFlight MVP Gate
@@ -38,7 +38,9 @@ The following must be true before treating the app as TestFlight-ready:
 - [ ] `pnpm smoke:pages` passes against staging Pages and staging Worker URLs.
 - [ ] Workers tail redaction is captured from staging and passes `pnpm smoke:tail-redaction`.
 - [x] TestFlight beta description, reviewer instructions, permission copy, UGC moderation notes, and staging evidence requirements are documented in `docs/testflight-review-notes.md` and guarded by `release:status`.
+- [x] Local `/privacy` and `/support` pages exist and are guarded by `release:status` for implemented data-handling, support, report, deletion, and final URL language.
 - [x] Privacy/support URL readiness is guarded by `release:status`; missing, placeholder, non-HTTPS, localhost, query/fragment, credentialed, or duplicate values fail before external TestFlight review notes are submitted.
+- [x] Real-device QA ledger structure is guarded by `release:status`; missing iPhone/Android matrices, permission flows, UGC flows, redaction rules, crash checks, or evidence artifact names fail before TestFlight internal testing.
 - [ ] iPhone real-device QA in `docs/real-device-qa.md` covers launch, map display, current-location allow/deny, place detail, report create, comment create/delete, photo upload/preview, like/unlike, moderation report, and no raw coordinate/file-name leakage in visible UI.
 - [ ] Android real-device QA in `docs/real-device-qa.md` covers the same user flows if Android beta distribution is in scope.
 
@@ -62,10 +64,10 @@ Only consider App Store production submission after TestFlight evidence is clean
 | Blocker | Owner action |
 | --- | --- |
 | `R2_NOT_ENABLED` | Add the R2 subscription through Cloudflare Dashboard checkout, then rerun R2 evidence checks. |
-| Missing staging/production URLs | Deploy Worker/Pages surfaces and export the four `SILSIGAN_*_URL` variables. |
-| Missing privacy/support URLs | Publish final HTTPS privacy/support pages and export `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL`. |
+| Missing Worker deployments and staging/production URLs | Deploy configured API/web Workers and export the four `SILSIGAN_*_URL` variables. |
+| Missing privacy/support URLs | Local `/privacy` and `/support` pages now exist; deploy them to final HTTPS URLs and export `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL`. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
-| No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and optional Android device evidence after staging is live. |
+| No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and Android device evidence after staging is live. |
 
 ## 2026-06-26 Phase 1 Read-Only Probe Before D1 Apply
 
@@ -104,13 +106,21 @@ R2 was rechecked after production D1 passed.
 
 No R2 bucket create, Worker deploy, Pages deploy, or staging smoke was run because R2 subscription and staging URLs are still missing.
 
+## 2026-06-27 External-State Gate Hardening
+
+The external-state gate now treats missing Cloudflare auth as the canonical blocker before dependent R2/D1 remote checks. In the current authenticated run, auth passes, staging and production D1 `0002` evidence pass with `posts=4`, `questions=3`, and the remaining blockers are still `R2_NOT_ENABLED` plus the four missing deployment URLs.
+
+## 2026-06-27 Worker Deployment Inventory
+
+Read-only Wrangler deployment probes found that the configured Workers are not deployed yet: `silsigan-api-staging`, `silsigan-api-production`, `silsigan-web-staging`, and `silsigan-web-production`. The external-state gate now reports these as `worker_deployment.staging.api`, `worker_deployment.production.api`, `worker_deployment.staging.web`, and `worker_deployment.production.web` blockers before real staging smoke can start.
+
 ## 2026-06-26 Ranking Manipulation Smoke
 
 The D1 ranking smoke now covers repeated same-user click and like attempts against the same place.
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 121 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence; the TestFlight review notes smoke verifies beta copy, staging URL requirements, permission copy, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; the privacy/support URL smoke verifies required HTTPS URLs and rejects unsafe or placeholder values. |
+| `pnpm test -- tests/cloudflare-api.test.ts` | pass | 125 tests passed. The D1 ranking smoke verifies the first same-user place click and like create one signal each, the repeated click/like return `created=false`, `place_events` stores one click and one like, and regional ranking keeps `clickCount=1`, `likeCount=1`, `uniqueUserCount=1`, `score=101`; the UGC runbook smoke verifies required owner, alert queue, SLA, target type, and operator-action evidence; the Cloudflare cost/usage runbook smoke verifies Usage & billing, Billing alerts, product metrics, cadence, and TestFlight stop-condition evidence; the TestFlight review notes smoke verifies beta copy, staging URL requirements, permission copy, UGC moderation, privacy/support URL status, staging evidence, and stop conditions; the real-device QA ledger smoke verifies iPhone/Android matrices, staging environment fields, permission flows, UGC flows, redaction rules, crash checks, and artifact names; the public privacy/support page smoke verifies implemented data handling, TestFlight support, content reports, deletion requests, and final URL language; the privacy/support URL smoke verifies required HTTPS URLs and rejects unsafe or placeholder values; the external-state smoke verifies auth-related remote check failures collapse to `CLOUDFLARE_AUTH_REQUIRED` and Worker-missing responses collapse to `worker_deployment.*` blockers without leaking raw Wrangler output. |
 
 ## 2026-06-26 UGC Moderation Runbook Gate
 
@@ -145,3 +155,19 @@ The privacy/support URL finalization blocker is now release-state checked instea
 | Probe | Result | Evidence |
 | --- | --- | --- |
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` to be distinct HTTPS URLs with no placeholders, credentials, query params, fragments, or localhost hosts. Current failure remains expected until final public URLs are available. |
+
+## 2026-06-27 Real-Device QA Ledger Gate
+
+The real-device QA ledger is now a release-state checked artifact. This closes the documentation-shape gap without claiming iPhone or Android QA has passed.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/real-device-qa.md` to cover staging Pages/API environment fields, `R2_NOT_ENABLED`, TestFlight and Android build selection, iPhone and Android QA matrices, Naver map display, location allow/deny, camera/photo library, photo upload/preview, like/unlike, ranking refresh, report/moderation, crash checks, redaction requirements, and artifact names. Current failure remains expected until live staging, real-device evidence, and external URLs are available. |
+
+## 2026-06-27 Privacy/Support Pages
+
+Local public privacy and support pages now exist, but final URL readiness remains blocked until the app is deployed to HTTPS Pages URLs.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `src/app/privacy/page.tsx` and `src/app/support/page.tsx` to include public-page tokens for data handling, Cloudflare D1/R2, location, photos, reports, deletion requests, TestFlight support, and final support/privacy URL language. Current failure remains expected until final HTTPS `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` are exported. |

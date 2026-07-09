@@ -11,7 +11,6 @@ export async function GET(request: Request) {
       regionId: url.searchParams.get("regionId") ?? url.searchParams.get("region") ?? undefined,
       hashtagName: url.searchParams.get("hashtagName") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
-      includeHidden: url.searchParams.get("includeHidden") ?? undefined,
     });
 
     return ok(await store.listPosts(filters), {
