@@ -2,7 +2,7 @@
 
 ## 한 줄 상태
 
-V2 로컬 구현은 `184/184` 테스트와 무경고 production build를 통과했지만, 원격 D1 V2 migration, R2, API Worker/URL, NAVER origin 제한, source 권리, 법무·운영 서명, native 실기기 증거가 남아 public release는 `blocked-external`이다.
+V2 로컬 구현은 `194/194` 테스트와 무경고 production build를 통과했고 GitHub에 push 및 Vercel 보호 preview까지 완료했지만, 원격 D1 V2 migration, R2, API Worker/URL, NAVER origin 제한, source 권리, 법무·운영 서명, native 실기기 증거가 남아 public release는 `blocked-external`이다.
 
 상세 source of truth는 [docs/current-release-state.md](docs/current-release-state.md), 11개 결정은 [docs/v2-decision-register.md](docs/v2-decision-register.md), 법무·운영 중단 조건은 [docs/v2-legal-operations-gate.md](docs/v2-legal-operations-gate.md)이다.
 
@@ -10,10 +10,11 @@ V2 로컬 구현은 `184/184` 테스트와 무경고 production build를 통과�
 
 - Version: `0.1.0`
 - Build: `not_applicable`
-- Base Git SHA: `8198cf745d59895ae28bdd46bc8b32016505308a`
+- Base Git SHA: `31d9654dfd576156a8f1d19590a80c5a6aba8511`
 - Branch: `codex/silsigan-progress-20260710`
 - Phase: `v2_local_ready_external_blocked`
-- Local checks: `pnpm lint`, `pnpm typecheck`, `pnpm test` (`184/184`), `pnpm build` pass
+- Local checks: `pnpm lint`, `pnpm typecheck`, `pnpm test` (`194/194`), `pnpm build` pass
+- Vercel preview: deployment `dpl_82KfB9KGLrpysFVRjGnr36qDHnHN` is `Ready`; authenticated home is `200`, while live API is intentionally `503 LIVE_BACKEND_REQUIRED`
 - External read-only check: Cloudflare auth and staging/production dry-runs pass; staging/production web Workers have deployment history
 - Identity decision: anonymous-first with optional signed member-link seam; external member login remains disabled
 - Deferred features: ads, rewards, Q&A, live streams, Seoul realtime, social feed, and demo data remain disabled
@@ -22,6 +23,7 @@ V2 로컬 구현은 `184/184` 테스트와 무경고 production build를 통과�
 
 - D1 migration chain, V2 TTL/decision/conflict rules, source registry activation policy, public-data adapters, trust-safety identity, account deletion, block/unblock, report votes, photo privacy/moderation, Capacitor bridge/navigation, and release guards pass in the full suite.
 - Next.js 16.2.6 production build compiles without warnings and generates all 21 routes.
+- Vercel project framework was corrected from `Other` to `Next.js`; the protected preview now serves the app shell instead of the previous 404 output.
 - `pnpm audit --audit-level critical` reports no known vulnerabilities after the Capacitor dependencies were added.
 - 390x844 local browser smoke passes all 31 required interactions; 206 network events store no request body and have no sensitive hits. Home and map evidence is under `artifacts/silsigan-v2-local-report-20260710`.
 - Public source credentials and stream URLs are not exposed; CCTV normalization drops playback URLs and treats metadata as static.
