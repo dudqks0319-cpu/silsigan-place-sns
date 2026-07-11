@@ -1,0 +1,30 @@
+{
+  "name": "@silsigan/webview-shell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "config:validate": "node --experimental-strip-types scripts/validate-config.ts",
+    "sync": "pnpm config:validate && cap sync",
+    "sync:staging": "SILSIGAN_WEBVIEW_ENV=staging pnpm sync",
+    "sync:production": "SILSIGAN_WEBVIEW_ENV=production pnpm sync",
+    "check": "node --check src/bridge.mjs && node --check src/navigation.mjs"
+  },
+  "dependencies": {
+    "@capacitor/app": "8.0.0",
+    "@capacitor/browser": "8.0.0",
+    "@capacitor/camera": "8.1.0",
+    "@capacitor/core": "8.4.0",
+    "@capacitor/geolocation": "8.1.0",
+    "@capacitor/keyboard": "8.0.0",
+    "@capacitor/network": "8.0.0",
+    "@capacitor/push-notifications": "8.0.0",
+    "@capacitor/share": "8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "8.4.0",
+    "@capacitor/cli": "8.4.0",
+    "@capacitor/ios": "8.4.0",
+    "typescript": "5.8.2"
+  }
+}

@@ -13,6 +13,11 @@ const D1_RELEASE_EVIDENCE_QUERY = [
   "SELECT 'questions_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'questions'",
   "SELECT 'post_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_posts_place_created', 'idx_posts_status_created')",
   "SELECT 'question_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_questions_place_created', 'idx_questions_anon_created')",
+  "SELECT 'v2_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('data_sources', 'dimension_settings', 'feature_flags', 'decision_profiles', 'live_signals', 'aggregated_place_status')",
+  "SELECT 'v2_flags=' || COUNT(*) FROM feature_flags WHERE scope_type = 'global' AND scope_key = '*'",
+  "SELECT 'v2_settings=' || COUNT(*) FROM dimension_settings",
+  "SELECT 'source_registry=' || COUNT(*) FROM data_sources",
+  "SELECT 'trust_safety_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_moderation_states', 'report_votes', 'user_blocks', 'consents', 'terms_acceptances', 'account_deletion_requests', 'identity_link_events')",
   "SELECT 'posts=' || COUNT(*) FROM posts",
   "SELECT 'questions=' || COUNT(*) FROM questions",
 ].join("; ");
@@ -192,15 +197,15 @@ export function classifyWorkerDeploymentResult(result, deployment) {
 
 export function classifyD1MigrationResult(result, envName) {
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  const name = `cloudflare.d1.${envName}.migration_0002`;
+  const name = `cloudflare.d1.${envName}.migration_0006`;
 
   if (result.exitCode !== 0) {
-    if (/no such table:\s*(posts|questions)|SQLITE_ERROR/i.test(output)) {
+    if (/no such table:\s*(posts|questions|data_sources|dimension_settings|feature_flags|live_signals|aggregated_place_status|photo_moderation_states|report_votes|user_blocks|consents|terms_acceptances|account_deletion_requests|identity_link_events)|SQLITE_ERROR/i.test(output)) {
       return {
         name,
         status: "fail",
-        code: "D1_0002_NOT_APPLIED",
-        message: `Remote ${envName} D1 is missing the posts/questions migration.`,
+        code: "D1_0006_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the V2 data-truth or trust-safety migrations.`,
       };
     }
 
@@ -219,13 +224,18 @@ export function classifyD1MigrationResult(result, envName) {
   if ((counters.questions_table ?? 0) < 1) missingSchema.push("questions");
   if ((counters.post_indexes ?? 0) < 2) missingSchema.push("posts indexes");
   if ((counters.question_indexes ?? 0) < 2) missingSchema.push("questions indexes");
+  if ((counters.v2_tables ?? 0) < 6) missingSchema.push("V2 data-truth tables");
+  if ((counters.v2_flags ?? 0) < 7) missingSchema.push("V2 feature flags");
+  if ((counters.v2_settings ?? 0) < 12) missingSchema.push("V2 dimension settings");
+  if ((counters.source_registry ?? 0) < 8) missingSchema.push("V2 source registry");
+  if ((counters.trust_safety_tables ?? 0) < 7) missingSchema.push("V2 trust-safety tables");
 
   if (missingSchema.length > 0) {
     return {
       name,
       status: "fail",
-      code: "D1_0002_NOT_APPLIED",
-      message: `Remote ${envName} D1 is missing ${missingSchema.join(", ")} from 0002_posts_questions.sql.`,
+      code: "D1_0006_NOT_APPLIED",
+      message: `Remote ${envName} D1 is missing ${missingSchema.join(", ")} from the V2 migration chain.`,
       missingSchema,
     };
   }
@@ -248,7 +258,7 @@ export function classifyD1MigrationResult(result, envName) {
   return {
     name,
     status: "pass",
-    message: `Remote ${envName} D1 has posts/questions schema and seed evidence.`,
+    message: `Remote ${envName} D1 has V2 data-truth schema and core seed evidence.`,
     counts: {
       posts: counters.posts,
       questions: counters.questions,
@@ -425,7 +435,7 @@ async function main() {
       }
 
       if (cloudflareAuthBlocked) {
-        checks.push(classifyAuthBlockedRemoteCheck(`cloudflare.d1.${database.envName}.migration_0002`, `Remote ${database.envName} D1 migration evidence check`));
+        checks.push(classifyAuthBlockedRemoteCheck(`cloudflare.d1.${database.envName}.migration_0006`, `Remote ${database.envName} D1 migration evidence check`));
         continue;
       }
 
@@ -679,7 +689,7 @@ function readWorkerNamesFromConfig(config, configPath, kind, targetEnvs) {
 
 function parseD1Counters(output) {
   const counters = {};
-  const matcher = /\b(posts_table|questions_table|post_indexes|question_indexes|posts|questions)=(\d+)\b/g;
+  const matcher = /\b(posts_table|questions_table|post_indexes|question_indexes|v2_tables|v2_flags|v2_settings|source_registry|trust_safety_tables|posts|questions)=(\d+)\b/g;
   let match = matcher.exec(output);
   while (match) {
     counters[match[1]] = Number(match[2]);

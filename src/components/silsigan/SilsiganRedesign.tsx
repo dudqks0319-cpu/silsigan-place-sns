@@ -41,10 +41,11 @@ import type { LucideIcon } from "lucide-react";
 import { type CSSProperties, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cloudflareApiUrl, fetchJson, isCloudflareApiConfigured } from "@/lib/api-client";
 import { buildScopedApiPath, normalizeRegionScope } from "@/lib/api-scope";
-import type { CloudflareRealtimeEvent, CloudflareRealtimeRoom } from "@/lib/cloudflare-api";
+import type { CloudflarePlaceStatus, CloudflareRealtimeEvent, CloudflareRealtimeRoom, CloudflareRuntimeConfig } from "@/lib/cloudflare-api";
 import { workerPlacesToAppPlaces, type WorkerPlace } from "@/lib/cloudflare-place-adapter";
 import { trackEvent } from "@/lib/analytics";
-import { calculateTrustScore, rankPostsForFeed, recommendHashtags } from "@/lib/domain";
+import { calculateTrustScore, rankPostsForFeed } from "@/lib/domain";
+import { isRuntimeDataModeAllowed, shouldClearTruthBearingDataOnLoadFailure } from "@/lib/runtime-data-mode";
 import type {
   CrowdLevel,
   FieldQuest,
@@ -69,11 +70,20 @@ import { PhotoUploader, type PlacePhoto, type PreparedPhotoUpload } from "./Phot
 import { RankingPanel } from "./RankingPanel";
 import { RegionTabs, type RegionTabId } from "./RegionTabs";
 import styles from "./SilsiganRedesign.module.css";
+import { DEFAULT_FEATURE_FLAGS, type FeatureFlagKey } from "../../../packages/contracts/src/index.ts";
 
 type View = "home" | "search" | "upload" | "map" | "place" | "ask" | "my";
 type StatusTone = "calm" | "normal" | "busy" | "danger";
 type Category = ReportCategory;
-type DataMode = "live" | "sample";
+type DataMode = "live" | "sample" | "unavailable";
+type PublicDataSource = {
+  sourceKey: string;
+  sourceName: string;
+  sourceType: string;
+  enabled: boolean;
+  healthStatus: "healthy" | "degraded" | "down" | "unknown";
+  activationStatus: string;
+};
 type ApiPlaceInput = ApiPlace & {
   rankingScore?: number;
 };
@@ -104,6 +114,7 @@ type Place = {
   y: number;
   tone: StatusTone;
   visitors: string;
+  isSample: boolean;
 };
 
 type Report = {
@@ -116,12 +127,15 @@ type Report = {
   verified: boolean;
   hasPhoto: boolean;
   photoUrl?: string | null;
+  photoAttribution?: string | null;
+  photoSourceUrl?: string | null;
+  isSample?: boolean;
   createdAt: string;
   hiddenAt: string | null;
-  crowdLevel: CrowdLevel;
-  lineStatus: LineStatus;
-  parkingStatus: ParkingStatus;
-  weatherFeel: WeatherFeel;
+  crowdLevel?: CrowdLevel;
+  lineStatus?: LineStatus;
+  parkingStatus?: ParkingStatus;
+  weatherFeel?: WeatherFeel;
 };
 
 type Question = {
@@ -138,12 +152,17 @@ type PublicReport = {
   id: string;
   placeId: string;
   category: ReportCategory;
-  crowdLevel: CrowdLevel;
-  lineStatus: LineStatus;
-  parkingStatus: ParkingStatus;
+  crowdLevel?: CrowdLevel;
+  lineStatus?: LineStatus;
+  parkingStatus?: ParkingStatus;
   weatherFeel?: WeatherFeel;
+  localConditions?: string[];
+  observations?: Array<{ dimension: string; valueCode: string; expiresAt: string }>;
   comment?: string | null;
   photoUrl?: string | null;
+  photoAttribution?: string | null;
+  photoSourceUrl?: string | null;
+  isSample?: boolean;
   verifiedRadiusM: 50 | 150 | 300 | null;
   locationVerified?: boolean;
   createdAt: string;
@@ -190,6 +209,7 @@ type PublicPost = {
   photoCount: number;
   photoLabel: string;
   previewUrl?: string | null;
+  isSample?: boolean;
   helpfulCount: number;
   commentCount: number;
   hashtagNames: string[];
@@ -201,10 +221,12 @@ type PublicPost = {
   createdAt: string;
 };
 
-type PostSubmitResult = {
-  post: PublicPost;
+type FieldReportSubmitResult = {
+  report: PublicReport & {
+    localConditions: string[];
+    observations: Array<{ dimension: string; valueCode: string; expiresAt: string }>;
+  };
   credits: { amount: number }[];
-  recommendedHashtags?: string[];
   safetyWarning?: string | null;
   privacyNotice?: string;
 };
@@ -265,9 +287,16 @@ type WorkerComment = {
   body: string;
   likeCount: number;
   createdAt: string;
+  ownedByCurrentSession: boolean;
 };
 
-type MyMenuTarget = "reports" | "questions" | "saved" | "hashtags" | "badges" | "safety";
+type UserBlock = {
+  id: string;
+  createdAt: string;
+  label: string;
+};
+
+type MyMenuTarget = "reports" | "questions" | "saved" | "hashtags" | "badges" | "safety" | "account";
 type FeedTab = (typeof feedTabLabels)[number];
 
 type PlaceLikeResult = {
@@ -331,7 +360,7 @@ type QuickReportPreset = {
     pickedCrowd: string;
     pickedParking: string;
     pickedLine: string;
-    pickedWeather: string;
+    pickedLocalConditions: string[];
     photoAttached: boolean;
     reportText: string;
   }>;
@@ -356,41 +385,41 @@ const navItems: Array<{ id: View; label: string; icon: LucideIcon }> = [
 
 const filterLabels = ["전체", "사람 많음", "주차 만차", "줄 있음", "사진/상태 있음"];
 const feedTabLabels = ["전체", "내 주변", "관광지", "주차"] as const;
-const reportChips = ["사람 없음", "보통", "많음", "매우 많음"];
-const parkingChips = ["널널", "여유 있음", "거의 없음", "만차"];
-const lineChips = ["없음", "보통", "있음", "매우 김"];
-const weatherChips = ["맑음", "흐림", "비", "실내"];
+const reportChips = ["여유", "보통", "혼잡", "매우 혼잡", "확인하지 못함"];
+const parkingChips = ["여유", "일부 남음", "거의 만차", "만차", "폐쇄", "확인하지 못함"];
+const lineChips = ["없음", "10분 이하", "10~30분", "30~60분", "60분 이상", "확인하지 못함"];
+const localConditionChips = ["비", "눈", "강풍", "노면 미끄러움", "입장 제한", "행사 진행", "임시 휴무로 보임", "확인하지 못함"];
 const questionExamples = ["주차 자리 있나요?", "줄 많이 긴가요?", "사진으로 볼 수 있나요?", "아이랑 가도 괜찮나요?"];
 const quickReportPresets: QuickReportPreset[] = [
   {
     id: "parking-full",
     label: "주차 만차",
     description: "주차장이 거의 만차예요.",
-    patch: { pickedParking: "만차", reportText: "주차장이 거의 만차예요.", photoAttached: false },
+    patch: { pickedParking: "만차", reportText: "주차장이 만차예요.", photoAttached: false },
   },
   {
     id: "line-long",
     label: "줄 길어요",
     description: "대기줄이 꽤 길어요.",
-    patch: { pickedLine: "매우 김", reportText: "대기줄이 꽤 길어요.", photoAttached: false },
+    patch: { pickedLine: "30~60분", reportText: "대기줄이 꽤 길어요.", photoAttached: false },
   },
   {
     id: "quiet",
     label: "한산해요",
     description: "지금은 가기 좋아요.",
-    patch: { pickedCrowd: "사람 없음", pickedParking: "여유 있음", pickedLine: "없음", reportText: "지금은 한산해서 가기 좋아요.", photoAttached: false },
+    patch: { pickedCrowd: "여유", reportText: "지금은 사람이 많지 않아요.", photoAttached: false },
   },
   {
     id: "crowd-busy",
     label: "사람 많아요",
     description: "현장이 꽤 붐벼요.",
-    patch: { pickedCrowd: "많음", reportText: "지금 사람이 많아서 출발 전 확인이 필요해요.", photoAttached: false },
+    patch: { pickedCrowd: "혼잡", reportText: "지금 사람이 많아서 출발 전 확인이 필요해요.", photoAttached: false },
   },
     {
       id: "photo-spot",
       label: "사진스팟 상태",
       description: "사진 찍기 좋은 상태예요.",
-      patch: { pickedCrowd: "보통", pickedWeather: "맑음", reportText: "사진 찍기 좋은 상태예요.", photoAttached: false },
+      patch: { pickedCrowd: "보통", reportText: "사진으로 확인한 현재 상태예요.", photoAttached: false },
     },
 ];
 const postFlagReasonOptions: Array<{ id: FlagReason; label: string; body: string }> = [
@@ -479,259 +508,6 @@ const fieldQuests: FieldQuest[] = [
   },
 ];
 
-type LiveDataset = {
-  apiPlaces: ApiPlaceInput[];
-  apiReports: PublicReport[];
-  apiPosts: PublicPost[];
-  apiHashtags: PublicHashtag[];
-  apiQuestions: PublicQuestion[];
-  apiMyQuestions: MyQuestion[];
-};
-
-function createInitialFallbackDataset(): LiveDataset {
-  const now = Date.now();
-  const timestamp = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
-  const expiresAt = new Date(now + 3 * 60 * 60_000).toISOString();
-  const apiPlaces: ApiPlaceInput[] = [
-    {
-      id: "busan-gwangalli",
-      name: "광안리해수욕장",
-      address: "부산 수영구 광안해변로",
-      category: "tourism",
-      latitude: 35.1532,
-      longitude: 129.1186,
-      region: "busan",
-      regionId: "busan",
-      launchStage: "beta",
-      rankingScore: 92,
-    },
-    {
-      id: "gyeongju-hwangridan",
-      name: "황리단길",
-      address: "경북 경주시 포석로",
-      category: "restaurant_cafe",
-      latitude: 35.8381,
-      longitude: 129.2107,
-      region: "gyeongju",
-      regionId: "gyeongju",
-      launchStage: "beta",
-      rankingScore: 84,
-    },
-    {
-      id: "ulsan-taehwagang",
-      name: "태화강 국가정원",
-      address: "울산 중구 태화강국가정원길",
-      category: "tourism",
-      latitude: 35.5481,
-      longitude: 129.2985,
-      region: "ulsan",
-      regionId: "ulsan",
-      launchStage: "beta",
-      rankingScore: 78,
-    },
-    {
-      id: "ulsan-city-hall",
-      name: "울산광역시청",
-      address: "울산 남구 중앙로",
-      category: "public_office",
-      latitude: 35.5384,
-      longitude: 129.3114,
-      region: "ulsan",
-      regionId: "ulsan",
-      launchStage: "seed",
-      rankingScore: 51,
-    },
-  ];
-  const apiHashtags: PublicHashtag[] = [
-    { id: "hashtag_주차만차", name: "주차만차", tagType: "status", postCount: 12, createdAt: timestamp(12) },
-    { id: "hashtag_노을좋음", name: "노을좋음", tagType: "time", postCount: 10, createdAt: timestamp(18) },
-    { id: "hashtag_웨이팅", name: "웨이팅", tagType: "status", postCount: 8, createdAt: timestamp(24) },
-    { id: "hashtag_사진스팟", name: "사진스팟", tagType: "purpose", postCount: 7, createdAt: timestamp(31) },
-    { id: "hashtag_한산함", name: "한산함", tagType: "status", postCount: 5, createdAt: timestamp(35) },
-  ];
-  const hashtag = (name: string) => apiHashtags.find((tag) => tag.name === name) ?? apiHashtags[0];
-  const apiReports: PublicReport[] = [
-    {
-      id: "fallback_report_gwangalli",
-      placeId: "busan-gwangalli",
-      category: "tourism",
-      crowdLevel: "packed",
-      lineStatus: "medium",
-      parkingStatus: "full",
-      weatherFeel: "good",
-      comment: "공영주차장 입구부터 막혀요. 민락 쪽이 그나마 나아요.",
-      photoUrl: "/silsigan/fallback/gwangalli.png",
-      verifiedRadiusM: 150,
-      locationVerified: true,
-      createdAt: timestamp(12),
-      expiresAt,
-      flagCount: 0,
-      hiddenAt: null,
-    },
-    {
-      id: "fallback_report_hwangridan",
-      placeId: "gyeongju-hwangridan",
-      category: "restaurant_cafe",
-      crowdLevel: "busy",
-      lineStatus: "long",
-      parkingStatus: "limited",
-      weatherFeel: "good",
-      comment: "메인 골목 카페 줄이 길어요. 사진 찍기는 괜찮습니다.",
-      photoUrl: "/silsigan/fallback/hwangridan.png",
-      verifiedRadiusM: 150,
-      locationVerified: true,
-      createdAt: timestamp(28),
-      expiresAt,
-      flagCount: 0,
-      hiddenAt: null,
-    },
-    {
-      id: "fallback_report_taehwagang",
-      placeId: "ulsan-taehwagang",
-      category: "tourism",
-      crowdLevel: "normal",
-      lineStatus: "none",
-      parkingStatus: "available",
-      weatherFeel: "good",
-      comment: "산책로는 여유 있고 노을 보기 좋아요.",
-      photoUrl: "/silsigan/fallback/taehwagang.png",
-      verifiedRadiusM: 300,
-      locationVerified: true,
-      createdAt: timestamp(37),
-      expiresAt,
-      flagCount: 0,
-      hiddenAt: null,
-    },
-  ];
-  const apiPosts: PublicPost[] = [
-    {
-      id: "fallback_post_gwangalli",
-      userId: "fallback-user",
-      creatorName: "부산 현장러",
-      creatorBadge: "광안리 주차 도우미",
-      placeId: "busan-gwangalli",
-      caption: "공영주차장 입구부터 막혀요. 민락 쪽이 그나마 나아요.",
-      crowdLevel: "packed",
-      parkingStatus: "full",
-      lineStatus: "medium",
-      weatherFeel: "good",
-      locationVerified: true,
-      verifiedRadiusM: 150,
-      photoCount: 1,
-      photoLabel: "광안리 방금 사진",
-      previewUrl: "/silsigan/fallback/gwangalli.png",
-      helpfulCount: 24,
-      commentCount: 6,
-      hashtagNames: ["주차만차", "노을좋음", "사람많음"],
-      hashtags: [hashtag("주차만차"), hashtag("노을좋음")],
-      shareCard: {
-        headline: "광안리 주차 만차래요",
-        body: "방금 올라온 사진 기준, 공영주차장 입구부터 막힙니다.",
-        url: "/share/post/fallback_post_gwangalli",
-        hashtags: ["주차만차", "노을좋음"],
-        variant: "parking_full",
-      },
-      judgement: "지금은 비추",
-      safetyWarning: null,
-      hiddenAt: null,
-      createdAt: timestamp(12),
-    },
-    {
-      id: "fallback_post_hwangridan",
-      userId: "fallback-user",
-      creatorName: "경주 골목러",
-      creatorBadge: "웨이팅 답변왕",
-      placeId: "gyeongju-hwangridan",
-      caption: "메인 골목 카페 줄이 길어요. 사진 찍기는 괜찮습니다.",
-      crowdLevel: "busy",
-      parkingStatus: "limited",
-      lineStatus: "long",
-      weatherFeel: "good",
-      locationVerified: true,
-      verifiedRadiusM: 150,
-      photoCount: 1,
-      photoLabel: "황리단길 현장 사진",
-      previewUrl: "/silsigan/fallback/hwangridan.png",
-      helpfulCount: 18,
-      commentCount: 4,
-      hashtagNames: ["웨이팅", "사진스팟"],
-      hashtags: [hashtag("웨이팅"), hashtag("사진스팟")],
-      shareCard: {
-        headline: "황리단길 웨이팅 많음",
-        body: "메인 골목 카페 줄이 길고, 사진스팟은 아직 괜찮아요.",
-        url: "/share/post/fallback_post_hwangridan",
-        hashtags: ["웨이팅", "사진스팟"],
-        variant: "waiting",
-      },
-      judgement: "주의",
-      safetyWarning: null,
-      hiddenAt: null,
-      createdAt: timestamp(28),
-    },
-    {
-      id: "fallback_post_taehwagang",
-      userId: "fallback-user",
-      creatorName: "울산 산책러",
-      creatorBadge: "태화강 제보왕",
-      placeId: "ulsan-taehwagang",
-      caption: "산책로는 여유 있고 노을 보기 좋아요.",
-      crowdLevel: "normal",
-      parkingStatus: "available",
-      lineStatus: "none",
-      weatherFeel: "good",
-      locationVerified: true,
-      verifiedRadiusM: 300,
-      photoCount: 1,
-      photoLabel: "태화강 노을 사진",
-      previewUrl: "/silsigan/fallback/taehwagang.png",
-      helpfulCount: 15,
-      commentCount: 3,
-      hashtagNames: ["한산함", "사진스팟"],
-      hashtags: [hashtag("한산함"), hashtag("사진스팟")],
-      shareCard: {
-        headline: "태화강 지금 한산함",
-        body: "산책로가 여유 있고 노을 보기 좋은 상태입니다.",
-        url: "/share/post/fallback_post_taehwagang",
-        hashtags: ["한산함", "사진스팟"],
-        variant: "good",
-      },
-      judgement: "가도 좋음",
-      safetyWarning: null,
-      hiddenAt: null,
-      createdAt: timestamp(37),
-    },
-  ];
-  const apiQuestions: PublicQuestion[] = [
-    {
-      id: "fallback_question_gwangalli",
-      placeId: "busan-gwangalli",
-      questionType: "parking",
-      body: "지금 광안리 공영주차장 자리 있나요?",
-      creditCost: 1,
-      answeredReportId: null,
-      createdAt: timestamp(9),
-    },
-    {
-      id: "fallback_question_taehwagang",
-      placeId: "ulsan-taehwagang",
-      questionType: "photo_request",
-      body: "태화강 노을 사진으로 볼 수 있나요?",
-      creditCost: 2,
-      answeredReportId: null,
-      createdAt: timestamp(17),
-    },
-  ];
-
-  return {
-    apiPlaces,
-    apiReports,
-    apiPosts,
-    apiHashtags,
-    apiQuestions,
-    apiMyQuestions: [],
-  };
-}
-
 async function fetchJsonWithTimeout<T>(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = initialDataFetchTimeoutMs): Promise<T> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -770,6 +546,7 @@ export default function SilsiganRedesign() {
   const [allPosts, setAllPosts] = useState<PublicPost[]>([]);
   const [workerPhotos, setWorkerPhotos] = useState<WorkerPhoto[]>([]);
   const [workerCommentsByPlaceId, setWorkerCommentsByPlaceId] = useState<Record<string, PlaceComment[]>>({});
+  const [userBlocks, setUserBlocks] = useState<UserBlock[]>([]);
   const [hashtags, setHashtags] = useState<PublicHashtag[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [myQuestions, setMyQuestions] = useState<MyQuestion[]>([]);
@@ -777,13 +554,13 @@ export default function SilsiganRedesign() {
   const [activeFilter, setActiveFilter] = useState(filterLabels[0]);
   const [reportText, setReportText] = useState("");
   const [questionText, setQuestionText] = useState("");
-  const [toast, setToast] = useState("출발 전, 방금 올라온 사진으로 지금 분위기를 확인하세요.");
+  const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pickedCrowd, setPickedCrowd] = useState("많음");
-  const [pickedParking, setPickedParking] = useState("거의 없음");
-  const [pickedLine, setPickedLine] = useState("있음");
-  const [pickedWeather, setPickedWeather] = useState("맑음");
+  const [pickedCrowd, setPickedCrowd] = useState("");
+  const [pickedParking, setPickedParking] = useState("");
+  const [pickedLine, setPickedLine] = useState("");
+  const [pickedLocalConditions, setPickedLocalConditions] = useState<Set<string>>(() => new Set());
   const [photoAttached, setPhotoAttached] = useState(false);
   const [locationVerificationStatus, setLocationVerificationStatus] = useState<LocationVerificationStatus>("idle");
   const [verifiedLocation, setVerifiedLocation] = useState<ClientLocation | null>(null);
@@ -811,8 +588,21 @@ export default function SilsiganRedesign() {
   const [mapCurrentLocation, setMapCurrentLocation] = useState<UiLocation | null>(null);
   const [likedPlaceIds, setLikedPlaceIds] = useState<Set<string>>(() => new Set());
   const [liveConnection, setLiveConnection] = useState<"connecting" | "live" | "polling">("polling");
+
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => setToast(""), 3_500);
+    return () => window.clearTimeout(timeoutId);
+  }, [toast]);
   const [realtimeEventsByPlaceId, setRealtimeEventsByPlaceId] = useState<Record<string, CloudflareRealtimeEvent[]>>({});
-  const [dataMode, setDataMode] = useState<DataMode>("live");
+  const [dataMode, setDataMode] = useState<DataMode>("unavailable");
+  const [featureFlags, setFeatureFlags] = useState<Record<FeatureFlagKey, boolean>>({ ...DEFAULT_FEATURE_FLAGS });
+  const [placeStatuses, setPlaceStatuses] = useState<Record<string, CloudflarePlaceStatus>>({});
+  const [publicDataSources, setPublicDataSources] = useState<PublicDataSource[]>([]);
+  const [placeStatusLoading, setPlaceStatusLoading] = useState(false);
   const cloudflareApiConfigured = useMemo(() => isCloudflareApiConfigured(), []);
   const activeDataRegionId = useMemo(() => normalizeRegionScope(activeRegion), [activeRegion]);
   const mapBoundsKey = mapBounds ? mapBoundsToBboxParam(mapBounds) : "";
@@ -848,6 +638,7 @@ export default function SilsiganRedesign() {
     () => places.find((place) => place.id === selectedPlaceId) ?? places[0] ?? null,
     [places, selectedPlaceId],
   );
+  const selectedPlaceStatus = selectedPlace ? placeStatuses[selectedPlace.id] ?? null : null;
 
   const mapPreviewPlace = useMemo(
     () => places.find((place) => place.id === mapPreviewPlaceId) ?? null,
@@ -866,8 +657,8 @@ export default function SilsiganRedesign() {
   );
 
   const userReputation = useMemo<UserReputation>(() => {
-    const verifiedReports = allRankedPosts.filter((post) => post.locationVerified).length;
-    const helpfulReceived = allRankedPosts.reduce((sum, post) => sum + post.helpfulCount, 0);
+    const verifiedReports = 0;
+    const helpfulReceived = 0;
     const trustScore = calculateTrustScore({
       verifiedReports,
       helpfulReceived,
@@ -883,32 +674,62 @@ export default function SilsiganRedesign() {
       falseReportCount: 0,
       privacyViolationCount: 0,
     };
-  }, [allRankedPosts]);
+  }, []);
 
   const recommendedTags = useMemo(() => {
     if (!selectedPlace) {
       return [];
     }
 
-    const baseTags = recommendHashtags({
-      place: selectedPlace,
-      crowdLevel: crowdValueFromLabel(pickedCrowd),
-      parkingStatus: parkingValueFromLabel(pickedParking),
-      lineStatus: lineValueFromLabel(pickedLine),
-      weatherFeel: weatherValueFromLabel(pickedWeather),
-    });
+    const baseTags = [`${selectedPlace.name}지금`, "지금"];
     const challengeTag = selectedHashtagName && challenges.some((challenge) => challenge.hashtagName === selectedHashtagName)
       ? selectedHashtagName
       : null;
 
     return challengeTag ? [challengeTag, ...baseTags.filter((tag) => tag !== challengeTag)].slice(0, 5) : baseTags;
-  }, [pickedCrowd, pickedLine, pickedParking, pickedWeather, selectedHashtagName, selectedPlace]);
+  }, [selectedHashtagName, selectedPlace]);
 
   const loadData = useCallback(async (options: { silent?: boolean; bounds?: MapBounds | null; query?: string | null } = {}) => {
     if (!options.silent) {
       setLoading(true);
     }
+    const clearTruthBearingData = () => {
+      setPlaces([]);
+      setReports([]);
+      setPosts([]);
+      setAllPosts([]);
+      setWorkerPhotos([]);
+      setWorkerCommentsByPlaceId({});
+      setUserBlocks([]);
+      setPlaceStatuses({});
+      setPublicDataSources([]);
+      setHashtags([]);
+      setQuestions([]);
+      setMyQuestions([]);
+      setSelectedPlaceId("");
+      setFeatureFlags({ ...DEFAULT_FEATURE_FLAGS });
+      hasLoadedLiveDataRef.current = false;
+    };
     try {
+      if (!cloudflareApiConfigured && process.env.NODE_ENV === "production") {
+        throw new Error("실시간 API가 설정되지 않아 운영 데이터를 표시할 수 없습니다.");
+      }
+      const runtimeConfig: CloudflareRuntimeConfig = cloudflareApiConfigured
+        ? await fetchJsonWithTimeout<CloudflareRuntimeConfig>(
+            cloudflareApiUrl(activeDataRegionId ? `/api/config?regionCode=${encodeURIComponent(activeDataRegionId)}` : "/api/config"),
+          )
+        : {
+            contractVersion: 2,
+            dataMode: "demo",
+            featureFlags: { ...DEFAULT_FEATURE_FLAGS },
+            dimensionSettings: [],
+          };
+      if (!isRuntimeDataModeAllowed(process.env.NODE_ENV, runtimeConfig.dataMode)) {
+        clearTruthBearingData();
+        setDataMode("unavailable");
+        throw new Error("운영 환경에서는 확인된 실시간 데이터만 표시할 수 있습니다.");
+      }
+      setFeatureFlags(runtimeConfig.featureFlags);
       const listScope = { regionId: activeDataRegionId, limit: 100 };
       const placesScope = {
         ...listScope,
@@ -927,59 +748,66 @@ export default function SilsiganRedesign() {
       const hashtagsRequest = cloudflareApiConfigured
         ? fetchJsonWithTimeout<PublicHashtag[]>(cloudflareApiUrl("/api/hashtags"))
         : fetchJsonWithTimeout<PublicHashtag[]>("/api/hashtags");
-      const questionsRequest = cloudflareApiConfigured
-        ? fetchJsonWithTimeout<PublicQuestion[]>(cloudflareApiUrl(buildScopedApiPath("/api/questions", listScope)))
-        : fetchJsonWithTimeout<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope));
-      const myQuestionsRequest = cloudflareApiConfigured
-        ? fetchJsonWithTimeout<MyQuestion[]>(cloudflareApiUrl("/api/my-questions")).catch(() => [])
-        : fetchJsonWithTimeout<MyQuestion[]>("/api/my-questions").catch(() => []);
-      const [apiPlaces, apiReports, apiPosts, apiHashtags, apiQuestions, apiMyQuestions] = await Promise.all([
+      const questionsRequest = runtimeConfig.featureFlags.QNA_ENABLED
+        ? cloudflareApiConfigured
+          ? fetchJsonWithTimeout<PublicQuestion[]>(cloudflareApiUrl(buildScopedApiPath("/api/questions", listScope)))
+          : fetchJsonWithTimeout<PublicQuestion[]>(buildScopedApiPath("/api/questions", listScope))
+        : Promise.resolve<PublicQuestion[]>([]);
+      const myQuestionsRequest = runtimeConfig.featureFlags.QNA_ENABLED
+        ? cloudflareApiConfigured
+          ? fetchJsonWithTimeout<MyQuestion[]>(cloudflareApiUrl("/api/my-questions")).catch(() => [])
+          : fetchJsonWithTimeout<MyQuestion[]>("/api/my-questions").catch(() => [])
+        : Promise.resolve<MyQuestion[]>([]);
+      const publicDataSourcesRequest = cloudflareApiConfigured
+        ? fetchJsonWithTimeout<PublicDataSource[]>(cloudflareApiUrl("/api/sources")).catch(() => [])
+        : Promise.resolve<PublicDataSource[]>([]);
+      const [apiPlaces, apiReports, apiPosts, apiHashtags, apiQuestions, apiMyQuestions, apiPublicDataSources] = await Promise.all([
         placesRequest,
         reportsRequest,
         postsRequest,
         hashtagsRequest,
         questionsRequest,
         myQuestionsRequest,
+        publicDataSourcesRequest,
       ]);
       const mappedReports = mapReports(apiReports, apiPlaces);
       const mappedQuestions = mapQuestions(apiQuestions);
       const mappedPlaces = mapPlaces(apiPlaces, mappedReports, mappedQuestions);
       const scopedPlaceIds = mappedPlaces.map((place) => place.id);
-      const apiWorkerPhotos = cloudflareApiConfigured ? await fetchWorkerPhotosForPlaces(scopedPlaceIds) : [];
+      const [apiWorkerPhotos, apiWorkerComments, apiUserBlocks, apiPlaceStatuses] = cloudflareApiConfigured
+        ? await Promise.all([
+            fetchWorkerPhotosForPlaces(scopedPlaceIds),
+            fetchWorkerCommentsForPlaces(scopedPlaceIds),
+            fetchJsonWithTimeout<UserBlock[]>(cloudflareApiUrl("/api/blocks")).catch(() => []),
+            fetchWorkerStatusesForPlaces(scopedPlaceIds),
+          ])
+        : [[], {}, [], {}] as [WorkerPhoto[], Record<string, PlaceComment[]>, UserBlock[], Record<string, CloudflarePlaceStatus>];
 
       setPlaces(mappedPlaces);
       setReports(mappedReports);
       setPosts(apiPosts);
       setAllPosts(apiPosts);
       setWorkerPhotos((current) => mergeWorkerPhotos(apiWorkerPhotos, filterWorkerPhotosByPlaceIds(current, scopedPlaceIds)).slice(0, 80));
+      setWorkerCommentsByPlaceId(apiWorkerComments);
+      setUserBlocks(apiUserBlocks);
+      setPlaceStatuses((current) => ({ ...current, ...apiPlaceStatuses }));
+      setPublicDataSources(apiPublicDataSources);
       setHashtags(apiHashtags);
       setQuestions(mappedQuestions);
       setMyQuestions(apiMyQuestions);
       setSelectedPlaceId((current) => mappedPlaces.find((place) => place.id === current)?.id ?? mappedPlaces[0]?.id ?? "");
       hasLoadedLiveDataRef.current = true;
-      setDataMode("live");
+      setDataMode(runtimeConfig.dataMode === "live" ? "live" : "sample");
     } catch (error) {
+      if (shouldClearTruthBearingDataOnLoadFailure(process.env.NODE_ENV)) {
+        clearTruthBearingData();
+        setDataMode("unavailable");
+      } else if (!options.silent && !hasLoadedLiveDataRef.current) {
+        clearTruthBearingData();
+        setDataMode("unavailable");
+      }
+
       if (!options.silent) {
-        if (!hasLoadedLiveDataRef.current) {
-          const fallback = createInitialFallbackDataset();
-          const mappedReports = mapReports(fallback.apiReports, fallback.apiPlaces);
-          const mappedQuestions = mapQuestions(fallback.apiQuestions);
-          const mappedPlaces = mapPlaces(fallback.apiPlaces, mappedReports, mappedQuestions);
-
-          setPlaces(mappedPlaces);
-          setReports(mappedReports);
-          setPosts(fallback.apiPosts);
-          setAllPosts(fallback.apiPosts);
-          setWorkerPhotos([]);
-          setHashtags(fallback.apiHashtags);
-          setQuestions(mappedQuestions);
-          setMyQuestions(fallback.apiMyQuestions);
-          setSelectedPlaceId((current) => mappedPlaces.find((place) => place.id === current)?.id ?? mappedPlaces[0]?.id ?? "");
-          setDataMode("sample");
-          setToast("실시간 API 응답이 늦어 샘플 미리보기로 전환했습니다. 실제 데이터가 연결되면 자동으로 바뀝니다.");
-          return;
-        }
-
         setToast(error instanceof Error ? error.message : "실시간 데이터를 불러오지 못했습니다.");
       }
     } finally {
@@ -1002,6 +830,44 @@ export default function SilsiganRedesign() {
 
     return () => window.clearTimeout(timer);
   }, [loadData]);
+
+  useEffect(() => {
+    if (!cloudflareApiConfigured || activeView !== "place" || !selectedPlace) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    const timer = window.setTimeout(() => {
+      if (!active) return;
+      setPlaceStatusLoading(true);
+      void fetchJsonWithTimeout<CloudflarePlaceStatus>(
+        cloudflareApiUrl(`/api/places/${encodeURIComponent(selectedPlace.id)}/status`),
+        { signal: controller.signal },
+      )
+        .then((status) => {
+          if (!active) return;
+          setPlaceStatuses((current) => ({ ...current, [selectedPlace.id]: status }));
+        })
+        .catch(() => {
+          if (!active) return;
+          setPlaceStatuses((current) => {
+            const next = { ...current };
+            delete next[selectedPlace.id];
+            return next;
+          });
+        })
+        .finally(() => {
+          if (active) setPlaceStatusLoading(false);
+        });
+    }, 0);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeView, cloudflareApiConfigured, selectedPlace]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1294,6 +1160,33 @@ export default function SilsiganRedesign() {
     });
   };
 
+  const blockCommentCreator = async (place: Place, comment: PlaceComment) => {
+    if (!comment.workerCommentId || comment.ownedByCurrentSession) {
+      return;
+    }
+    if (!cloudflareApiConfigured) {
+      setToast("샘플 미리보기에서는 사용자 차단이 저장되지 않습니다.");
+      return;
+    }
+
+    try {
+      const block = await fetchJson<UserBlock>(cloudflareApiUrl("/api/blocks"), {
+        method: "POST",
+        body: JSON.stringify({ targetType: "comment", targetId: comment.workerCommentId }),
+      });
+      setUserBlocks((current) => current.some((item) => item.id === block.id) ? current : [block, ...current]);
+      setWorkerCommentsByPlaceId((current) => ({
+        ...current,
+        [place.id]: (current[place.id] ?? []).filter((item) => item.workerCommentId !== comment.workerCommentId),
+      }));
+      trackEvent("user_blocked", { targetType: "comment", targetId: comment.workerCommentId });
+      setToast("작성자를 차단했습니다. 이 작성자의 댓글과 게시물이 내 화면에서 숨겨집니다.");
+      await loadData({ silent: true });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "사용자 차단에 실패했습니다.");
+    }
+  };
+
   const openPhotoReport = (place: Place, photo: PlacePhoto) => {
     if (!photo.workerPhotoId) {
       return;
@@ -1385,36 +1278,50 @@ export default function SilsiganRedesign() {
       return;
     }
 
+    const crowdLevel = crowdValueFromLabel(pickedCrowd);
+    const queueStatus = queueValueFromLabel(pickedLine);
+    const parkingObservation = parkingObservationFromLabel(pickedParking);
+    const localConditions = [...pickedLocalConditions]
+      .map(localConditionValueFromLabel)
+      .filter((condition): condition is string => Boolean(condition));
+    if (!crowdLevel && !queueStatus && !parkingObservation && localConditions.length === 0) {
+      setToast("실제로 확인한 현장 상태를 하나 이상 선택해 주세요.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const payload = {
         placeId: selectedPlace.id,
-        crowdLevel: crowdValueFromLabel(pickedCrowd),
-        lineStatus: lineValueFromLabel(pickedLine),
-        parkingStatus: parkingValueFromLabel(pickedParking),
-        weatherFeel: weatherValueFromLabel(pickedWeather),
-        caption: reportText.trim() || undefined,
-        photoCount: photoAttached ? 1 : 0,
-        hashtagNames: recommendedTags,
+        category: selectedPlace.category,
+        ...(crowdLevel ? { crowdLevel } : {}),
+        ...(queueStatus ? { queueStatus } : {}),
+        ...(parkingObservation ? { parkingObservation } : {}),
+        ...(localConditions.length ? { localConditions } : {}),
+        comment: reportText.trim() || undefined,
         ...(verifiedLocation ? { clientLocation: verifiedLocation } : {}),
       };
 
-      const result = await fetchJson<PostSubmitResult>(cloudflareApiConfigured ? cloudflareApiUrl("/api/posts") : "/api/posts", {
+      const result = await fetchJson<FieldReportSubmitResult>(cloudflareApiConfigured ? cloudflareApiUrl("/api/reports") : "/api/reports", {
         method: "POST",
         body: JSON.stringify(payload),
       });
       const earned = result.credits.reduce((sum, event) => sum + Math.max(event.amount, 0), 0);
-      const badge = result.post.locationVerified ? "현장 인증" : result.post.photoCount > 0 ? "지금컷" : "상태 제보";
-      const photoNotice = result.post.photoCount > 0 ? "사진과 상태가 함께 등록됐습니다." : "상태가 먼저 등록됐습니다.";
+      const badge = result.report.verifiedRadiusM ? "현장 인증" : "상태 제보";
       const safetyNotice = result.safetyWarning ? ` · ${result.safetyWarning}` : "";
-      trackEvent("submit_post", {
+      const rewardNotice = featureFlags.REWARDS_ENABLED && earned > 0 ? ` · 질문권 +${earned}` : "";
+      trackEvent("submit_report", {
         placeId: selectedPlace.id,
-        locationVerified: result.post.locationVerified,
-        photoCount: result.post.photoCount,
+        locationVerified: Boolean(result.report.verifiedRadiusM),
+        signalCount: result.report.observations.length,
       });
-      setToast(`${badge} 완료! ${photoNotice} 질문권 +${earned}${safetyNotice}`);
+      setToast(`${badge} 완료. 확인한 상태 ${result.report.observations.length}개가 등록됐습니다${rewardNotice}${safetyNotice}`);
       setReportText("");
       setPhotoAttached(false);
+      setPickedCrowd("");
+      setPickedParking("");
+      setPickedLine("");
+      setPickedLocalConditions(new Set());
       setLocationVerificationStatus("idle");
       setVerifiedLocation(null);
       setActiveView("place");
@@ -1455,9 +1362,13 @@ export default function SilsiganRedesign() {
 
       setWorkerPhotos((current) => mergeWorkerPhotos([{ ...result.photo, ownedByCurrentSession: true }], current).slice(0, 80));
       setPhotoAttached(true);
-      appendRealtimeEvent(place.id, "photo.ready", result.photo.createdAt, { id: result.photo.id, placeId: place.id });
       trackEvent("upload_photo", { placeId: place.id, mimeType: photo.mimeType, byteSize: photo.byteSize });
-      setToast(`${place.name} 지금 사진이 등록됐습니다.`);
+      if (result.photo.status === "ready") {
+        appendRealtimeEvent(place.id, "photo.ready", result.photo.createdAt, { id: result.photo.id, placeId: place.id });
+        setToast(`${place.name} 지금 사진이 등록됐습니다.`);
+      } else {
+        setToast("사진이 안전 검수 대기 중입니다. 승인된 파생 이미지만 공개됩니다.");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "사진을 올리지 못했습니다.";
       setToast(message);
@@ -1674,6 +1585,106 @@ export default function SilsiganRedesign() {
     });
   };
 
+  const blockPostCreator = async (post: PublicPost) => {
+    if (!cloudflareApiConfigured) {
+      hidePostCreatorLocally(post);
+      setToast("샘플 미리보기에서는 화면에서만 숨기며 차단은 저장되지 않습니다.");
+      return;
+    }
+
+    try {
+      const block = await fetchJson<UserBlock>(cloudflareApiUrl("/api/blocks"), {
+        method: "POST",
+        body: JSON.stringify({ targetType: "post", targetId: post.id }),
+      });
+      setUserBlocks((current) => current.some((item) => item.id === block.id) ? current : [block, ...current]);
+      hidePostCreatorLocally(post);
+      trackEvent("user_blocked", { targetType: "post", targetId: post.id });
+      setToast("작성자를 차단했습니다. 이 작성자의 게시물과 댓글이 내 화면에서 숨겨집니다.");
+      await loadData({ silent: true });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "사용자 차단에 실패했습니다.");
+    }
+  };
+
+  const unblockUser = async (blockId: string) => {
+    if (!cloudflareApiConfigured) {
+      setToast("실시간 API 연결 후 차단을 해제할 수 있습니다.");
+      return;
+    }
+
+    try {
+      await fetchJson<{ blockId: string; blocked: boolean }>(cloudflareApiUrl(`/api/blocks/${encodeURIComponent(blockId)}`), {
+        method: "DELETE",
+      });
+      setUserBlocks((current) => current.filter((block) => block.id !== blockId));
+      setToast("사용자 차단을 해제했습니다.");
+      await loadData({ silent: true });
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "차단 해제에 실패했습니다.");
+    }
+  };
+
+  const voteOnReport = async (report: Report, voteType: "agree" | "changed") => {
+    if (!cloudflareApiConfigured) {
+      setToast("샘플 미리보기에서는 상태 확인 투표가 저장되지 않습니다.");
+      return;
+    }
+
+    try {
+      const result = await fetchJson<{
+        agreeCount: number;
+        changedCount: number;
+        invalidated: boolean;
+      }>(cloudflareApiUrl(`/api/reports/${encodeURIComponent(report.id)}/votes`), {
+        method: "POST",
+        body: JSON.stringify({ voteType }),
+      });
+      trackEvent(voteType === "agree" ? "report_vote_agree" : "report_vote_changed", { reportId: report.id });
+      if (result.invalidated) {
+        setReports((current) => current.filter((item) => item.id !== report.id));
+        setToast("여러 사용자가 현재 상태가 달라졌다고 확인해 기존 제보를 현재 판단에서 제외했습니다.");
+        return;
+      }
+      setToast(voteType === "agree"
+        ? `현재도 맞다는 확인이 반영됐습니다. 맞아요 ${result.agreeCount}건`
+        : `지금은 다르다는 확인이 반영됐습니다. 변경 ${result.changedCount}건`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "상태 확인 투표에 실패했습니다.");
+    }
+  };
+
+  const deleteCurrentAccount = async () => {
+    if (!cloudflareApiConfigured) {
+      throw new Error("실시간 API 연결 후 계정을 삭제할 수 있습니다.");
+    }
+
+    try {
+      await fetchJson<{ deleted: boolean }>(cloudflareApiUrl("/api/account/deletion"), {
+        method: "POST",
+        body: JSON.stringify({ confirmation: "DELETE_MY_ACCOUNT" }),
+      });
+      for (const key of Object.values(persistedSetKeys)) {
+        window.localStorage.removeItem(key);
+      }
+      window.localStorage.removeItem(notificationEnabledKey);
+      setHelpfulPostIds(new Set());
+      setSavedPostIds(new Set());
+      setHiddenCreatorNames(new Set());
+      setUserBlocks([]);
+      setWorkerCommentsByPlaceId({});
+      setWorkerPhotos([]);
+      trackEvent("account_deletion_requested", {});
+      setToast("이 기기의 익명 활동과 사진 삭제를 완료했습니다.");
+      setActiveView("home");
+      await loadData({ silent: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "계정 삭제에 실패했습니다.";
+      setToast(message);
+      throw new Error(message);
+    }
+  };
+
   const flagPost = async (post: PublicPost, reason: FlagReason) => {
     try {
       if (cloudflareApiConfigured) {
@@ -1714,7 +1725,7 @@ export default function SilsiganRedesign() {
     if (preset.patch.pickedCrowd) setPickedCrowd(preset.patch.pickedCrowd);
     if (preset.patch.pickedParking) setPickedParking(preset.patch.pickedParking);
     if (preset.patch.pickedLine) setPickedLine(preset.patch.pickedLine);
-    if (preset.patch.pickedWeather) setPickedWeather(preset.patch.pickedWeather);
+    if (preset.patch.pickedLocalConditions) setPickedLocalConditions(new Set(preset.patch.pickedLocalConditions));
     if (typeof preset.patch.photoAttached === "boolean") setPhotoAttached(preset.patch.photoAttached);
     if (preset.patch.reportText) setReportText(preset.patch.reportText);
     trackEvent("submit_quick_report", { presetId: preset.id, placeId: selectedPlace?.id ?? null });
@@ -1723,13 +1734,13 @@ export default function SilsiganRedesign() {
 
   const answerFieldQuest = (quest: FieldQuest) => {
     if (quest.questionType === "parking") {
-      setPickedParking("거의 없음");
+      setPickedParking("거의 만차");
     }
     if (quest.questionType === "line") {
-      setPickedLine("있음");
+      setPickedLine("10~30분");
     }
     if (quest.questionType === "crowd") {
-      setPickedCrowd("많음");
+      setPickedCrowd("혼잡");
     }
     setPhotoAttached(false);
     setReportText(quest.prompt);
@@ -1776,13 +1787,6 @@ export default function SilsiganRedesign() {
     await selectHashtag(challenge.hashtagName);
   };
 
-  const togglePlaceFollow = (place: Place) => {
-    setFollowedPlaceIds((current) => toggleSetValue(current, place.id));
-    const isFollowing = followedPlaceIds.has(place.id);
-    trackEvent("follow_place", { placeId: place.id, following: !isFollowing });
-    setToast(isFollowing ? `${place.name} 팔로우를 해제했습니다.` : `${place.name} 새 지금컷을 팔로우합니다.`);
-  };
-
   const toggleHashtagFollow = (hashtagName: string) => {
     setFollowedHashtagNames((current) => toggleSetValue(current, hashtagName));
     const isFollowing = followedHashtagNames.has(hashtagName);
@@ -1810,6 +1814,11 @@ export default function SilsiganRedesign() {
   };
 
   const markHelpful = (post: PublicPost) => {
+    if (post.isSample) {
+      setToast("체험용 샘플에서는 도움돼요가 저장되거나 랭킹에 반영되지 않습니다.");
+      return;
+    }
+
     if (helpfulPostIds.has(post.id)) {
       setToast("이미 도움돼요를 누른 제보입니다.");
       return;
@@ -1915,6 +1924,11 @@ export default function SilsiganRedesign() {
                 {activeView === "home" && selectedPlace && (
                   <HomeScreen
                     dataMode={dataMode}
+                    qnaEnabled={featureFlags.QNA_ENABLED}
+                    rewardsEnabled={featureFlags.REWARDS_ENABLED}
+                    socialFeedEnabled={featureFlags.SOCIAL_FEED_ENABLED}
+                    placeStatuses={placeStatuses}
+                    publicDataSources={publicDataSources}
                     places={places}
                     questions={questions}
                     posts={rankedPosts}
@@ -1925,6 +1939,7 @@ export default function SilsiganRedesign() {
                     helpfulPostIds={helpfulPostIds}
                     savedPostIds={savedPostIds}
                     reports={reports}
+                    onBlockPost={blockPostCreator}
                     onFlagPost={setPendingFlagPost}
                     onClearHashtagFilter={clearHashtagFilter}
                     onFollowHashtag={toggleHashtagFollow}
@@ -1943,6 +1958,7 @@ export default function SilsiganRedesign() {
                       if (place) setSelectedPlaceId(place.id);
                       setActiveView("upload");
                     }}
+                    onVoteReport={voteOnReport}
                   />
                 )}
                 {activeView === "search" && (
@@ -1984,6 +2000,7 @@ export default function SilsiganRedesign() {
                     onPreviewPlace={previewMapPlace}
                     onClosePreview={closeMapPreview}
                     onCommentSubmit={submitPlaceComment}
+                    onBlockComment={blockCommentCreator}
                     onLikeComment={likePlaceComment}
                     onLikePlace={togglePlaceLike}
                     onLocation={setMapCurrentLocation}
@@ -2011,7 +2028,12 @@ export default function SilsiganRedesign() {
                 {activeView === "place" && selectedPlace && (
                   <PlaceScreen
                     key={selectedPlace.id}
+                    dataMode={dataMode}
+                    qnaEnabled={featureFlags.QNA_ENABLED}
+                    rewardsEnabled={featureFlags.REWARDS_ENABLED}
                     place={selectedPlace}
+                    placeStatus={selectedPlaceStatus}
+                    placeStatusLoading={placeStatusLoading}
                     posts={selectedPosts}
                     questions={questions}
                     reports={selectedReports}
@@ -2019,9 +2041,8 @@ export default function SilsiganRedesign() {
                     fieldQuests={fieldQuests.filter((quest) => quest.placeId === selectedPlace.id)}
                     onAsk={() => setActiveView("ask")}
                     onAnswerQuest={answerFieldQuest}
+                    onBlockPost={blockPostCreator}
                     onFlagPost={setPendingFlagPost}
-                    onFollowPlace={() => togglePlaceFollow(selectedPlace)}
-                    followedPlace={followedPlaceIds.has(selectedPlace.id)}
                     helpfulPostIds={helpfulPostIds}
                     savedPostIds={savedPostIds}
                     onHelpfulPost={markHelpful}
@@ -2033,6 +2054,7 @@ export default function SilsiganRedesign() {
                     onSavePost={toggleSavePost}
                     onSharePost={sharePost}
                     onSelectHashtag={selectHashtag}
+                    onVoteReport={voteOnReport}
                     workerPhotos={workerPhotos}
                   />
                 )}
@@ -2046,7 +2068,7 @@ export default function SilsiganRedesign() {
                     pickedCrowd={pickedCrowd}
                     pickedParking={pickedParking}
                     pickedLine={pickedLine}
-                    pickedWeather={pickedWeather}
+                    pickedLocalConditions={pickedLocalConditions}
                     photoAttached={photoAttached}
                     locationVerificationStatus={locationVerificationStatus}
                     reportText={reportText}
@@ -2060,7 +2082,9 @@ export default function SilsiganRedesign() {
                     setPickedCrowd={setPickedCrowd}
                     setPickedParking={setPickedParking}
                     setPickedLine={setPickedLine}
-                    setPickedWeather={setPickedWeather}
+                    onToggleLocalCondition={(condition) => {
+                      setPickedLocalConditions((current) => toggleLocalCondition(current, condition));
+                    }}
                     setReportText={setReportText}
                     onSelectPlace={(place) => setSelectedPlaceId(place.id)}
                     onApplyPreset={applyQuickReportPreset}
@@ -2073,7 +2097,7 @@ export default function SilsiganRedesign() {
                     onSubmit={submitReport}
                   />
                 )}
-                {activeView === "ask" && selectedPlace && (
+                {activeView === "ask" && selectedPlace && featureFlags.QNA_ENABLED && (
                   <AskScreen
                     isSubmitting={isSubmitting}
                     place={selectedPlace}
@@ -2084,13 +2108,19 @@ export default function SilsiganRedesign() {
                 )}
                 {activeView === "my" && (
                   <MyScreen
+                    qnaEnabled={featureFlags.QNA_ENABLED}
+                    rewardsEnabled={featureFlags.REWARDS_ENABLED}
                     followedHashtagNames={followedHashtagNames}
                     followedPlaces={places.filter((place) => followedPlaceIds.has(place.id))}
                     hiddenCreatorNames={hiddenCreatorNames}
                     myQuestions={myQuestions}
-                    reports={reports}
+                    reports={[]}
                     savedPosts={allRankedPosts.filter((post) => savedPostIds.has(post.id))}
                     userReputation={userReputation}
+                    userBlocks={userBlocks}
+                    accountDeleteAvailable={cloudflareApiConfigured && dataMode === "live"}
+                    onDeleteAccount={deleteCurrentAccount}
+                    onUnblockUser={unblockUser}
                     onToast={setToast}
                   />
                 )}
@@ -2127,8 +2157,6 @@ export default function SilsiganRedesign() {
             />
           )}
         </div>
-
-        <OperatorPanel hashtags={hashtags} places={places} posts={rankedPosts} questions={questions} />
       </section>
     </main>
   );
@@ -2172,6 +2200,13 @@ function TopHeader({
     ask: "물어보기",
     my: "마이",
   };
+  const modeLabel = dataMode === "live" ? "실시간 데이터" : dataMode === "sample" ? "샘플 미리보기" : "실시간 연결 안 됨";
+  const modeDescription =
+    dataMode === "live"
+      ? "출처와 관측시각이 확인된 최신 상태를 불러옵니다."
+      : dataMode === "sample"
+        ? "현재 화면은 예시 데이터입니다. 실제 현재 상태로 사용하지 않습니다."
+        : "샘플로 대체하지 않았습니다. 잠시 후 다시 시도하거나 지역을 직접 선택해 주세요.";
 
   return (
     <header className={styles.topHeader}>
@@ -2180,7 +2215,7 @@ function TopHeader({
           {isDetail ? <X size={18} /> : <ShieldCheck size={18} />}
         </button>
         <div>
-          <p className={styles.eyebrow}>지금 장소 사진</p>
+          <p className={styles.eyebrow}>{activeView === "home" ? "지금 가도 될지, 10초 안에" : "지금 장소 사진"}</p>
           <h1>{titleMap[activeView]}</h1>
         </div>
         <button
@@ -2193,21 +2228,22 @@ function TopHeader({
           <Bell size={18} />
         </button>
       </div>
-      <div className={`${styles.dataModeBanner} ${dataMode === "sample" ? styles.dataModeBannerSample : ""}`}>
-        <strong>{dataMode === "sample" ? "샘플 미리보기" : "실시간 데이터"}</strong>
-        <span>
-          {dataMode === "sample"
-            ? "현재 화면은 예시 데이터입니다. 실제 사진/상태는 API 연결 후 표시됩니다."
-            : "최근 장소 사진과 상태를 불러오는 중입니다."}
-        </span>
+      <div className={`${styles.dataModeBanner} ${dataMode !== "live" ? styles.dataModeBannerSample : ""}`}>
+        <strong>{modeLabel}</strong>
+        <span>{modeDescription}</span>
       </div>
-      <div className={styles.toast}>{toast}</div>
+      {toast && <div className={styles.toast} role="status" aria-live="polite">{toast}</div>}
     </header>
   );
 }
 
 function HomeScreen({
   dataMode,
+  qnaEnabled,
+  rewardsEnabled,
+  socialFeedEnabled,
+  placeStatuses,
+  publicDataSources,
   places,
   questions,
   posts,
@@ -2218,6 +2254,7 @@ function HomeScreen({
   helpfulPostIds,
   savedPostIds,
   reports,
+  onBlockPost,
   onFlagPost,
   onClearHashtagFilter,
   onFollowHashtag,
@@ -2230,8 +2267,14 @@ function HomeScreen({
   onGoSearch,
   onGoMap,
   onGoReport,
+  onVoteReport,
 }: {
   dataMode: DataMode;
+  qnaEnabled: boolean;
+  rewardsEnabled: boolean;
+  socialFeedEnabled: boolean;
+  placeStatuses: Record<string, CloudflarePlaceStatus>;
+  publicDataSources: PublicDataSource[];
   places: Place[];
   questions: Question[];
   posts: PublicPost[];
@@ -2242,6 +2285,7 @@ function HomeScreen({
   helpfulPostIds: Set<string>;
   savedPostIds: Set<string>;
   reports: Report[];
+  onBlockPost: (post: PublicPost) => void;
   onFlagPost: (post: PublicPost) => void;
   onClearHashtagFilter: () => void;
   onFollowHashtag: (hashtagName: string) => void;
@@ -2254,10 +2298,29 @@ function HomeScreen({
   onGoSearch: (query?: string) => void;
   onGoMap: () => void;
   onGoReport: (place?: Place) => void;
+  onVoteReport: (report: Report, voteType: "agree" | "changed") => void;
 }) {
   const [activeFeedTab, setActiveFeedTab] = useState<FeedTab>("전체");
+  const [activeHomeCategory, setActiveHomeCategory] = useState("all");
   const featured = places[0];
   const placeById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
+  const officialWeather = useMemo(
+    () => Object.values(placeStatuses)
+      .flatMap((status) => status.currentSignals)
+      .filter((signal) => signal.dimension === "weather" && signal.sourceType.startsWith("official_"))
+      .sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))[0] ?? null,
+    [placeStatuses],
+  );
+  const homeCategoryOptions = [
+    { id: "all", label: "전체" },
+    { id: "tourism", label: "관광지" },
+    { id: "festival", label: "축제" },
+    { id: "restaurant_cafe", label: "맛집" },
+    { id: "parking", label: "주차" },
+  ] as const;
+  const homePlaces = places
+    .filter((place) => activeHomeCategory === "all" || place.category === activeHomeCategory)
+    .slice(0, 5);
   const filteredPosts = useMemo(
     () =>
       posts
@@ -2266,18 +2329,100 @@ function HomeScreen({
         .slice(0, 3),
     [activeFeedTab, placeById, posts],
   );
-  const goodCount = places.filter((place) => place.signal === "가도 좋음").length;
-  const cautionCount = places.filter((place) => place.signal === "혼잡 주의" || place.signal === "대기 보통").length;
-  const avoidCount = places.filter((place) => place.signal === "출발 전 확인").length;
+  const currentHomeStatuses = homePlaces
+    .map((place) => currentLivePlaceStatus(placeStatuses[place.id]))
+    .filter((status): status is CloudflarePlaceStatus => Boolean(status));
+  const goodCount = currentHomeStatuses.filter((status) => status.status === "likely_good").length;
+  const cautionCount = currentHomeStatuses.filter((status) => status.status === "check_before_visit").length;
+  const avoidCount = currentHomeStatuses.filter((status) => status.status === "likely_crowded").length;
   const leadPost = filteredPosts.find((post) => post.photoCount > 0) ?? filteredPosts[0] ?? posts.find((post) => !post.hiddenAt) ?? null;
   const leadPlace = leadPost ? placeById.get(leadPost.placeId) ?? featured : featured;
+  const leadPhotoReport = leadPost ? reports.find((report) => report.placeId === leadPost.placeId && report.hasPhoto) ?? null : null;
   const leadPhotoUrl = leadPost ? photoUrlForPost(leadPost, reports) : null;
-  const leadIsSample = dataMode === "sample" || Boolean(leadPost?.id.startsWith("fallback_"));
+  const leadIsSample = dataMode === "sample" || Boolean(leadPost?.isSample) || Boolean(leadPost?.id.startsWith("fallback_"));
+  const safeLeadPhotoSourceUrl = safeHttpUrl(leadPhotoReport?.photoSourceUrl);
   const leadTags = (leadPost?.hashtagNames.length ? leadPost.hashtagNames : hashtags.map((tag) => tag.name)).slice(0, 3);
   const keywordQueries = ["광안리 주차", "황리단길 웨이팅", "태화강 산책"];
+  const currentSignalCount = currentHomeStatuses.reduce((total, status) => total + status.currentSignals.length, 0);
+  const activeSourceNames = [...new Set(
+    publicDataSources
+      .filter((source) => source.activationStatus === "active")
+      .map((source) => source.sourceName),
+  )].slice(0, 2);
 
   return (
     <div className={styles.screenStack}>
+      <section className={styles.homeDecisionHero} aria-label="방문 판단 안내">
+        <div>
+          <p className={styles.homeDecisionEyebrow}>어디 갈지 고민될 때</p>
+          <h2>출발 전,<br />지금 상황만 확인하세요.</h2>
+          <p>날씨·인파·대기·주차를 한 화면에서 보고 10초 안에 결정해요.</p>
+        </div>
+        <div className={styles.homeDecisionActions}>
+          <button className={styles.homeDecisionPrimary} type="button" onClick={onGoMap}>
+            <MapIcon size={17} /> 지도로 바로 확인
+          </button>
+          <button className={styles.homeDecisionSecondary} type="button" onClick={() => onGoSearch()}>
+            장소 검색 <ChevronRight size={16} />
+          </button>
+        </div>
+        <div className={styles.homeTrustPromise}>
+          <ShieldCheck size={16} />
+          <span>오래됐거나 근거가 없는 정보는 추천에 쓰지 않아요.</span>
+        </div>
+      </section>
+
+      <section className={styles.homeWeather} aria-label="공식 현재 날씨">
+        <div className={styles.homeWeatherHeader}>
+          <div>
+            <p className={styles.eyebrow}>공식 현재 날씨</p>
+            <h2>{officialWeather ? placeById.get(officialWeather.placeId)?.name ?? "선택 지역" : "선택 지역"}</h2>
+          </div>
+          <CloudSun size={23} />
+        </div>
+        {officialWeather ? (
+          <>
+            <strong className={styles.homeWeatherValue}>
+              {typeof officialWeather.valueNumber === "number"
+                ? `${officialWeather.valueNumber}${officialWeather.unit ?? "°C"}`
+                : liveSignalValueLabel(officialWeather.dimension, officialWeather.valueCode)}
+            </strong>
+            <p>{officialWeather.valueText ?? liveSignalValueLabel(officialWeather.dimension, officialWeather.valueCode)}</p>
+            <div className={styles.homeWeatherMeta}>
+              <span>{officialWeather.sourceName}</span>
+              <time dateTime={officialWeather.observedAt}>{formatObservedAt(officialWeather.observedAt)}</time>
+            </div>
+          </>
+        ) : (
+          <div className={styles.homeWeatherEmpty}>
+            <strong>현재 확인된 공식 날씨가 없습니다</strong>
+            <p>출처와 관측시각이 확인된 날씨만 여기에 표시합니다.</p>
+          </div>
+        )}
+      </section>
+
+      <section className={styles.homeEvidencePulse} aria-label="현재 판단 근거 현황">
+        {dataMode === "live" ? (
+          <>
+            <div>
+              <p className={styles.eyebrow}>지금 확인된 근거</p>
+              <strong>최신 신호 {currentSignalCount}개를 반영 중이에요</strong>
+              <span>{activeSourceNames.length > 0 ? activeSourceNames.join(" · ") : "현장 제보와 공식 출처를 함께 확인해요"}</span>
+            </div>
+            <BadgeCheck size={24} aria-hidden="true" />
+          </>
+        ) : (
+          <>
+            <div>
+              <p className={styles.eyebrow}>미리보기 안내</p>
+              <strong>실제 판단에는 확인된 최신 정보만 사용해요</strong>
+              <span>이 화면의 예시 수치와 사진은 방문 판단에 반영하지 않습니다.</span>
+            </div>
+            <ShieldAlert size={24} aria-hidden="true" />
+          </>
+        )}
+      </section>
+
       <section className={styles.photoLeadCard}>
         <button
           className={styles.photoLeadPreview}
@@ -2286,7 +2431,9 @@ function HomeScreen({
           onClick={() => leadPlace && onOpenPlace(leadPlace)}
           disabled={!leadPlace}
         >
-          <span className={styles.photoLeadMeta}>{leadIsSample ? "예시 사진" : "방금 올라온 사진"} · {leadPost ? minutesAgo(leadPost.createdAt) : "방금 전"}</span>
+          <span className={styles.photoLeadMeta}>
+            {leadIsSample ? "체험용 사진 · 예시 데이터" : `방금 올라온 사진 · ${leadPost ? minutesAgo(leadPost.createdAt) : "방금 전"}`}
+          </span>
           <span className={styles.photoLeadKicker}>출발 전 10초 확인</span>
           <strong>{leadPlace?.name ?? "#실시간"}</strong>
           <p>{leadPost?.caption ?? leadPost?.shareCard.headline ?? leadPlace?.summary ?? "지금 올라온 장소 사진을 기다리고 있어요."}</p>
@@ -2304,6 +2451,15 @@ function HomeScreen({
             지금컷 올리기
           </button>
         </div>
+        {leadIsSample && leadPhotoReport?.photoAttribution && (
+          safeLeadPhotoSourceUrl ? (
+            <a className={styles.photoLeadCredit} href={safeLeadPhotoSourceUrl} target="_blank" rel="noreferrer">
+              사진 출처 · {leadPhotoReport.photoAttribution}
+            </a>
+          ) : (
+            <span className={styles.photoLeadCredit}>사진 출처 · {leadPhotoReport.photoAttribution}</span>
+          )
+        )}
       </section>
 
       {leadIsSample && (
@@ -2326,7 +2482,23 @@ function HomeScreen({
         </div>
       </section>
 
-      <section className={styles.decisionRail} aria-label="현재 판단 요약">
+      <section className={styles.homeCategorySection} aria-label="장소 종류 선택">
+        <div className={styles.homeCategoryRail}>
+          {homeCategoryOptions.map((category) => (
+            <button
+              key={category.id}
+              type="button"
+              className={activeHomeCategory === category.id ? styles.homeCategoryActive : ""}
+              aria-pressed={activeHomeCategory === category.id}
+              onClick={() => setActiveHomeCategory(category.id)}
+            >
+              {category.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {dataMode === "live" && currentHomeStatuses.length > 0 && <section className={styles.decisionRail} aria-label="현재 확인된 장소 판단 요약">
         <div className={styles.decisionItem}>
           <CheckCircle2 size={17} />
           <span>가도 좋음</span>
@@ -2342,9 +2514,9 @@ function HomeScreen({
           <span>지금은 비추</span>
           <strong>{avoidCount}</strong>
         </div>
-      </section>
+      </section>}
 
-      <section className={styles.sectionBlock}>
+      {socialFeedEnabled && <section className={styles.sectionBlock}>
         <SectionTitle title={selectedHashtagName ? `#${selectedHashtagName} 피드` : "실시간 사진 피드"} caption={selectedHashtagName ? `${filteredPosts.length}개 현장 게시물` : `${activeFeedTab} ${filteredPosts.length}건`} />
         {selectedHashtagName && (
           <div className={styles.feedFilterBanner}>
@@ -2366,6 +2538,7 @@ function HomeScreen({
                 post={post}
                 place={place}
                 reports={reports}
+                onBlock={() => onBlockPost(post)}
                 onFlag={() => onFlagPost(post)}
                 onHelpful={() => onHelpfulPost(post)}
                 onOpenPlace={() => onOpenPlace(place)}
@@ -2385,9 +2558,9 @@ function HomeScreen({
             </div>
           )}
         </div>
-      </section>
+      </section>}
 
-      <section className={styles.challengeSection}>
+      {rewardsEnabled && <section className={styles.challengeSection}>
         <SectionTitle title="오늘 필요한 지금컷" caption="사진과 해시태그 중심" />
         <div className={styles.challengeList}>
           {challenges.slice(0, 2).map((challenge) => (
@@ -2399,9 +2572,9 @@ function HomeScreen({
             </button>
           ))}
         </div>
-      </section>
+      </section>}
 
-      <section className={styles.sectionBlock}>
+      {socialFeedEnabled && <section className={styles.sectionBlock}>
         <SectionTitle title="인기 해시태그" caption="최대 5개 추천 구조" />
         <div className={styles.hashtagCloud}>
           {hashtags.slice(0, 4).map((tag) => (
@@ -2418,21 +2591,52 @@ function HomeScreen({
             {followedHashtagNames.has(selectedHashtagName) ? "팔로잉 해제" : `#${selectedHashtagName} 팔로우`}
           </button>
         )}
-      </section>
+      </section>}
 
       <section className={styles.sectionBlock}>
-        <SectionTitle title="지금 많이 확인하는 곳" caption="사진 · 질문 · 길찾기 기준" />
+        <div className={styles.nearbyHeadingActions}>
+          <SectionTitle title="지금 확인할 장소" caption={`${homePlaces.length}곳`} />
+          <button className={styles.nearbyMapButton} type="button" onClick={onGoMap}>
+            <MapIcon size={15} />지도
+          </button>
+        </div>
         <div className={styles.rankingList}>
-          {places.slice(0, 3).map((place, index) => (
-            <button key={place.id} className={styles.rankingItem} type="button" onClick={() => onOpenPlace(place)}>
+          {homePlaces.map((place, index) => {
+            const placeStatus = currentLivePlaceStatus(placeStatuses[place.id]);
+            const decisionStatus = placeStatus?.status ?? "insufficient";
+            const decisionLabel = dataMode === "live" ? visitDecisionShortLabel(decisionStatus) : place.signal;
+            const primarySignal = placeStatus?.currentSignals[0];
+
+            return (
+              <button key={place.id} className={styles.rankingItem} type="button" onClick={() => onOpenPlace(place)}>
               <span className={styles.rank}>{index + 1}</span>
-              <div>
-                <strong>{place.name}</strong>
+              <div className={styles.homePlaceCopy}>
+                <div className={styles.homePlaceTitleRow}>
+                  <strong>{place.name}</strong>
+                  <span className={styles.homePlaceSignal} data-decision={decisionStatus}>
+                    {decisionLabel}
+                  </span>
+                </div>
                 <p>{place.summary}</p>
+                {primarySignal ? (
+                  <span className={styles.homePlaceEvidence}>
+                    {primarySignal.sourceName} · {formatObservedAt(primarySignal.observedAt)} · {formatConfidence(primarySignal.confidenceScore)} · {formatExpiryHint(primarySignal.expiresAt)}
+                  </span>
+                ) : (
+                  <span className={styles.homePlaceEvidence}>현재 판단 근거 확인 중 · {place.updated}</span>
+                )}
               </div>
               <span className={styles.visitors}>{place.visitors}</span>
-            </button>
-          ))}
+              </button>
+            );
+          })}
+          {homePlaces.length === 0 && (
+            <div className={styles.emptyActionRow}>
+              <p className={styles.emptyText}>선택한 종류의 장소가 아직 없습니다.</p>
+              <button type="button" onClick={() => setActiveHomeCategory("all")}>전체 장소 보기</button>
+              <button type="button" onClick={onGoMap}>지도에서 찾기</button>
+            </div>
+          )}
         </div>
       </section>
 
@@ -2442,13 +2646,21 @@ function HomeScreen({
           <div className={styles.reportGrid}>
             {reports.slice(0, 2).map((report) => {
               const place = places.find((item) => item.id === report.placeId) ?? places[0];
-              return <LiveReportCard key={report.id} report={report} place={place} onOpen={() => onOpenPlace(place)} />;
+              return (
+                <LiveReportCard
+                  key={report.id}
+                  report={report}
+                  place={place}
+                  onOpen={() => onOpenPlace(place)}
+                  onVote={(voteType) => onVoteReport(report, voteType)}
+                />
+              );
             })}
           </div>
         </section>
       )}
 
-      <AnswerableQuestions questions={questions} places={places} />
+      {qnaEnabled && <AnswerableQuestions questions={questions} places={places} />}
     </div>
   );
 }
@@ -2567,7 +2779,7 @@ function SearchScreen({
           {matchedPosts.map((post) => {
             const place = placeById.get(post.placeId) ?? places[0];
             const photoUrl = photoUrlForPost(post, reports);
-            const isSample = post.id.startsWith("fallback_");
+            const isSample = Boolean(post.isSample) || post.id.startsWith("fallback_");
 
             return (
               <article key={post.id} className={styles.searchPhotoItem}>
@@ -2712,6 +2924,7 @@ function MapScreen({
   mapRequerying,
   onFilterChange,
   onClosePreview,
+  onBlockComment,
   onCommentSubmit,
   onLikeComment,
   onLikePlace,
@@ -2750,6 +2963,7 @@ function MapScreen({
   mapRequerying: boolean;
   onFilterChange: (filter: string) => void;
   onClosePreview: () => void;
+  onBlockComment: (place: Place, comment: PlaceComment) => void;
   onCommentSubmit: (place: Place, body: string) => Promise<void>;
   onLikeComment: (place: Place, comment: PlaceComment) => Promise<void>;
   onLikePlace: (place: Place) => void;
@@ -2937,12 +3151,13 @@ function MapScreen({
             place={detailPlace}
             comments={comments}
             photos={photos}
-            reportCount={detailReports.length + detailPosts.length}
+            reportCount={comments.length}
             realtimeEvents={realtimeEventsByPlaceId[detailPlace.id] ?? []}
             realtimeMode={visibleLiveConnection}
             safetyNotice={sensitivePhotoWarningFor(detailPlace)}
             liked={likedPlaceIds.has(detailPlace.id)}
             onClose={onClosePreview}
+            onBlockComment={(comment) => onBlockComment(detailPlace, comment)}
             onCommentSubmit={(body) => onCommentSubmit(detailPlace, body)}
             onCommentLike={(comment) => onLikeComment(detailPlace, comment)}
             onLike={() => onLikePlace(detailPlace)}
@@ -2973,7 +3188,12 @@ function MapScreen({
 }
 
 function PlaceScreen({
+  dataMode,
+  qnaEnabled,
+  rewardsEnabled,
   place,
+  placeStatus,
+  placeStatusLoading,
   posts,
   questions,
   reports,
@@ -2981,9 +3201,8 @@ function PlaceScreen({
   fieldQuests,
   onAsk,
   onAnswerQuest,
+  onBlockPost,
   onFlagPost,
-  onFollowPlace,
-  followedPlace,
   helpfulPostIds,
   savedPostIds,
   onHelpfulPost,
@@ -2995,9 +3214,15 @@ function PlaceScreen({
   onSavePost,
   onSharePost,
   onSelectHashtag,
+  onVoteReport,
   workerPhotos,
 }: {
+  dataMode: DataMode;
+  qnaEnabled: boolean;
+  rewardsEnabled: boolean;
   place: Place;
+  placeStatus: CloudflarePlaceStatus | null;
+  placeStatusLoading: boolean;
   posts: PublicPost[];
   questions: Question[];
   reports: Report[];
@@ -3005,9 +3230,8 @@ function PlaceScreen({
   fieldQuests: FieldQuest[];
   onAsk: () => void;
   onAnswerQuest: (quest: FieldQuest) => void;
+  onBlockPost: (post: PublicPost) => void;
   onFlagPost: (post: PublicPost) => void;
-  onFollowPlace: () => void;
-  followedPlace: boolean;
   helpfulPostIds: Set<string>;
   savedPostIds: Set<string>;
   onHelpfulPost: (post: PublicPost) => void;
@@ -3019,6 +3243,7 @@ function PlaceScreen({
   onSavePost: (post: PublicPost) => void;
   onSharePost: (post: PublicPost) => void;
   onSelectHashtag: (hashtagName: string) => void;
+  onVoteReport: (report: Report, voteType: "agree" | "changed") => void;
   workerPhotos: WorkerPhoto[];
 }) {
   const [placeActiveTab, setPlaceActiveTab] = useState<PlaceTab>("실시간");
@@ -3033,6 +3258,22 @@ function PlaceScreen({
   const todayReports = posts.length || reports.length;
   const tabPosts = placeActiveTab === "사진" ? posts.filter((post) => post.photoCount > 0) : posts;
   const focusPhotoTab = () => setPlaceActiveTab("사진");
+  const visiblePlaceTabs: PlaceTab[] = qnaEnabled
+    ? ["실시간", "사진", "질문", "해시태그", "근처"]
+    : ["실시간", "사진", "해시태그", "근처"];
+  const latestReportEvidence = reports.find((report) => !report.isSample) ?? null;
+  const signalCount = placeStatus?.currentSignals.length ?? 0;
+  const evidenceCount = signalCount > 0 ? signalCount : latestReportEvidence ? 1 : 0;
+  const decisionLabel = dataMode === "sample"
+    ? "샘플 화면이며 실제 방문 판단에 사용할 수 없어요"
+    : placeStatusLoading
+      ? "판단 근거 확인 중"
+      : visitDecisionLabel(placeStatus?.status ?? "insufficient");
+  const decisionDetail = dataMode === "sample"
+    ? "아래 내용은 기능 확인용 샘플이며 실제 관측 정보가 아닙니다."
+    : placeStatus?.observedAt
+      ? `최근 관측 ${formatObservedAt(placeStatus.observedAt)}`
+      : "판단할 최신 관측 정보가 부족합니다.";
 
   return (
     <div className={styles.screenStack}>
@@ -3048,16 +3289,12 @@ function PlaceScreen({
             <p className={styles.eyebrow}>{place.address}</p>
             <h2>{place.name}</h2>
           </div>
-          <button className={`${styles.followButton} ${followedPlace ? styles.followButtonActive : ""}`} type="button" onClick={onFollowPlace}>
-            {followedPlace ? "팔로잉" : "팔로우"}
-          </button>
         </div>
         <p>{place.summary}</p>
         <div className={styles.placeStatsRow}>
-          <StatBox label="오늘 제보" value={String(todayReports)} />
+          <StatBox label={dataMode === "sample" ? "체험 예시" : "오늘 제보"} value={String(todayReports)} />
           <StatBox label="사진" value={String(photoCount)} />
-          <StatBox label="질문" value={String(questions.filter((question) => question.placeId === place.id).length)} />
-          <StatBox label="팔로워" value={place.id === "busan-gwangalli" ? "1,240" : "320"} />
+          {qnaEnabled && <StatBox label="질문" value={String(questions.filter((question) => question.placeId === place.id).length)} />}
         </div>
         <div className={styles.statusGrid}>
           <StatusMetric icon={Users} label="사람" value={place.crowd} />
@@ -3069,13 +3306,45 @@ function PlaceScreen({
 
       <section className={styles.trustCard}>
         <div>
-          <p className={styles.eyebrow}>현장 신뢰도</p>
-          <strong>{place.score}%</strong>
-          <span>현장 인증과 최근성 기준</span>
+          <p className={styles.eyebrow}>방문 판단</p>
+          <strong>{decisionLabel}</strong>
+          <span>{decisionDetail}</span>
         </div>
-        <div className={styles.trustRing} style={{ ['--score' as string]: `${place.score}%` }}>
+        <div className={styles.trustRing}>
           <ShieldCheck size={24} />
         </div>
+      </section>
+
+      <section className={styles.sourceEvidenceCard} aria-label="현재 상태 출처와 관측시각">
+        <SectionTitle title="현재 판단 근거" caption={`${evidenceCount}개`} />
+        {placeStatusLoading && <p className={styles.sourceEvidenceEmpty}>최신 출처를 확인하고 있습니다.</p>}
+        {!placeStatusLoading && placeStatus?.currentSignals.map((signal) => (
+          <article className={styles.sourceEvidenceItem} key={signal.id}>
+            <div>
+              <strong>{liveSignalDimensionLabel(signal.dimension)} · {liveSignalValueLabel(signal.dimension, signal.valueCode)}</strong>
+              <span>{signal.sourceName}{signal.attributionText ? ` · ${signal.attributionText}` : ""}</span>
+            </div>
+            <div className={styles.sourceEvidenceMeta}>
+              <span>{signal.isEstimated ? "예상" : liveSignalSourceLabel(signal.sourceType)}</span>
+              <time dateTime={signal.observedAt}>{formatObservedAt(signal.observedAt)}</time>
+            </div>
+          </article>
+        ))}
+        {!placeStatusLoading && signalCount === 0 && latestReportEvidence && (
+          <article className={styles.sourceEvidenceItem}>
+            <div>
+              <strong>현장 제보 · {latestReportEvidence.body}</strong>
+              <span>{dataMode === "sample" ? "샘플 사용자 제보" : "사용자 제보"}</span>
+            </div>
+            <div className={styles.sourceEvidenceMeta}>
+              <span>{latestReportEvidence.verified ? "현장 확인" : "미확인"}</span>
+              <time dateTime={latestReportEvidence.createdAt}>{formatObservedAt(latestReportEvidence.createdAt)}</time>
+            </div>
+          </article>
+        )}
+        {!placeStatusLoading && signalCount === 0 && !latestReportEvidence && (
+          <p className={styles.sourceEvidenceEmpty}>유효한 공식 데이터나 현장 제보가 아직 없습니다.</p>
+        )}
       </section>
 
       {hasSensitivePolicy && (
@@ -3085,7 +3354,7 @@ function PlaceScreen({
         </section>
       )}
 
-      <section className={styles.fieldQuestCard}>
+      {qnaEnabled && <section className={styles.fieldQuestCard}>
         <SectionTitle title="근처 사람이 궁금해해요" caption={`${fieldQuests.length}개`} />
         <div className={styles.fieldQuestList}>
           {fieldQuests.map((quest) => (
@@ -3093,7 +3362,7 @@ function PlaceScreen({
               <MessageCircleQuestion size={17} />
               <div>
                 <strong>{quest.prompt}</strong>
-                <span>답변하면 질문권 +{quest.rewardCredits}</span>
+                <span>{rewardsEnabled ? `답변하면 질문권 +${quest.rewardCredits}` : "현장 질문에 답변하기"}</span>
               </div>
               <ChevronRight size={15} />
             </button>
@@ -3106,10 +3375,10 @@ function PlaceScreen({
             </div>
           )}
         </div>
-      </section>
+      </section>}
 
       <section className={styles.placeTabs} aria-label="장소 프로필 탭">
-        {(["실시간", "사진", "질문", "해시태그", "근처"] as PlaceTab[]).map((tab) => (
+        {visiblePlaceTabs.map((tab) => (
           <button key={tab} className={tab === placeActiveTab ? styles.placeTabActive : ""} type="button" onClick={() => setPlaceActiveTab(tab)}>{tab}</button>
         ))}
       </section>
@@ -3124,6 +3393,7 @@ function PlaceScreen({
                 post={post}
                 place={place}
                 reports={reports}
+                onBlock={() => onBlockPost(post)}
                 onFlag={() => onFlagPost(post)}
                 onHelpful={() => onHelpfulPost(post)}
                 onOpenPlace={focusPhotoTab}
@@ -3138,14 +3408,14 @@ function PlaceScreen({
               <div className={styles.emptyActionRow}>
                 <p className={styles.emptyText}>{placeActiveTab === "사진" ? "아직 사진이 있는 게시물이 없습니다." : "아직 장소별 피드가 없습니다."}</p>
                 <button type="button" onClick={onReport}>첫 지금컷 올리기</button>
-                <button type="button" onClick={onAsk}>질문 남기기</button>
+                {qnaEnabled && <button type="button" onClick={onAsk}>질문 남기기</button>}
               </div>
             )}
           </div>
         </section>
       )}
 
-      {placeActiveTab === "질문" && (
+      {qnaEnabled && placeActiveTab === "질문" && (
         <section className={styles.sectionBlock}>
           <SectionTitle title="장소 질문" caption={`${placeQuestions.length}건`} />
           <div className={styles.answerList}>
@@ -3225,21 +3495,27 @@ function PlaceScreen({
 
       <section className={styles.sectionBlock}>
         <SectionTitle title="현장 인증 제보" caption="최근 3시간" />
-        {(reports.length ? reports : [reportsFallback(place)]).map((report) => (
-          <LiveReportCard key={report.id} report={report} place={place} />
+        {reports.map((report) => (
+          <LiveReportCard key={report.id} report={report} place={place} onVote={(voteType) => onVoteReport(report, voteType)} />
         ))}
+        {reports.length === 0 && (
+          <div className={styles.emptyActionRow}>
+            <p className={styles.emptyText}>최근 3시간 안에 올라온 현장 제보가 없습니다.</p>
+            <button type="button" onClick={onReport}>확인한 상태 제보하기</button>
+          </div>
+        )}
       </section>
 
-      <section className={styles.questionCard}>
+      {qnaEnabled && <section className={styles.questionCard}>
         <div>
           <p className={styles.eyebrow}>최근 질문</p>
           <h3>{latestQuestion?.body ?? "지금 현장 상황이 궁금한가요?"}</h3>
         </div>
         <button type="button" onClick={onAsk}>물어보기</button>
-      </section>
+      </section>}
 
       <div className={styles.stickyActions}>
-        <button className={styles.secondaryButton} type="button" onClick={onAsk}>물어보기</button>
+        {qnaEnabled && <button className={styles.secondaryButton} type="button" onClick={onAsk}>물어보기</button>}
         <button className={styles.primaryButton} type="button" onClick={onReport}>지금컷 올리기</button>
       </div>
     </div>
@@ -3255,7 +3531,7 @@ function ReportScreen({
   pickedCrowd,
   pickedParking,
   pickedLine,
-  pickedWeather,
+  pickedLocalConditions,
   photoAttached,
   locationVerificationStatus,
   reportText,
@@ -3265,7 +3541,7 @@ function ReportScreen({
   setPickedCrowd,
   setPickedParking,
   setPickedLine,
-  setPickedWeather,
+  onToggleLocalCondition,
   setReportText,
   onSelectPlace,
   onApplyPreset,
@@ -3285,7 +3561,7 @@ function ReportScreen({
   pickedCrowd: string;
   pickedParking: string;
   pickedLine: string;
-  pickedWeather: string;
+  pickedLocalConditions: Set<string>;
   photoAttached: boolean;
   locationVerificationStatus: LocationVerificationStatus;
   reportText: string;
@@ -3295,7 +3571,7 @@ function ReportScreen({
   setPickedCrowd: (value: string) => void;
   setPickedParking: (value: string) => void;
   setPickedLine: (value: string) => void;
-  setPickedWeather: (value: string) => void;
+  onToggleLocalCondition: (value: string) => void;
   setReportText: (value: string) => void;
   onSelectPlace: (place: Place) => void;
   onApplyPreset: (preset: QuickReportPreset) => void;
@@ -3337,6 +3613,7 @@ function ReportScreen({
           <ul className={styles.uploadGuidanceList} aria-label="지금컷 올리기 안내">
             <li>사진 1장을 먼저 올리면 피드 상단 지금컷으로 표시돼요.</li>
             <li>긴급 상황만 사진 없이 상태로 남길 수 있어요.</li>
+            <li>운전 중에는 제보하지 말고, 안전하게 정차한 뒤 올려주세요.</li>
             <li>얼굴, 차량번호, 서류는 가려주세요.</li>
           </ul>
         </div>
@@ -3402,7 +3679,12 @@ function ReportScreen({
       <ChoiceGroup title="사람 상태" options={reportChips} value={pickedCrowd} onChange={setPickedCrowd} />
       <ChoiceGroup title="주차 상태" options={parkingChips} value={pickedParking} onChange={setPickedParking} />
       <ChoiceGroup title="줄/대기 상태" options={lineChips} value={pickedLine} onChange={setPickedLine} />
-      <ChoiceGroup title="날씨/환경" options={weatherChips} value={pickedWeather} onChange={setPickedWeather} />
+      <MultiChoiceGroup
+        title="현장 상태"
+        options={localConditionChips}
+        values={pickedLocalConditions}
+        onToggle={onToggleLocalCondition}
+      />
 
       <section className={styles.textAreaCard}>
         <label htmlFor="reportText">한 줄 코멘트</label>
@@ -3530,22 +3812,34 @@ function AskScreen({
 }
 
 function MyScreen({
+  accountDeleteAvailable,
+  qnaEnabled,
+  rewardsEnabled,
   followedHashtagNames,
   followedPlaces,
   hiddenCreatorNames,
   myQuestions,
+  onDeleteAccount,
+  onUnblockUser,
   onToast,
   reports,
   savedPosts,
+  userBlocks,
   userReputation,
 }: {
+  accountDeleteAvailable: boolean;
+  qnaEnabled: boolean;
+  rewardsEnabled: boolean;
   followedHashtagNames: Set<string>;
   followedPlaces: Place[];
   hiddenCreatorNames: Set<string>;
   myQuestions: MyQuestion[];
+  onDeleteAccount: () => Promise<void>;
+  onUnblockUser: (blockId: string) => Promise<void>;
   onToast: (message: string) => void;
   reports: Report[];
   savedPosts: PublicPost[];
+  userBlocks: UserBlock[];
   userReputation: UserReputation;
 }) {
   const reportsRef = useRef<HTMLElement | null>(null);
@@ -3554,7 +3848,11 @@ function MyScreen({
   const hashtagsRef = useRef<HTMLElement | null>(null);
   const badgesRef = useRef<HTMLElement | null>(null);
   const safetyRef = useRef<HTMLElement | null>(null);
+  const accountRef = useRef<HTMLElement | null>(null);
   const [activeMenuTarget, setActiveMenuTarget] = useState<MyMenuTarget | null>(null);
+  const [deletionDialogOpen, setDeletionDialogOpen] = useState(false);
+  const [deletionConfirmation, setDeletionConfirmation] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const answeredCount = myQuestions.filter((question) => question.status === "answered").length;
   const latestReports = [...reports]
     .filter((report) => !report.hiddenAt)
@@ -3567,12 +3865,17 @@ function MyScreen({
   };
   const menuItems = [
     { icon: Camera, label: "최근 사진", message: "최근 사진 활동으로 이동했습니다.", target: "reports", ref: reportsRef },
-    { icon: MessageCircleQuestion, label: "내 질문", message: "내 질문 현황으로 이동했습니다.", target: "questions", ref: questionsRef },
+    ...(qnaEnabled
+      ? [{ icon: MessageCircleQuestion, label: "내 질문", message: "내 질문 현황으로 이동했습니다.", target: "questions" as const, ref: questionsRef }]
+      : []),
     { icon: Bookmark, label: "저장한 게시물", message: "저장한 게시물로 이동했습니다.", target: "saved", ref: savedRef },
     { icon: Hash, label: "팔로우한 해시태그", message: "팔로우한 해시태그로 이동했습니다.", target: "hashtags", ref: hashtagsRef },
-    { icon: Star, label: "지역 뱃지", message: "지역 뱃지로 이동했습니다.", target: "badges", ref: badgesRef },
+    ...(rewardsEnabled
+      ? [{ icon: Star, label: "지역 뱃지", message: "지역 뱃지로 이동했습니다.", target: "badges" as const, ref: badgesRef }]
+      : []),
     { icon: UserX, label: "숨긴 작성자", message: `${hiddenCreatorNames.size}명 숨김 상태를 확인합니다.`, target: "safety", ref: safetyRef },
     { icon: ShieldCheck, label: "안전 정책 및 이용 안내", message: "안전 정책으로 이동했습니다.", target: "safety", ref: safetyRef },
+    { icon: Settings, label: "계정 및 데이터", message: "계정과 데이터 관리로 이동했습니다.", target: "account", ref: accountRef },
   ] satisfies Array<{ icon: LucideIcon; label: string; message: string; target: MyMenuTarget; ref: RefObject<HTMLElement | null> }>;
   const handleMenuClick = (item: (typeof menuItems)[number]) => {
     setActiveMenuTarget(item.target);
@@ -3581,6 +3884,20 @@ function MyScreen({
       scrollNearestContainerToChild(item.ref.current);
       item.ref.current?.focus({ preventScroll: true });
     });
+  };
+
+  const confirmAccountDeletion = async () => {
+    if (deletionConfirmation !== "계정 삭제" || deletingAccount) {
+      return;
+    }
+    setDeletingAccount(true);
+    try {
+      await onDeleteAccount();
+      setDeletionDialogOpen(false);
+      setDeletionConfirmation("");
+    } finally {
+      setDeletingAccount(false);
+    }
   };
 
   return (
@@ -3596,7 +3913,7 @@ function MyScreen({
 
       <section className={styles.myDataNotice}>
         <ShieldCheck size={17} />
-        <p>마이는 이 기기에서 저장한 장소, 게시물, 내 질문, 안전 설정을 보여줍니다. 계정 없이도 현재 기기 기준 활동은 유지됩니다.</p>
+        <p>마이는 이 기기에서 저장한 장소, 제보와 안전 설정을 보여줍니다. 회원으로 전환하면 다른 기기에서도 기록을 이어갈 수 있습니다.</p>
       </section>
 
       <section className={styles.reputationCard}>
@@ -3615,12 +3932,12 @@ function MyScreen({
 
       <section className={styles.myStatsGrid}>
         <StatBox label="최근 사진" value={String(reports.length)} />
-        <StatBox label="내 질문" value={String(myQuestions.length)} />
-        <StatBox label="답변 완료" value={String(answeredCount)} />
+        {qnaEnabled && <StatBox label="내 질문" value={String(myQuestions.length)} />}
+        {qnaEnabled && <StatBox label="답변 완료" value={String(answeredCount)} />}
         <StatBox label="저장" value={String(savedPosts.length)} />
       </section>
 
-      <section
+      {rewardsEnabled && <section
         ref={badgesRef}
         className={`${styles.badgeShelf} ${activeMenuTarget === "badges" ? styles.sectionFocus : ""}`}
         tabIndex={-1}
@@ -3629,15 +3946,15 @@ function MyScreen({
         {["태화강 지금컷", "부산 주차 도우미", "사진 스팟 헌터"].map((badge) => (
           <span key={badge}><BadgeCheck size={14} />{badge}</span>
         ))}
-      </section>
+      </section>}
 
-      <section className={styles.walletCard}>
+      {rewardsEnabled && <section className={styles.walletCard}>
         <div>
           <p className={styles.eyebrow}>질문권</p>
           <h3>기본 질문권 3개로 현장 질문을 보낼 수 있어요.</h3>
         </div>
         <strong>3개</strong>
-      </section>
+      </section>}
 
       <section
         ref={reportsRef}
@@ -3656,11 +3973,11 @@ function MyScreen({
               </div>
             </article>
           ))}
-          {latestReports.length === 0 && <p className={styles.emptyText}>최근 사진 활동이 없습니다. 지금컷을 올리면 이 기기 활동에 먼저 쌓입니다.</p>}
+          {latestReports.length === 0 && <p className={styles.emptyText}>내 활동 연결 기능을 준비 중입니다. 공개 제보는 내 기록으로 계산하지 않습니다.</p>}
         </div>
       </section>
 
-      <section
+      {qnaEnabled && <section
         ref={questionsRef}
         className={`${styles.sectionBlock} ${activeMenuTarget === "questions" ? styles.sectionFocus : ""}`}
         tabIndex={-1}
@@ -3679,7 +3996,7 @@ function MyScreen({
           ))}
           {latestQuestions.length === 0 && <p className={styles.emptyText}>아직 등록한 질문이 없습니다.</p>}
         </div>
-      </section>
+      </section>}
 
       <section className={styles.sectionBlock}>
         <SectionTitle title="팔로우한 장소" caption={`${followedPlaces.length}곳`} />
@@ -3757,6 +4074,43 @@ function MyScreen({
             <span>{hiddenCreatorNames.size > 0 ? `${hiddenCreatorNames.size}명 숨김 상태` : "신고한 작성자 없음"}</span>
           </div>
         </div>
+        <div className={styles.blockedUserList} aria-label="차단한 사용자">
+          <div className={styles.panelTitleRow}>
+            <h3>차단한 사용자</h3>
+            <span>{userBlocks.length}명</span>
+          </div>
+          {userBlocks.length > 0 ? userBlocks.map((block) => (
+            <div className={styles.blockedUserRow} key={block.id}>
+              <div>
+                <strong>{block.label}</strong>
+                <span>{minutesAgo(block.createdAt)} 차단</span>
+              </div>
+              <button type="button" onClick={() => void onUnblockUser(block.id)}>차단 해제</button>
+            </div>
+          )) : <p className={styles.emptyText}>차단한 사용자가 없습니다.</p>}
+        </div>
+      </section>
+
+      <section
+        ref={accountRef}
+        className={`${styles.accountSection} ${activeMenuTarget === "account" ? styles.sectionFocus : ""}`}
+        tabIndex={-1}
+        aria-labelledby="account-data-heading"
+      >
+        <div>
+          <p className={styles.eyebrow}>계정 및 데이터</p>
+          <h3 id="account-data-heading">이 기기의 익명 활동 삭제</h3>
+          <p>작성한 제보, 댓글, 사진과 차단 기록을 삭제합니다. 삭제 후에는 복구할 수 없습니다.</p>
+        </div>
+        <button
+          className={styles.accountDeleteButton}
+          type="button"
+          disabled={!accountDeleteAvailable}
+          onClick={() => setDeletionDialogOpen(true)}
+        >
+          계정 삭제
+        </button>
+        {!accountDeleteAvailable && <span>실시간 API가 연결된 운영 환경에서만 삭제할 수 있습니다.</span>}
       </section>
 
       <section className={styles.menuList}>
@@ -3770,75 +4124,43 @@ function MyScreen({
           />
         ))}
       </section>
-    </div>
-  );
-}
 
-function OperatorPanel({
-  hashtags,
-  places,
-  posts,
-  questions,
-}: {
-  hashtags: PublicHashtag[];
-  places: Place[];
-  posts: PublicPost[];
-  questions: Question[];
-}) {
-  return (
-    <aside className={styles.operatorPanel}>
-      <div className={styles.operatorHeader}>
-        <div>
-          <p className={styles.eyebrow}>운영 요약</p>
-          <h2>전국 현장 요약</h2>
-        </div>
-      </div>
-
-      <div className={styles.operatorMetrics}>
-        <StatBox label="장소" value={String(places.length)} />
-        <StatBox label="게시물" value={String(posts.length)} />
-        <StatBox label="질문" value={String(questions.length)} />
-      </div>
-
-      <section className={styles.desktopMapCard}>
-        <h3>실시간 지역 상태</h3>
-        <div className={styles.miniMap}>
-          {places.map((place) => (
-            <span key={place.id} className={`${styles.desktopPin} ${styles[place.tone]}`} style={{ left: `${place.x}%`, top: `${place.y}%` }} />
-          ))}
-        </div>
-      </section>
-
-      <section className={styles.desktopQueue}>
-        <h3>확산 중인 현장 피드</h3>
-        {posts.slice(0, 3).map((post) => {
-          const place = places.find((candidate) => candidate.id === post.placeId);
-
-          return (
-            <div key={post.id} className={styles.queueRow}>
-              <span>{place?.name ?? "현장"}</span>
-              <strong>{post.locationVerified ? "인증" : "미인증"}</strong>
+      {deletionDialogOpen && (
+        <div className={styles.flagModalOverlay} role="dialog" aria-modal="true" aria-labelledby="account-delete-title">
+          <section className={styles.flagModal}>
+            <div className={styles.flagModalHeader}>
+              <div>
+                <p className={styles.eyebrow}>되돌릴 수 없는 작업</p>
+                <h2 id="account-delete-title">익명 활동을 삭제할까요?</h2>
+              </div>
+              <button type="button" onClick={() => setDeletionDialogOpen(false)} aria-label="계정 삭제 닫기">
+                <X size={16} />
+              </button>
             </div>
-          );
-        })}
-        {posts.length === 0 && (
-          <div className={styles.queueRow}>
-            <span>아직 최근 제보가 없습니다</span>
-            <strong>대기</strong>
-          </div>
-        )}
-      </section>
-
-      <section className={styles.desktopQueue}>
-        <h3>해시태그 품질</h3>
-        {hashtags.slice(0, 4).map((tag) => (
-          <div key={tag.id} className={styles.queueRow}>
-            <span>#{tag.name}</span>
-            <strong>{tag.postCount}</strong>
-          </div>
-        ))}
-      </section>
-    </aside>
+            <p className={styles.flagModalHelp}>계속하려면 아래에 <strong>계정 삭제</strong>를 입력하세요.</p>
+            <label className={styles.deletionConfirmationField}>
+              확인 문구
+              <input
+                autoComplete="off"
+                value={deletionConfirmation}
+                onChange={(event) => setDeletionConfirmation(event.target.value)}
+                placeholder="계정 삭제"
+              />
+            </label>
+            <div className={styles.deletionActions}>
+              <button type="button" onClick={() => setDeletionDialogOpen(false)}>취소</button>
+              <button
+                type="button"
+                disabled={deletionConfirmation !== "계정 삭제" || deletingAccount}
+                onClick={() => void confirmAccountDeletion()}
+              >
+                {deletingAccount ? "삭제 중" : "영구 삭제"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3928,19 +4250,48 @@ function FlagReasonModal({
   );
 }
 
-function LiveReportCard({ report, place, onOpen }: { report: Report; place: Place; onOpen?: () => void }) {
+function LiveReportCard({
+  report,
+  place,
+  onOpen,
+  onVote,
+}: {
+  report: Report;
+  place: Place;
+  onOpen?: () => void;
+  onVote?: (voteType: "agree" | "changed") => void;
+}) {
+  const safePhotoSourceUrl = safeHttpUrl(report.photoSourceUrl);
+
   return (
-    <button className={styles.liveReportCard} type="button" onClick={onOpen}>
-      <div className={`${styles.reportPhoto} ${styles[report.tone]}`}>
-        {report.hasPhoto ? <Camera size={18} /> : <Sparkles size={18} />}
-      </div>
-      <div>
-        <span className={`${styles.statusChip} ${styles[report.tone]}`}>{report.verified ? "현장 인증" : "상태 제보"}</span>
-        <strong>{place.name}</strong>
-        <p>{report.body}</p>
-        <small>{report.meta}</small>
-      </div>
-    </button>
+    <article className={styles.liveReportCard}>
+      <button className={styles.liveReportOpen} type="button" onClick={onOpen} disabled={!onOpen}>
+        <span className={[styles.reportPhoto, report.hasPhoto ? styles.reportPhotoImage : styles[report.tone]].join(" ")} style={photoBackgroundStyle(report.photoUrl)}>
+          {report.hasPhoto ? <Camera size={18} /> : <Sparkles size={18} />}
+        </span>
+        <span className={styles.liveReportCopy}>
+          <span className={[styles.statusChip, report.isSample ? styles.sampleStatusChip : styles[report.tone]].join(" ")}>{report.isSample ? "체험용 샘플" : report.verified ? "현장 인증" : "상태 제보"}</span>
+          <strong>{place.name}</strong>
+          <p>{report.body}</p>
+          <small>{report.meta}</small>
+        </span>
+      </button>
+      {report.isSample && report.photoAttribution && (
+        safePhotoSourceUrl ? (
+          <a className={styles.samplePhotoCredit} href={safePhotoSourceUrl} target="_blank" rel="noreferrer">
+            사진 출처 · {report.photoAttribution}
+          </a>
+        ) : (
+          <span className={styles.samplePhotoCredit}>사진 출처 · {report.photoAttribution}</span>
+        )
+      )}
+      {onVote && (
+        <div className={styles.reportVoteActions} aria-label="현장 제보 상태 확인">
+          <button type="button" onClick={() => onVote("agree")}><CheckCircle2 size={14} />맞아요</button>
+          <button type="button" onClick={() => onVote("changed")}><AlertTriangle size={14} />지금은 달라요</button>
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -3948,6 +4299,7 @@ function FeedPostCard({
   post,
   place,
   reports,
+  onBlock,
   onFlag,
   onHelpful,
   onOpenPlace,
@@ -3960,6 +4312,7 @@ function FeedPostCard({
   post: PublicPost;
   place: Place;
   reports?: Pick<Report, "photoUrl" | "placeId" | "hasPhoto" | "createdAt">[];
+  onBlock: () => void;
   onFlag: () => void;
   onHelpful: () => void;
   onOpenPlace: () => void;
@@ -3970,7 +4323,10 @@ function FeedPostCard({
   saved: boolean;
 }) {
   const [actionsOpen, setActionsOpen] = useState(false);
-  const verificationTooltip = post.locationVerified
+  const isSample = Boolean(post.isSample);
+  const verificationTooltip = isSample
+    ? "체험용 샘플: 화면 확인용 예시이며 현재 방문 판단에는 반영되지 않습니다."
+    : post.locationVerified
     ? "현장 인증: 실제 GPS와 장소 반경만 검증하고 정확한 좌표는 저장하지 않습니다."
     : "상태 제보: 위치 인증 없이 작성되어 판단에는 낮은 가중치로 반영됩니다.";
   const photoUrl = photoUrlForPost(post, reports ?? []);
@@ -3979,27 +4335,27 @@ function FeedPostCard({
     <article className={styles.feedPostCard}>
       <button className={styles.feedPhoto} style={photoBackgroundStyle(photoUrl)} type="button" onClick={onOpenPlace}>
         <span>{post.photoLabel}</span>
-        <strong>{post.judgement}</strong>
+        <strong>{isSample ? "예시 화면" : post.judgement}</strong>
       </button>
       <div className={styles.feedPostBody}>
         <div className={styles.feedPostHeader}>
           <button type="button" onClick={onOpenPlace}>
             <strong>{place.name}</strong>
-            <span>{minutesAgo(post.createdAt)}</span>
+            <span>{isSample ? "예시 데이터" : minutesAgo(post.createdAt)}</span>
           </button>
           <div className={styles.feedPostChips}>
-            <span className={`${styles.statusChip} ${styles[place.tone]}`}>{postStatusText(post)}</span>
-            <span className={`${styles.verificationChip} ${post.locationVerified ? styles.verificationVerified : styles.verificationReport}`} title={verificationTooltip}>
-              {post.locationVerified ? <BadgeCheck size={12} /> : <MapPin size={12} />}
-              {post.locationVerified ? "현장 인증" : "상태 제보"}
+            <span className={`${styles.statusChip} ${isSample ? styles.sampleStatusChip : styles[place.tone]}`}>{isSample ? "예시 상태" : postStatusText(post)}</span>
+            <span className={`${styles.verificationChip} ${isSample ? styles.sampleStatusChip : post.locationVerified ? styles.verificationVerified : styles.verificationReport}`} title={verificationTooltip}>
+              {isSample ? <ShieldAlert size={12} /> : post.locationVerified ? <BadgeCheck size={12} /> : <MapPin size={12} />}
+              {isSample ? "체험용 샘플" : post.locationVerified ? "현장 인증" : "상태 제보"}
             </span>
           </div>
         </div>
         <p>{post.caption ?? `${place.name}의 현재 상태가 업데이트됐습니다.`}</p>
         <div className={styles.statusInline}>
-          <span>사람 {crowdLabels[post.crowdLevel]}</span>
-          <span>주차 {parkingLabels[post.parkingStatus]}</span>
-          <span>줄 {lineLabels[post.lineStatus]}</span>
+          <span>{isSample ? "예시 사람" : "사람"} {crowdLabels[post.crowdLevel]}</span>
+          <span>{isSample ? "예시 주차" : "주차"} {parkingLabels[post.parkingStatus]}</span>
+          <span>{isSample ? "예시 줄" : "줄"} {lineLabels[post.lineStatus]}</span>
         </div>
         <div className={styles.feedHashtags}>
           {post.hashtagNames.slice(0, 3).map((tag) => (
@@ -4008,7 +4364,7 @@ function FeedPostCard({
         </div>
         <div className={styles.feedActions}>
           <button className={helpfulActive ? styles.feedActionActive : ""} type="button" onClick={onHelpful}>
-            <Heart size={15} />도움돼요 {post.helpfulCount}
+            <Heart size={15} />도움돼요{isSample ? "" : ` ${post.helpfulCount}`}
           </button>
           <button
             className={actionsOpen ? styles.feedActionActive : ""}
@@ -4025,6 +4381,7 @@ function FeedPostCard({
               <Bookmark size={15} />{saved ? "저장됨" : "저장"}
             </button>
             <button type="button" onClick={onShare}><Share2 size={15} />공유</button>
+            <button type="button" onClick={onBlock}><UserX size={15} />작성자 차단</button>
             <button type="button" onClick={onFlag}><Flag size={15} />신고</button>
           </div>
         )}
@@ -4071,7 +4428,46 @@ function ChoiceGroup({ title, options, value, onChange }: { title: string; optio
       <h3>{title}</h3>
       <div>
         {options.map((option) => (
-          <button key={option} className={value === option ? styles.choiceActive : ""} type="button" onClick={() => onChange(option)}>{option}</button>
+          <button
+            key={option}
+            className={value === option ? styles.choiceActive : ""}
+            type="button"
+            onClick={() => onChange(option)}
+            aria-pressed={value === option}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MultiChoiceGroup({
+  title,
+  options,
+  values,
+  onToggle,
+}: {
+  title: string;
+  options: string[];
+  values: Set<string>;
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <section className={styles.choiceGroup}>
+      <h3>{title}</h3>
+      <div>
+        {options.map((option) => (
+          <button
+            key={option}
+            className={values.has(option) ? styles.choiceActive : ""}
+            type="button"
+            onClick={() => onToggle(option)}
+            aria-pressed={values.has(option)}
+          >
+            {option}
+          </button>
         ))}
       </div>
     </section>
@@ -4095,6 +4491,121 @@ function StatusMetric({ icon: Icon, label, value }: { icon: LucideIcon; label: s
       <strong>{value}</strong>
     </div>
   );
+}
+
+function visitDecisionLabel(status: CloudflarePlaceStatus["status"]) {
+  if (status === "likely_good") return "방문하기 괜찮을 가능성이 높아요";
+  if (status === "check_before_visit") return "출발 전 한 번 더 확인하세요";
+  if (status === "likely_crowded") return "혼잡하거나 이용이 어려울 수 있어요";
+  return "판단할 최신 정보가 부족해요";
+}
+
+function visitDecisionShortLabel(status: CloudflarePlaceStatus["status"]) {
+  if (status === "likely_good") return "방문 무난";
+  if (status === "check_before_visit") return "확인 필요";
+  if (status === "likely_crowded") return "혼잡 가능";
+  return "정보 부족";
+}
+
+function currentLivePlaceStatus(status: CloudflarePlaceStatus | undefined): CloudflarePlaceStatus | null {
+  if (!status || status.dataMode !== "live") {
+    return null;
+  }
+
+  const nowMs = Date.now();
+  const hasExpiredSignal = status.currentSignals.some((signal) => {
+    if (!signal.expiresAt) return false;
+    const expiryMs = Date.parse(signal.expiresAt);
+    return !Number.isFinite(expiryMs) || expiryMs <= nowMs;
+  });
+  return hasExpiredSignal ? null : status;
+}
+
+function liveSignalDimensionLabel(dimension: CloudflarePlaceStatus["currentSignals"][number]["dimension"]) {
+  const labels: Record<CloudflarePlaceStatus["currentSignals"][number]["dimension"], string> = {
+    weather: "날씨",
+    local_condition: "현장 상태",
+    crowd: "인파",
+    queue: "대기",
+    parking: "주차",
+    road_traffic: "주변 도로",
+    entry: "입장",
+    business_status: "운영",
+    stream: "라이브 영상",
+  };
+  return labels[dimension];
+}
+
+function liveSignalValueLabel(
+  dimension: CloudflarePlaceStatus["currentSignals"][number]["dimension"],
+  valueCode: string,
+) {
+  const labels: Record<string, string> = {
+    clear: "맑음",
+    calm: "안정",
+    rain: "비",
+    snow: "눈",
+    windy: "강풍 주의",
+    storm: "악천후",
+    quiet: "여유",
+    normal: "보통",
+    busy: "혼잡",
+    packed: "매우 혼잡",
+    none: "없음",
+    under_10: "10분 이하",
+    "10_to_30": "10~30분",
+    "30_to_60": "30~60분",
+    "60_plus": "60분 이상",
+    available: "여유",
+    limited: "일부 남음",
+    almost_full: "거의 만차",
+    full: "만차",
+    closed: "폐쇄",
+    strong_wind: "강풍",
+    slippery: "노면 미끄러움",
+    entry_restricted: "입장 제한",
+    event: "행사 진행",
+    temporary_closed: "임시 휴무로 보임",
+    smooth: "원활",
+    slow: "서행",
+    congested: "혼잡",
+    blocked: "통제",
+    restricted: "제한",
+    open: "운영 중",
+    healthy: "정상",
+    down: "연결 안 됨",
+  };
+  return labels[valueCode] ?? `${liveSignalDimensionLabel(dimension)} 정보`;
+}
+
+function liveSignalSourceLabel(sourceType: string) {
+  if (sourceType === "official_live" || sourceType === "official_periodic" || sourceType === "official_static") return "공식 데이터";
+  if (sourceType === "venue_operator") return "운영자 확인";
+  if (sourceType === "verified_ugc") return "현장 인증 제보";
+  if (sourceType === "ugc") return "사용자 제보";
+  if (sourceType === "consensus") return "복수 제보 종합";
+  return "예상 정보";
+}
+
+function formatObservedAt(value: string) {
+  return Number.isFinite(Date.parse(value)) ? `${minutesAgo(value)} 관측` : "관측시각 확인 필요";
+}
+
+function formatConfidence(value: number) {
+  return `신뢰도 ${Math.round(Math.min(1, Math.max(0, value)) * 100)}%`;
+}
+
+function formatExpiryHint(value?: string) {
+  if (!value || !Number.isFinite(Date.parse(value))) {
+    return "만료시각 확인 필요";
+  }
+
+  const remainingMinutes = Math.ceil((Date.parse(value) - Date.now()) / 60_000);
+  if (remainingMinutes <= 0) {
+    return "만료됨";
+  }
+
+  return remainingMinutes >= 60 ? `${Math.ceil(remainingMinutes / 60)}시간 내 만료` : `${remainingMinutes}분 내 만료`;
 }
 
 function verificationStatusCopy(status: LocationVerificationStatus) {
@@ -4160,29 +4671,12 @@ function MenuRow({ active = false, icon: Icon, label, onClick }: { active?: bool
   );
 }
 
-function reportsFallback(place: Place): Report {
-  return {
-    id: `${place.id}-fallback`,
-    placeId: place.id,
-    title: place.name,
-    body: "아직 최근 제보가 부족합니다. 현장에 있다면 첫 제보를 남겨주세요.",
-    meta: "대기 중 · 사진 없음",
-    tone: place.tone,
-    verified: false,
-    hasPhoto: false,
-    createdAt: new Date().toISOString(),
-    hiddenAt: null,
-    crowdLevel: place.crowdLevel,
-    lineStatus: place.lineStatus,
-    parkingStatus: place.parkingStatus,
-    weatherFeel: place.weatherFeel,
-  };
-}
-
 function mapPlaces(apiPlaces: ApiPlaceInput[], reports: Report[], questions: Question[]): Place[] {
   return apiPlaces.map((place, index) => {
     const latestReports = reports.filter((report) => report.placeId === place.id && !report.hiddenAt);
-    const latest = latestReports[0];
+    const currentReports = latestReports.filter((report) => !report.isSample);
+    const latest = currentReports[0];
+    const latestSample = latestReports.find((report) => report.isSample);
     const presentation = presentationByPlaceId[place.id] ?? {
       distance: `${index + 1}.0km`,
       x: 30 + index * 12,
@@ -4192,9 +4686,12 @@ function mapPlaces(apiPlaces: ApiPlaceInput[], reports: Report[], questions: Que
     const lineStatus = latest?.lineStatus ?? "none";
     const parkingStatus = latest?.parkingStatus ?? "unknown";
     const weatherFeel = latest?.weatherFeel ?? "good";
-    const reportCount = latestReports.length;
+    const reportCount = currentReports.length;
     const questionCount = questions.filter((question) => question.placeId === place.id && !question.answeredReportId).length;
-    const tone = toneFromStatus(crowdLevel, parkingStatus);
+    const hasCurrentObservation = Boolean(
+      latest?.crowdLevel || latest?.lineStatus || latest?.parkingStatus || latest?.weatherFeel,
+    );
+    const tone = hasCurrentObservation ? toneFromStatus(crowdLevel, parkingStatus) : "normal";
 
     return {
       id: place.id,
@@ -4205,23 +4702,24 @@ function mapPlaces(apiPlaces: ApiPlaceInput[], reports: Report[], questions: Que
       longitude: place.longitude,
       region: place.region,
       distance: presentation.distance,
-      status: crowdLabels[crowdLevel],
-      signal: signalFromTone(tone),
-      summary: latest?.body ?? `${crowdLabels[crowdLevel]} · 주차 ${parkingLabels[parkingStatus]} · 질문 ${questionCount}건`,
-      crowd: crowdLabels[crowdLevel],
-      parking: parkingLabels[parkingStatus],
-      line: lineLabels[lineStatus],
-      weather: weatherLabels[weatherFeel],
+      status: latest?.crowdLevel ? crowdLabels[crowdLevel] : "정보 없음",
+      signal: hasCurrentObservation ? signalFromTone(tone) : "정보 부족",
+      summary: latest?.body ?? latestSample?.body ?? "현재 판단할 최신 관측 정보가 없습니다.",
+      crowd: latest?.crowdLevel ? crowdLabels[crowdLevel] : "정보 없음",
+      parking: latest?.parkingStatus ? parkingLabels[parkingStatus] : "정보 없음",
+      line: latest?.lineStatus ? lineLabels[lineStatus] : "정보 없음",
+      weather: latest?.weatherFeel ? weatherLabels[weatherFeel] : "정보 없음",
       crowdLevel,
       parkingStatus,
       lineStatus,
       weatherFeel,
       updated: latest?.meta.split(" · ")[0] ?? "정보 대기",
-      score: Math.max(trustScoreForPlace(latestReports, questionCount), place.rankingScore ?? 0),
+      score: hasCurrentObservation ? trustScoreForPlace(latestReports, questionCount) : 0,
       x: presentation.x,
       y: presentation.y,
       tone,
-      visitors: `${reportCount + questionCount}건`,
+      visitors: reportCount > 0 ? `${reportCount}건` : latestSample ? "체험용 샘플" : "정보 없음",
+      isSample: !latest && Boolean(latestSample),
     };
   });
 }
@@ -4232,27 +4730,94 @@ function mapReports(reports: PublicReport[], apiPlaces: ApiPlace[]): Report[] {
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
     .map((report) => {
       const place = apiPlaces.find((candidate) => candidate.id === report.placeId);
-      const tone = toneFromStatus(report.crowdLevel, report.parkingStatus);
-      const weatherFeel = report.weatherFeel ?? "good";
+      const tone = toneFromStatus(report.crowdLevel ?? "normal", report.parkingStatus ?? "unknown");
 
       return {
         id: report.id,
         placeId: report.placeId,
         title: place?.name ?? "지금컷",
-        body: report.comment ?? `${crowdLabels[report.crowdLevel]} · 주차 ${parkingLabels[report.parkingStatus]}`,
-        meta: `${minutesAgo(report.createdAt)} · ${report.verifiedRadiusM ? "현장 인증" : "미인증"} · ${report.photoUrl ? "사진 있음" : "사진 없음"}`,
+        body: report.comment ?? reportObservationSummary(report),
+        meta: report.isSample
+          ? `체험용 샘플 · 운영 판단 제외 · ${report.photoUrl ? "사진 있음" : "사진 없음"}`
+          : `${minutesAgo(report.createdAt)} · 사용자 제보 · ${report.verifiedRadiusM ? "현장 인증" : "미인증"} · ${report.photoUrl ? "사진 있음" : "사진 없음"}`,
         tone,
         verified: Boolean(report.verifiedRadiusM),
         hasPhoto: Boolean(report.photoUrl),
         photoUrl: report.photoUrl,
+        photoAttribution: report.photoAttribution,
+        photoSourceUrl: report.photoSourceUrl,
+        isSample: report.isSample,
         createdAt: report.createdAt,
         hiddenAt: report.hiddenAt ?? null,
         crowdLevel: report.crowdLevel,
         lineStatus: report.lineStatus,
         parkingStatus: report.parkingStatus,
-        weatherFeel,
-      } satisfies Report & Pick<PublicReport, "crowdLevel" | "lineStatus" | "parkingStatus">;
+        weatherFeel: report.weatherFeel,
+      } satisfies Report;
     });
+}
+
+function reportObservationSummary(report: PublicReport) {
+  const summaries = new Set<string>();
+  const observationLabels: Record<string, Record<string, string>> = {
+    crowd: {
+      quiet: "인파 여유",
+      normal: "인파 보통",
+      busy: "인파 혼잡",
+      packed: "인파 매우 혼잡",
+    },
+    queue: {
+      none: "대기 없음",
+      under_10: "대기 10분 이하",
+      "10_to_30": "대기 10~30분",
+      "30_to_60": "대기 30~60분",
+      "60_plus": "대기 60분 이상",
+    },
+    parking: {
+      available: "주차 여유",
+      limited: "주차 일부 남음",
+      almost_full: "주차 거의 만차",
+      full: "주차 만차",
+      closed: "주차장 폐쇄",
+    },
+    local_condition: {
+      rain: "비",
+      snow: "눈",
+      strong_wind: "강풍",
+      slippery: "노면 미끄러움",
+      entry_restricted: "입장 제한",
+      event: "행사 진행",
+      temporary_closed: "임시 휴무로 보임",
+    },
+  };
+
+  for (const observation of report.observations ?? []) {
+    const label = observationLabels[observation.dimension]?.[observation.valueCode];
+    if (label) summaries.add(label);
+  }
+
+  if (report.crowdLevel) summaries.add(`인파 ${crowdLabels[report.crowdLevel]}`);
+  if (report.lineStatus) summaries.add(`대기 ${lineLabels[report.lineStatus]}`);
+  if (report.parkingStatus && report.parkingStatus !== "unknown") {
+    summaries.add(`주차 ${parkingLabels[report.parkingStatus]}`);
+  }
+  if (report.weatherFeel) summaries.add(`날씨 ${weatherLabels[report.weatherFeel]}`);
+
+  const localConditionLabels: Record<string, string> = {
+    rain: "비",
+    snow: "눈",
+    strong_wind: "강풍",
+    slippery: "노면 미끄러움",
+    entry_restricted: "입장 제한",
+    event: "행사 진행",
+    temporary_closed: "임시 휴무로 보임",
+  };
+  for (const condition of report.localConditions ?? []) {
+    const label = localConditionLabels[condition];
+    if (label) summaries.add(label);
+  }
+
+  return summaries.size > 0 ? [...summaries].join(" · ") : "관측한 항목만 등록된 현장 제보입니다.";
 }
 
 function mapQuestions(questions: PublicQuestion[]): Question[] {
@@ -4339,21 +4904,26 @@ function areMapBoundsEquivalent(current: MapBounds | null, next: MapBounds) {
 }
 
 function commentsForPlace(posts: PublicPost[], reports: Report[]): PlaceComment[] {
+  const postIds = new Set(posts.map((post) => post.id));
   const postComments = posts
     .filter((post) => post.caption)
-    .map((post) => ({
-      id: `post:${post.id}`,
-      author: post.creatorName,
-      body: post.caption ?? "",
-      meta: `${minutesAgo(post.createdAt)} · 도움 ${post.helpfulCount}`,
-      verified: post.locationVerified,
-    }));
-  const reportComments = reports.map((report) => ({
+    .map((post) => {
+      const isSample = Boolean(post.isSample) || post.id.startsWith("post_seed_") || post.id.startsWith("fallback_");
+
+      return {
+        id: `post:${post.id}`,
+        author: isSample ? "체험용 샘플" : post.creatorName,
+        body: post.caption ?? "",
+        meta: isSample ? "체험용 샘플 · 운영 판단 제외" : `${minutesAgo(post.createdAt)} · 도움 ${post.helpfulCount}`,
+        verified: isSample ? false : post.locationVerified,
+      };
+    });
+  const reportComments = reports.filter((report) => !postIds.has(report.id)).map((report) => ({
     id: `report:${report.id}`,
-    author: report.verified ? "현장 인증 제보자" : "상태 제보자",
+    author: report.isSample ? "체험용 샘플" : report.verified ? "현장 인증 제보자" : "상태 제보자",
     body: report.body,
     meta: report.meta,
-    verified: report.verified,
+    verified: report.isSample ? false : report.verified,
   }));
 
   return [...postComments, ...reportComments].slice(0, 8);
@@ -4369,6 +4939,7 @@ function workerCommentToPlaceComment(comment: WorkerComment): PlaceComment {
     likeCount: comment.likeCount,
     liked: false,
     workerCommentId: comment.id,
+    ownedByCurrentSession: comment.ownedByCurrentSession,
   };
 }
 
@@ -4382,6 +4953,8 @@ function updateCommentMetaLikeCount(meta: string, likeCount: number) {
 }
 
 function photosForPlace(posts: PublicPost[], reports: Report[], workerPhotos: WorkerPhoto[] = []): PlacePhoto[] {
+  const reportById = new Map(reports.map((report) => [report.id, report]));
+  const postIds = new Set(posts.map((post) => post.id));
   const uploadedPhotos = workerPhotos
     .filter((photo) => photo.status === "ready")
     .map((photo) => ({
@@ -4397,11 +4970,11 @@ function photosForPlace(posts: PublicPost[], reports: Report[], workerPhotos: Wo
     .map((post) => ({
       id: `post:${post.id}`,
       label: post.photoLabel,
-      meta: `${minutesAgo(post.createdAt)} · ${post.creatorBadge}`,
-      previewUrl: post.previewUrl ?? undefined,
+      meta: post.isSample ? "체험용 샘플 · 운영 판단 제외" : `${minutesAgo(post.createdAt)} · ${post.creatorBadge}`,
+      previewUrl: post.previewUrl ?? reportById.get(post.id)?.photoUrl ?? undefined,
     }));
   const reportPhotos = reports
-    .filter((report) => report.hasPhoto)
+    .filter((report) => report.hasPhoto && !postIds.has(report.id))
     .map((report) => ({
       id: `report:${report.id}`,
       label: report.title,
@@ -4417,11 +4990,25 @@ type PhotoBackgroundStyle = CSSProperties & {
 };
 
 function photoBackgroundStyle(photoUrl: string | null | undefined): PhotoBackgroundStyle | undefined {
-  if (!photoUrl) {
+  const safePhotoUrl = safeHttpUrl(photoUrl);
+  if (!safePhotoUrl) {
     return undefined;
   }
 
-  return { "--photo-url": `url(${JSON.stringify(photoUrl)})` };
+  return { "--photo-url": `url(${JSON.stringify(safePhotoUrl)})` };
+}
+
+function safeHttpUrl(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function photoUrlForPost(post: PublicPost, reports: Pick<Report, "photoUrl" | "placeId" | "hasPhoto" | "createdAt">[]) {
@@ -4479,6 +5066,36 @@ async function fetchWorkerPhotosForPlaces(placeIds: string[]): Promise<WorkerPho
   );
 
   return photoGroups.flat();
+}
+
+async function fetchWorkerCommentsForPlaces(placeIds: string[]): Promise<Record<string, PlaceComment[]>> {
+  const scopedPlaceIds = [...new Set(placeIds.filter(Boolean))].slice(0, workerPhotoPlaceScopeLimit);
+  const entries = await Promise.all(
+    scopedPlaceIds.map(async (placeId) => {
+      const comments = await fetchJson<WorkerComment[]>(
+        cloudflareApiUrl(buildScopedApiPath("/api/comments", { placeId, limit: 20 })),
+      ).catch(() => []);
+
+      return [placeId, comments.map(workerCommentToPlaceComment)] as const;
+    }),
+  );
+
+  return Object.fromEntries(entries);
+}
+
+async function fetchWorkerStatusesForPlaces(placeIds: string[]): Promise<Record<string, CloudflarePlaceStatus>> {
+  const scopedPlaceIds = [...new Set(placeIds.filter(Boolean))].slice(0, 5);
+  const entries = await Promise.all(
+    scopedPlaceIds.map(async (placeId) => {
+      const status = await fetchJsonWithTimeout<CloudflarePlaceStatus>(
+        cloudflareApiUrl(`/api/places/${encodeURIComponent(placeId)}/status`),
+      ).catch(() => null);
+
+      return status ? ([placeId, status] as const) : null;
+    }),
+  );
+
+  return Object.fromEntries(entries.filter((entry): entry is readonly [string, CloudflarePlaceStatus] => Boolean(entry)));
 }
 
 function locationPermissionCopy(permission: LocationPermissionState) {
@@ -4627,8 +5244,13 @@ function findVerticalScrollParent(element: HTMLElement) {
 }
 
 function trustScoreForPlace(reports: Report[], questionCount: number) {
-  const verified = reports.filter((report) => report.verified).length;
-  const photos = reports.filter((report) => report.hasPhoto).length;
+  const currentReports = reports.filter((report) => !report.isSample);
+  if (currentReports.length === 0) {
+    return 0;
+  }
+
+  const verified = currentReports.filter((report) => report.verified).length;
+  const photos = currentReports.filter((report) => report.hasPhoto).length;
 
   return Math.min(60 + verified * 8 + photos * 5 + questionCount * 2, 98);
 }
@@ -4661,29 +5283,58 @@ function persistSet(key: string, set: Set<string>) {
   window.localStorage.setItem(key, JSON.stringify([...set]));
 }
 
-function crowdValueFromLabel(label: string): CrowdLevel {
-  if (label === "사람 없음") return "quiet";
-  if (label === "매우 많음") return "packed";
-  if (label === "많음") return "busy";
-  return "normal";
+function crowdValueFromLabel(label: string): CrowdLevel | undefined {
+  if (label === "여유") return "quiet";
+  if (label === "보통") return "normal";
+  if (label === "혼잡") return "busy";
+  if (label === "매우 혼잡") return "packed";
+  return undefined;
 }
 
-function parkingValueFromLabel(label: string): ParkingStatus {
+function queueValueFromLabel(label: string): "none" | "under_10" | "10_to_30" | "30_to_60" | "60_plus" | undefined {
+  if (label === "없음") return "none";
+  if (label === "10분 이하") return "under_10";
+  if (label === "10~30분") return "10_to_30";
+  if (label === "30~60분") return "30_to_60";
+  if (label === "60분 이상") return "60_plus";
+  return undefined;
+}
+
+function parkingObservationFromLabel(label: string): "available" | "limited" | "almost_full" | "full" | "closed" | undefined {
+  if (label === "여유") return "available";
+  if (label === "일부 남음") return "limited";
+  if (label === "거의 만차") return "almost_full";
   if (label === "만차") return "full";
-  if (label === "거의 없음") return "limited";
-  if (label === "널널" || label === "여유 있음") return "available";
-  return "unknown";
+  if (label === "폐쇄") return "closed";
+  return undefined;
 }
 
-function lineValueFromLabel(label: string): LineStatus {
-  if (label === "매우 김") return "long";
-  if (label === "있음" || label === "보통") return "medium";
-  return "none";
+function localConditionValueFromLabel(label: string): string | undefined {
+  const values: Record<string, string> = {
+    비: "rain",
+    눈: "snow",
+    강풍: "strong_wind",
+    "노면 미끄러움": "slippery",
+    "입장 제한": "entry_restricted",
+    "행사 진행": "event",
+    "임시 휴무로 보임": "temporary_closed",
+  };
+  return values[label];
 }
 
-function weatherValueFromLabel(label: string): WeatherFeel {
-  if (label === "비") return "rainy";
-  return "good";
+function toggleLocalCondition(current: Set<string>, condition: string): Set<string> {
+  if (condition === "확인하지 못함") {
+    return new Set([condition]);
+  }
+
+  const next = new Set(current);
+  next.delete("확인하지 못함");
+  if (next.has(condition)) {
+    next.delete(condition);
+  } else {
+    next.add(condition);
+  }
+  return next;
 }
 
 function questionTypeFromText(text: string): QuestionType {

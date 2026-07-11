@@ -15,17 +15,42 @@ export const coordinateSchema = z.object({
   longitude: z.number().min(124).max(132),
 });
 
-export const createReportSchema = z.object({
-  placeId: z.string().min(1).max(80),
-  category: z.enum(reportCategories),
-  crowdLevel: z.enum(crowdLevels),
-  lineStatus: z.enum(lineStatuses),
-  parkingStatus: z.enum(parkingStatuses),
-  weatherFeel: z.enum(weatherFeels),
-  comment: z.string().trim().max(120).optional(),
-  photoUrl: z.string().url().max(2_048).optional(),
-  clientLocation: coordinateSchema.optional(),
-});
+const publicHttpUrlSchema = z
+  .string()
+  .url()
+  .max(2_048)
+  .refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  }, "공개 URL은 http 또는 https만 사용할 수 있습니다.");
+
+export const createReportSchema = z
+  .object({
+    placeId: z.string().min(1).max(80),
+    category: z.enum(reportCategories),
+    crowdLevel: z.enum(crowdLevels).optional(),
+    lineStatus: z.enum(lineStatuses).optional(),
+    queueStatus: z.enum(["none", "under_10", "10_to_30", "30_to_60", "60_plus"]).optional(),
+    parkingStatus: z.enum(parkingStatuses).optional(),
+    parkingObservation: z.enum(["available", "limited", "almost_full", "full", "closed"]).optional(),
+    weatherFeel: z.enum(weatherFeels).optional(),
+    localConditions: z.array(z.enum(["rain", "snow", "strong_wind", "slippery", "entry_restricted", "event", "temporary_closed"])).max(7).optional(),
+    comment: z.string().trim().max(120).optional(),
+    photoUrl: publicHttpUrlSchema.optional(),
+    clientLocation: coordinateSchema.optional(),
+  })
+  .refine(
+    (input) => Boolean(
+      input.crowdLevel
+      || input.lineStatus
+      || input.queueStatus
+      || input.parkingStatus
+      || input.parkingObservation
+      || input.weatherFeel
+      || input.localConditions?.length,
+    ),
+    { message: "실제로 확인한 현장 상태를 하나 이상 선택해 주세요." },
+  );
 
 export type CreateReportInput = z.infer<typeof createReportSchema>;
 

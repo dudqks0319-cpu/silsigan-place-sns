@@ -1,9 +1,11 @@
 import { fail, ok } from "@/lib/api";
 import { listPlaces } from "@/lib/mock-store";
+import { assertLocalDemoApiAvailable } from "@/lib/runtime-data-mode";
 import { listPlacesSchema } from "@/lib/validators";
 
 export async function GET(request: Request) {
   try {
+    assertLocalDemoApiAvailable();
     const url = new URL(request.url);
     const filters = listPlacesSchema.parse({
       regionId: url.searchParams.get("regionId") ?? url.searchParams.get("region") ?? undefined,

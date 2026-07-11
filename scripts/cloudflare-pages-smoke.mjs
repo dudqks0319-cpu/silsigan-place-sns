@@ -167,15 +167,24 @@ async function main() {
       checks,
     });
 
-    const screenshotPath = join(config.artifactDir, `pages-smoke-${Date.now()}.png`);
+    const artifactTimestamp = Date.now();
+    const homeScreenshotPath = join(config.artifactDir, `pages-smoke-home-${artifactTimestamp}.png`);
+    await writeFile(homeScreenshotPath, Buffer.from(result.homeScreenshotBase64, "base64"));
+    artifacts.homeScreenshot = homeScreenshotPath;
+
+    const mapScreenshotPath = join(config.artifactDir, `pages-smoke-map-${artifactTimestamp}.png`);
+    await writeFile(mapScreenshotPath, Buffer.from(result.mapScreenshotBase64, "base64"));
+    artifacts.mapScreenshot = mapScreenshotPath;
+
+    const screenshotPath = join(config.artifactDir, `pages-smoke-${artifactTimestamp}.png`);
     await writeFile(screenshotPath, Buffer.from(result.screenshotBase64, "base64"));
     artifacts.screenshot = screenshotPath;
 
-    const networkPath = join(config.artifactDir, `pages-smoke-network-${Date.now()}.json`);
+    const networkPath = join(config.artifactDir, `pages-smoke-network-${artifactTimestamp}.json`);
     await writeFile(networkPath, JSON.stringify(result.networkEvents, null, 2), "utf8");
     artifacts.network = networkPath;
 
-    const consolePath = join(config.artifactDir, `pages-smoke-console-${Date.now()}.log`);
+    const consolePath = join(config.artifactDir, `pages-smoke-console-${artifactTimestamp}.log`);
     await writeFile(consolePath, result.consoleMessages.join("\n"), "utf8");
     artifacts.console = consolePath;
   } catch (error) {
@@ -271,7 +280,18 @@ async function runBrowserSmoke(client, config) {
   record(config.checks, "pages.load", "pass", "Pages 프론트 첫 응답을 브라우저에서 확인했습니다.", { origin: config.pagesUrl.origin });
 
   await waitForEvaluate(client, "Boolean(document.querySelector('[aria-label=\"#실시간 앱 프론트엔드 디자인\"]'))", "app.canvas", config.timeoutMs);
+  if (config.apiBaseUrl) {
+    await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/places"), "app.hydrated", config.timeoutMs);
+  } else {
+    await waitForEvaluate(client, "document.readyState === 'complete'", "app.hydrated", config.timeoutMs);
+    await delay(250);
+  }
   await clickTextButton(client, "바로 둘러보기").catch(() => {});
+  await waitForEvaluate(client, `!document.querySelector('[aria-label="#실시간 첫 방문 안내"]')`, "onboarding.initialDismiss", config.timeoutMs);
+  record(config.checks, "onboarding.dismiss", "pass", "첫 방문 안내를 닫고 V2 홈에서 지도로 이동할 준비를 마쳤습니다.");
+  const homeScreenshot = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  await clickBottomNavButton(client, "지도");
+  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "bottomNav.mapInitial", config.timeoutMs);
   await waitForEvaluate(
     client,
     "Boolean(document.querySelector('[aria-label=\"클릭 가능한 전국 실시간 장소 지도\"], [aria-label=\"네이버 지도 기반 전국 실시간 장소 지도\"]'))",
@@ -281,13 +301,14 @@ async function runBrowserSmoke(client, config) {
   record(config.checks, "map.surface", "pass", "지도 surface가 렌더링됐습니다.");
   await assertMapSurfaceVisible(client, config.timeoutMs);
   record(config.checks, "map.visible", "pass", "지도 surface 크기와 내부 콘텐츠를 확인했습니다.");
+  const mapScreenshot = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await runMapControlChecks(client, config);
 
   if (config.apiBaseUrl) {
     await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/places"), "worker.placesRequest", config.timeoutMs);
     record(config.checks, "worker.placesRequest", "pass", "프론트 장소 목록이 Worker API base로 요청됐습니다.", { path: "/api/places" });
     const placeSearchQuery = config.placeName.slice(0, 3);
-    await fillSearchInput(client, "장소 검색", placeSearchQuery);
+    await fillSearchInput(client, "사진 올라온 장소 검색", placeSearchQuery);
     await waitFor(
       () => hasApiRequestWithSearchParam(networkEvents, config.apiBaseUrl, "/api/places", "GET", "q", placeSearchQuery),
       "worker.placesSearchRequest",
@@ -303,7 +324,7 @@ async function runBrowserSmoke(client, config) {
   }
 
   await assertRankingPanelsVisible(client, config);
-  record(config.checks, "rankings.visible", "pass", "전국/지역/지도 화면 안 TOP 10 랭킹 패널이 렌더링됐습니다.");
+  record(config.checks, "rankings.visible", "pass", "지도 화면 안 TOP 10 랭킹 패널이 렌더링됐습니다.");
   await clickRankingPlace(client, config.placeName);
   await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "rankings.detail", config.timeoutMs);
   record(config.checks, "rankings.detail", "pass", "랭킹 항목 클릭으로 장소 상세 시트를 브라우저에서 열었습니다.", { placeName: config.placeName });
@@ -359,6 +380,8 @@ async function runBrowserSmoke(client, config) {
   const screenshot = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 
   return {
+    homeScreenshotBase64: homeScreenshot.data,
+    mapScreenshotBase64: mapScreenshot.data,
     screenshotBase64: screenshot.data,
     networkEvents,
     consoleMessages,
@@ -439,10 +462,9 @@ async function runMutatingBrowserChecks(client, config, networkEvents) {
     await waitFor(() => hasApiReportRequest(networkEvents, config.apiBaseUrl, "place"), "reports.placeCreate", config.timeoutMs);
     record(config.checks, "reports.placeCreate", "pass", "장소 신고 UI가 Worker API로 POST 됐습니다.");
 
-    if (!(await clickFirstCommentReport(client))) {
+    if (!(await openFirstCommentReportDialog(client, config.timeoutMs))) {
       throw new SmokeError("COMMENT_REPORT_BUTTON_REQUIRED", "신규 Worker 댓글 신고 버튼을 찾지 못했습니다.");
     }
-    await waitForReportDialogOpen(client, config.timeoutMs);
     await clickModalReason(client, "기타");
     await waitFor(() => hasApiReportRequest(networkEvents, config.apiBaseUrl, "comment"), "reports.commentCreate", config.timeoutMs);
     await waitForReportDialogClosed(client, config.timeoutMs);
@@ -511,8 +533,8 @@ async function assertRankingPanelsVisible(client, config) {
         if (!(grid instanceof HTMLElement)) return false;
         const text = grid.innerText;
         const buttons = [...grid.querySelectorAll('button')];
-        return text.includes('전국 TOP 10') &&
-          text.includes('지도 화면 안 TOP 10') &&
+        return text.includes('지도 화면 안 TOP 10') &&
+          !text.includes('전국 TOP 10') &&
           buttons.length >= 1 &&
           buttons.some((button) => button.textContent?.includes(${JSON.stringify(config.placeName)}));
       })()
@@ -561,7 +583,7 @@ async function runMapControlChecks(client, config) {
   await clickHitTestedTextButton(client, "이 지역 다시 검색");
   await waitForEvaluate(
     client,
-    `document.body.innerText.includes('현재 지도 화면 안 TOP 10을 다시 정렬했습니다.')`,
+    `document.body.innerText.includes('현재 지도 화면 기준으로 다시 불러왔습니다.') || document.body.innerText.includes('현재 검색어 기준으로 장소를 다시 불러왔습니다.')`,
     "map.requeryButton",
     config.timeoutMs,
   );
@@ -833,6 +855,24 @@ async function clickTextButton(client, text) {
   }
 }
 
+async function clickBottomNavButton(client, text) {
+  const result = await evaluate(
+    client,
+    `
+      (() => {
+        const nav = document.querySelector('[class*="bottomNav"]');
+        const button = nav && [...nav.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === ${JSON.stringify(text)});
+        if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+        button.click();
+        return true;
+      })()
+    `,
+  );
+  if (result !== true) {
+    throw new SmokeError("BOTTOM_NAV_BUTTON_NOT_FOUND", `${text} 하단 내비게이션 버튼을 찾지 못했습니다.`);
+  }
+}
+
 async function clickHitTestedTextButton(client, text, options = {}) {
   const result = await clickHitTestedButton(client, {
     text,
@@ -986,6 +1026,21 @@ async function clickFirstCommentReport(client) {
   return result === true;
 }
 
+async function openFirstCommentReportDialog(client, timeoutMs) {
+  return waitFor(async () => {
+    if (await isReportDialogOpen(client)) {
+      return true;
+    }
+    if (!(await clickFirstCommentReport(client))) {
+      return false;
+    }
+    await delay(250);
+    return isReportDialogOpen(client);
+  }, "comment.reportDialogOpen", timeoutMs)
+    .then(() => true)
+    .catch(() => false);
+}
+
 async function clickFirstCommentLike(client) {
   const result = await clickHitTestedButton(client, {
     ariaIncludes: "댓글 도움돼요",
@@ -1037,8 +1092,9 @@ async function createFieldReportFromBrowser(client, config, networkEvents) {
   }
 
   await waitForEvaluate(client, `document.body.innerText.includes('올리기')`, "fieldReports.form", config.timeoutMs);
+  await clickHitTestedTextButton(client, "혼잡", { exact: true });
   await fillTextareaById(client, "reportText", `browser field report ${new Date().toISOString()}`);
-  await clickHitTestedTextButton(client, "상태 올리기");
+  await clickHitTestedTextButton(client, "사진 없이 상태만 올리기", { exact: true });
   await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/reports", "POST"), "fieldReports.create", config.timeoutMs);
   record(config.checks, "fieldReports.create", "pass", "상태 제보 작성 UI가 Worker /api/reports로 POST 됐습니다.");
 }
@@ -1060,10 +1116,6 @@ async function fillTextareaById(client, id, value) {
   if (result !== true) {
     throw new SmokeError("TEXTAREA_NOT_FOUND", `${id} 입력창을 찾지 못했습니다.`);
   }
-}
-
-async function waitForReportDialogOpen(client, timeoutMs) {
-  await waitForEvaluate(client, `Boolean(document.querySelector('[role="dialog"][aria-label="신고 이유 선택"]'))`, "report.dialogOpen", timeoutMs);
 }
 
 async function isReportDialogOpen(client) {

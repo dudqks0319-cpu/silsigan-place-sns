@@ -45,8 +45,10 @@ const maxMarkers = 100;
 const naverMapLoadTimeoutMs = 5_000;
 const naverMapRenderCheckTimeoutMs = 2_500;
 const naverMapRenderCheckIntervalMs = 250;
+const naverMapAutomaticRetryDelayMs = 900;
 
-type MapFailureReason = "sdk" | "resource" | "timeout";
+type MapFailureReason = "missing_key" | "auth" | "sdk" | "resource" | "timeout";
+const transientMapFailureReasons = new Set<MapFailureReason>(["sdk", "resource", "timeout"]);
 
 export function NaverMap<TPlace extends MapPlace>({
   places,
@@ -67,6 +69,7 @@ export function NaverMap<TPlace extends MapPlace>({
   const [ready, setReady] = useState(false);
   const [mapHealthy, setMapHealthy] = useState(false);
   const [failureReason, setFailureReason] = useState<MapFailureReason | null>(null);
+  const automaticRetryUsedRef = useRef(false);
   const visiblePlaces = useMemo(() => places.slice(0, maxMarkers), [places]);
   const visiblePlacesKey = visiblePlaces
     .map((place) => `${place.id}:${place.latitude.toFixed(5)},${place.longitude.toFixed(5)}:${place.signal}:${place.parking}:${place.line}`)
@@ -107,7 +110,7 @@ export function NaverMap<TPlace extends MapPlace>({
       const target = event.target as { src?: string; href?: string } | null;
       const source = target?.src ?? target?.href ?? "";
       if (isCriticalNaverMapResource(source)) {
-        setFailureReason("resource");
+        setFailureReason(source.includes("/v3/auth") || source.includes("auth_fail") ? "auth" : "resource");
       }
     };
 
@@ -115,6 +118,21 @@ export function NaverMap<TPlace extends MapPlace>({
 
     return () => window.removeEventListener("error", handleNaverResourceError, true);
   }, []);
+
+  useEffect(() => {
+    if (!failureReason || !transientMapFailureReasons.has(failureReason) || automaticRetryUsedRef.current) {
+      return;
+    }
+
+    automaticRetryUsedRef.current = true;
+    const timer = window.setTimeout(() => {
+      setReady(Boolean(window.naver?.maps));
+      setMapHealthy(false);
+      setFailureReason(null);
+    }, naverMapAutomaticRetryDelayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [failureReason]);
 
   useEffect(() => {
     if (failureReason) {
@@ -135,10 +153,10 @@ export function NaverMap<TPlace extends MapPlace>({
           setReady(true);
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         window.clearTimeout(timeout);
         if (active) {
-          setFailureReason("sdk");
+          setFailureReason(mapFailureReasonFromError(error));
         }
       });
 
@@ -245,7 +263,7 @@ export function NaverMap<TPlace extends MapPlace>({
         }
 
         if (hasKnownNaverMapFailure(mapRef.current)) {
-          setFailureReason("resource");
+          setFailureReason("auth");
           return;
         }
 
@@ -272,9 +290,9 @@ export function NaverMap<TPlace extends MapPlace>({
           title: place.name,
           zIndex: 100 + Math.max(0, visiblePlacesRef.current.findIndex((candidate) => candidate.id === place.id)),
           icon: {
-            content: `<button class="naver-marker naver-marker--${markerToneForPlace(place)}" type="button" data-silsigan-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(place.name)} ${escapeHtml(place.signal)} ${escapeHtml(markerLabel)}"></button>`,
-            size: new maps.Size(30, 30),
-            anchor: new maps.Point(15 - markerOffset.x, 15 - markerOffset.y),
+            content: `<button class="silsigan-map-marker silsigan-map-marker--${markerToneForPlace(place)}" type="button" data-silsigan-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(place.name)} ${escapeHtml(place.signal)} ${escapeHtml(markerLabel)}"><span>${escapeHtml(place.name)}</span></button>`,
+            size: new maps.Size(96, 44),
+            anchor: new maps.Point(48 - markerOffset.x, 22 - markerOffset.y),
           },
         });
         markerListeners.push(maps.Event.addListener(marker, "click", () => {
@@ -326,6 +344,11 @@ export function NaverMap<TPlace extends MapPlace>({
         places={visiblePlaces}
         onMapInteraction={onMapInteraction}
         onSelectPlace={onSelectPlace}
+        onRetry={() => {
+          setReady(Boolean(window.naver?.maps));
+          setMapHealthy(false);
+          setFailureReason(null);
+        }}
       />
     );
   }
@@ -349,6 +372,7 @@ export function NaverMap<TPlace extends MapPlace>({
           places={visiblePlaces}
           onMapInteraction={onMapInteraction}
           onSelectPlace={onSelectPlace}
+          onRetry={() => setFailureReason(null)}
         />
       )}
     </div>
@@ -363,6 +387,7 @@ function FallbackMap<TPlace extends MapPlace>({
   overlay = false,
   onMapInteraction,
   onSelectPlace,
+  onRetry,
   places,
 }: {
   currentLocation: ClientLocation | null;
@@ -372,6 +397,7 @@ function FallbackMap<TPlace extends MapPlace>({
   overlay?: boolean;
   onMapInteraction?: () => void;
   onSelectPlace: (place: TPlace) => void;
+  onRetry: () => void;
   places: TPlace[];
 }) {
   return (
@@ -382,6 +408,12 @@ function FallbackMap<TPlace extends MapPlace>({
       <div className="naver-map__fallback-status">
         <strong>{fallbackStatusTitle({ empty, failureReason, loading })}</strong>
         <span>{fallbackStatusBody({ empty, failureReason, loading })}</span>
+        {failureReason && (
+          <div className="naver-map__fallback-recovery">
+            <code>{mapFailureCode(failureReason)}</code>
+            <button type="button" onClick={onRetry}>지도 다시 시도</button>
+          </div>
+        )}
       </div>
       <div
         className="naver-map__fallback-canvas"
@@ -413,7 +445,7 @@ function FallbackMap<TPlace extends MapPlace>({
               onClick={() => onSelectPlace(place)}
               aria-label={`${place.name} 상세 열기`}
             >
-              <span aria-hidden="true" />
+              <span aria-hidden="true">{place.name}</span>
             </button>
           );
         })}
@@ -494,6 +526,7 @@ function fallbackStatusTitle({
 }) {
   if (empty) return "표시할 장소 없음";
   if (loading) return "지도 연결 중";
+  if (failureReason === "auth" || failureReason === "missing_key") return "지도 인증 확인 필요";
   if (failureReason === "timeout") return "지도 응답 지연";
   if (failureReason) return "대체 지도 표시 중";
   return "전국 실시간 지도";
@@ -510,8 +543,26 @@ function fallbackStatusBody({
 }) {
   if (empty) return "지역이나 필터를 바꾸면 지도 후보를 다시 볼 수 있어요.";
   if (loading) return "네이버 지도 연결 전에도 장소를 선택할 수 있어요.";
+  if (failureReason === "missing_key") return "지도 키가 설정되지 않았습니다. 장소 목록은 계속 사용할 수 있어요.";
+  if (failureReason === "auth") return "등록된 Web 서비스 URL과 현재 앱 주소를 확인해 주세요. 장소 목록은 계속 사용할 수 있어요.";
   if (failureReason) return "네이버 지도 연결이 불안정해 대체 지도로 표시합니다. 핀을 누르면 장소 사진과 상태를 볼 수 있어요.";
   return "마커를 누르면 장소 상세가 열립니다.";
+}
+
+function mapFailureReasonFromError(error: unknown): MapFailureReason {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "NAVER_MAP_CLIENT_ID_MISSING") return "missing_key";
+  if (code === "NAVER_MAP_SDK_TIMEOUT") return "timeout";
+  if (code === "NAVER_MAP_SDK_LOAD_FAILED") return "resource";
+  return "sdk";
+}
+
+function mapFailureCode(reason: MapFailureReason) {
+  if (reason === "missing_key") return "MAP_KEY_MISSING";
+  if (reason === "auth") return "MAP_AUTH_FAILED";
+  if (reason === "timeout") return "MAP_TIMEOUT";
+  if (reason === "resource") return "MAP_RESOURCE_FAILED";
+  return "MAP_SDK_FAILED";
 }
 
 function getMapCenter(places: MapPlace[], currentLocation: ClientLocation | null) {
@@ -595,6 +646,7 @@ function markerToneForPlace(place: MapPlace) {
   if (place.signal === "가도 좋음") return "good";
   if (place.signal === "대기 보통") return "normal";
   if (place.signal === "혼잡 주의") return "busy";
+  if (place.signal === "정보 부족" || place.signal === "체험용 샘플") return "unknown";
   return "avoid";
 }
 
@@ -639,11 +691,11 @@ function markerVisualOffsetForPlace(place: MapPlace, places: MapPlace[]) {
   }
 
   const offsets = [
-    { x: -34, y: -14 },
-    { x: 34, y: 14 },
-    { x: -28, y: 22 },
-    { x: 28, y: -22 },
-    { x: 0, y: 0 },
+    { x: -72, y: -34 },
+    { x: 72, y: 34 },
+    { x: -68, y: 38 },
+    { x: 68, y: -38 },
+    { x: 0, y: 56 },
   ];
   const clusterIndex = cluster.findIndex((candidate) => candidate.id === place.id);
 
@@ -651,7 +703,7 @@ function markerVisualOffsetForPlace(place: MapPlace, places: MapPlace[]) {
 }
 
 function arePlacesVisuallyClose(place: MapPlace, candidate: MapPlace) {
-  return Math.abs(place.latitude - candidate.latitude) <= 0.35 && Math.abs(place.longitude - candidate.longitude) <= 0.45;
+  return Math.abs(place.latitude - candidate.latitude) <= 0.8 && Math.abs(place.longitude - candidate.longitude) <= 0.8;
 }
 
 function escapeHtml(value: string) {

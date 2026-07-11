@@ -19,7 +19,7 @@ export default function PrivacyPage() {
             #실시간은 장소 주변 상황을 짧게 확인하기 위한 베타 서비스입니다. 정확한 사용자 좌표, 원본 사진 파일명, EXIF/GPS, 원본 IP처럼
             개인을 직접 식별하거나 추적할 수 있는 정보는 공개하지 않고, 운영에 필요한 최소 정보만 처리합니다.
           </p>
-          <p className={styles.updated}>기준일: 2026-06-27</p>
+          <p className={styles.updated}>기준일: 2026-07-10</p>
         </section>
 
         <section className={styles.grid} aria-label="개인정보 처리 항목">
@@ -29,13 +29,14 @@ export default function PrivacyPage() {
               <li>장소별 댓글, 사진, 좋아요, 신고, 랭킹을 제공하기 위해 익명 사용자 ID를 사용합니다.</li>
               <li>위치 권한은 현재 주변 장소 표시와 현장 인증 여부 판단에만 사용합니다.</li>
               <li>앱 품질과 abuse control을 위해 요청 ID, 응답 코드, redacted error code, latency 같은 최소 로그를 확인할 수 있습니다.</li>
+              <li>광고와 마케팅 기능은 현재 비활성화되어 있으며 광고 식별자를 수집하지 않습니다.</li>
             </ul>
           </article>
 
           <article className={styles.section}>
             <h2>위치정보</h2>
             <ul>
-              <li>사용자의 raw coordinate는 공개 응답, Cloudflare D1, R2, KV, Workers logs에 저장하지 않습니다.</li>
+              <li>사용자의 raw coordinate는 주변 조회와 거리 검증 중에만 사용하고 공개 응답, Cloudflare D1, R2, KV, Workers logs에 저장하지 않습니다.</li>
               <li>현장 인증 결과는 장소 ID, 거리 구간, 인증 시각, 만료 시각처럼 coarse data만 남깁니다.</li>
               <li>위치 권한을 거부해도 지역 선택과 읽기 기능은 사용할 수 있습니다.</li>
             </ul>
@@ -45,8 +46,18 @@ export default function PrivacyPage() {
             <h2>사진 및 R2 저장</h2>
             <ul>
               <li>사진은 JPEG 또는 WebP로 제한하고, 업로드 전후로 EXIF/GPS와 원본 파일명을 제거합니다.</li>
-              <li>Cloudflare R2에는 랜덤 object key와 재인코딩된 안전 이미지 variant만 저장합니다.</li>
+              <li>원본 업로드 파일은 보관하지 않으며 Cloudflare R2에는 랜덤 object key와 재인코딩된 안전 이미지 variant만 저장합니다.</li>
               <li>얼굴, 차량번호, 문서, 결제정보, 병원/관공서 민감정보가 보이는 사진은 제한됩니다.</li>
+            </ul>
+          </article>
+
+          <article className={styles.section}>
+            <h2>익명 사용과 선택적 회원 전환</h2>
+            <ul>
+              <li>현재 앱은 로그인 없이 탐색과 제보를 사용할 수 있는 익명 모드가 기본이며 외부 회원 로그인은 활성화하지 않았습니다.</li>
+              <li>익명 활동은 현재 기기 세션에 연결되므로 기기 변경 시 복구나 동기화가 제한됩니다.</li>
+              <li>향후 회원 전환을 제공할 때는 서버가 검증한 인증 subject의 해시만 기존 익명 활동에 연결하고 원문 subject를 공개 응답에 포함하지 않습니다.</li>
+              <li>회원 기능을 활성화하기 전 계정 복구, 여러 기기 동기화, 탈퇴 및 계정 삭제 절차를 별도 검증합니다.</li>
             </ul>
           </article>
 

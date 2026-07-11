@@ -1,10 +1,10 @@
 .redesign {
   min-height: 100dvh;
   background:
-    radial-gradient(circle at 20% 10%, rgba(39, 203, 107, 0.18), transparent 32%),
-    radial-gradient(circle at 85% 18%, rgba(59, 130, 246, 0.15), transparent 30%),
-    linear-gradient(135deg, #f7fbf8 0%, #edf5f1 44%, #f8fafc 100%);
-  color: #17211a;
+    radial-gradient(circle at 18% 8%, rgba(0, 122, 255, 0.1), transparent 34%),
+    radial-gradient(circle at 86% 16%, rgba(88, 86, 214, 0.08), transparent 30%),
+    linear-gradient(135deg, #f5f5f7 0%, #eef2f7 48%, #f8fafc 100%);
+  color: #1d1d1f;
   font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", sans-serif;
   letter-spacing: 0;
 }
@@ -49,8 +49,8 @@
   overflow: hidden;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 38px;
-  background: #f8faf9;
-  box-shadow: 0 34px 90px rgba(15, 23, 42, 0.18), inset 0 0 0 8px rgba(255, 255, 255, 0.64);
+  background: #f5f5f7;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.14), inset 0 0 0 8px rgba(255, 255, 255, 0.72);
 }
 
 .statusBar {
@@ -62,7 +62,7 @@
   font-size: 12px;
   font-weight: 800;
   color: #111827;
-  background: rgba(248, 250, 249, 0.92);
+  background: rgba(245, 245, 247, 0.92);
   backdrop-filter: blur(14px);
   position: relative;
   z-index: 5;
@@ -75,7 +75,7 @@
 
 .topHeader {
   padding: 6px 20px 12px;
-  background: rgba(248, 250, 249, 0.88);
+  background: rgba(245, 245, 247, 0.88);
   backdrop-filter: blur(18px);
   border-bottom: 1px solid rgba(15, 23, 42, 0.05);
   position: relative;
@@ -91,7 +91,7 @@
 
 .eyebrow {
   margin: 0 0 3px;
-  color: #16a34a;
+  color: #6e6e73;
   font-size: 11px;
   font-weight: 900;
   letter-spacing: -0.01em;
@@ -114,8 +114,8 @@
 }
 
 .iconButton {
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   border: 1px solid rgba(15, 23, 42, 0.07);
   border-radius: 14px;
   background: #fff;
@@ -125,9 +125,9 @@
 }
 
 .iconButtonActive {
-  border-color: rgba(22, 163, 74, 0.28);
-  background: #ecfdf3;
-  color: #15803d;
+  border-color: rgba(0, 122, 255, 0.24);
+  background: #eef5ff;
+  color: #0066cc;
 }
 
 .dataModeBanner {
@@ -137,10 +137,10 @@
   gap: 8px;
   align-items: center;
   padding: 8px 10px;
-  border: 1px solid rgba(22, 163, 74, 0.12);
+  border: 1px solid rgba(0, 122, 255, 0.14);
   border-radius: 14px;
-  background: #f0fdf4;
-  color: #166534;
+  background: #eef5ff;
+  color: #0055b3;
 }
 
 .dataModeBanner strong {
@@ -151,7 +151,7 @@
 
 .dataModeBanner span {
   min-width: 0;
-  color: #166534;
+  color: #0055b3;
   font-size: 11px;
   line-height: 1.35;
   font-weight: 750;
@@ -172,9 +172,9 @@
   margin-top: 10px;
   padding: 10px 12px;
   border-radius: 16px;
-  background: #ecfdf3;
-  border: 1px solid rgba(22, 163, 74, 0.12);
-  color: #166534;
+  background: #eef5ff;
+  border: 1px solid rgba(0, 122, 255, 0.14);
+  color: #0055b3;
   font-size: 12px;
   line-height: 1.35;
   font-weight: 700;
@@ -210,6 +210,7 @@
 .ctaCard,
 .placeSummaryCard,
 .trustCard,
+.sourceEvidenceCard,
 .fieldQuestCard,
 .warningCard,
 .formIntroCard,
@@ -227,10 +228,10 @@
 .moderationList,
 .questionCard,
 .mapBottomSheet {
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.06);
+  border: 1px solid #e5e5ea;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 10px 30px rgba(0, 0, 0, 0.035);
 }
 
 .searchCard {
@@ -435,25 +436,42 @@
   min-height: 44px;
   border: 0;
   border-radius: 15px;
-  background: #0f172a;
+  background: #1d1d1f;
   color: #ffffff;
   font-size: 13px;
   font-weight: 950;
 }
 
 .photoLeadActions button:last-child {
-  background: #ecfdf3;
-  color: #15803d;
+  background: #eef3f8;
+  color: #0066cc;
+}
+
+.photoLeadCredit {
+  width: fit-content;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 0;
+  color: #86868b;
+  font-size: 10px;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+a.photoLeadCredit:hover {
+  color: #0066cc;
+  text-decoration: underline;
 }
 
 .sampleDataNotice {
   display: grid;
   gap: 4px;
   padding: 12px 14px;
-  border: 1px solid rgba(245, 158, 11, 0.22);
+  border: 1px solid #e5e5ea;
   border-radius: 16px;
-  background: #fffbeb;
-  color: #92400e;
+  background: #f5f5f7;
+  color: #515154;
 }
 
 .sampleDataNotice strong {
@@ -596,6 +614,8 @@
 .filterChips button,
 .choiceGroup button,
 .exampleGrid button {
+  min-width: 44px;
+  min-height: 44px;
   border: 1px solid rgba(15, 23, 42, 0.06);
   border-radius: 999px;
   background: #f8fafc;
@@ -691,24 +711,70 @@
 
 .liveReportCard {
   width: 100%;
-  padding: 11px;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  border-radius: 18px;
+  padding: 12px;
+  border: 1px solid #e5e5ea;
+  border-radius: 20px;
   background: #fff;
   display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
   text-align: left;
 }
 
+.liveReportOpen {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  color: inherit;
+  text-align: left;
+}
+
+.liveReportOpen:disabled {
+  cursor: default;
+}
+
+.liveReportCopy {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  justify-items: start;
+}
+
 .reportPhoto {
-  min-height: 76px;
+  width: 92px;
+  min-height: 118px;
   border-radius: 16px;
   display: grid;
   place-items: center;
   color: #fff;
   position: relative;
   overflow: hidden;
+  background-position: center;
+  background-size: cover;
+}
+
+.reportPhotoImage {
+  background-color: #d1d1d6;
+  background-image:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.16)),
+    var(--photo-url);
+}
+
+.reportPhoto svg {
+  position: relative;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(8px);
 }
 
 .reportPhoto::after,
@@ -724,20 +790,24 @@
 .liveReportCard strong {
   display: block;
   margin: 7px 0 4px;
-  font-size: 14px;
+  color: #1d1d1f;
+  font-size: 16px;
+  line-height: 1.25;
 }
 
 .liveReportCard p {
   margin: 0 0 6px;
-  color: #475569;
-  font-size: 12px;
-  line-height: 1.35;
+  color: #515154;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .liveReportCard small {
-  color: #94a3b8;
+  color: #86868b;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .statusChip {
@@ -746,9 +816,81 @@
   width: fit-content;
   padding: 5px 8px;
   border-radius: 999px;
-  color: #fff;
+  color: #515154;
+  background: #f2f2f7;
   font-size: 10px;
   font-weight: 900;
+}
+
+.sampleStatusChip {
+  color: #5856d6;
+  background: #f0efff;
+}
+
+.statusChip.calm {
+  color: #1f6b50;
+  background: #eaf5f0;
+}
+
+.statusChip.normal {
+  color: #0066cc;
+  background: #eef5ff;
+}
+
+.statusChip.busy {
+  color: #9a5800;
+  background: #fff4df;
+}
+
+.statusChip.danger {
+  color: #b42318;
+  background: #fff0ef;
+}
+
+.samplePhotoCredit {
+  width: fit-content;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 0;
+  color: #86868b;
+  font-size: 10px;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+a.samplePhotoCredit:hover {
+  color: #0066cc;
+  text-decoration: underline;
+}
+
+.reportVoteActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f0f2;
+}
+
+.reportVoteActions button {
+  min-width: 0;
+  min-height: 44px;
+  border: 0;
+  border-radius: 14px;
+  background: #f5f5f7;
+  color: #3a3a3c;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.reportVoteActions button:first-child {
+  color: #0066cc;
+  background: #eef5ff;
 }
 
 .decisionRail {
@@ -1023,7 +1165,7 @@
 }
 
 .hashtagCloud button {
-  min-height: 34px;
+  min-height: 44px;
   padding: 7px 10px;
   display: inline-flex;
   align-items: center;
@@ -1166,8 +1308,8 @@
   width: 28px;
   height: 28px;
   border-radius: 10px;
-  background: #ecfdf3;
-  color: #16a34a;
+  background: #f2f2f7;
+  color: #515154;
   display: grid;
   place-items: center;
   font-weight: 950;
@@ -1189,6 +1331,62 @@
   color: #64748b;
   font-size: 12px;
   line-height: 1.35;
+}
+
+.homePlaceCopy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.homePlaceTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.homePlaceTitleRow strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.homePlaceSignal {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 6px;
+  color: #475569;
+  background: #f1f5f9;
+  font-size: 10px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.homePlaceSignal[data-decision="likely_good"] {
+  color: #1f6b50;
+  background: #eaf5f0;
+}
+
+.homePlaceSignal[data-decision="check_before_visit"] {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.homePlaceSignal[data-decision="likely_crowded"] {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.homePlaceEvidence {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .visitors {
@@ -1415,7 +1613,7 @@
 }
 
 .mapToolRow button {
-  min-height: 40px;
+  min-height: 44px;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 15px;
   background: #ffffff;
@@ -1533,8 +1731,35 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
   padding: 8px 10px;
   pointer-events: none;
+}
+
+.realMapFrame :global(.naver-map__fallback-recovery) {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.realMapFrame :global(.naver-map__fallback-recovery code) {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.realMapFrame :global(.naver-map__fallback-recovery button) {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .realMapFrame :global(.naver-map__checking-status) {
@@ -1672,22 +1897,24 @@
   position: absolute;
   z-index: 4;
   transform: translate(-50%, -50%);
-  width: 30px;
-  height: 30px;
+  min-width: 44px;
+  max-width: 112px;
+  height: 44px;
   border: 2px solid rgba(255, 255, 255, 0.92);
   border-radius: 999px;
   box-shadow: 0 14px 24px rgba(15, 23, 42, 0.2);
-  display: grid;
-  place-items: center;
-  padding: 0;
+  padding: 0 10px;
   color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .realMapFrame :global(.naver-map__fallback-marker span) {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .realMapFrame :global(.naver-map__fallback-marker:focus-visible) {
@@ -1711,6 +1938,10 @@
   background: #b91c1c;
 }
 
+.realMapFrame :global(.naver-map__fallback-marker--unknown) {
+  background: #667085;
+}
+
 .realMapFrame :global(.naver-map__current-location) {
   position: absolute;
   z-index: 3;
@@ -1723,29 +1954,45 @@
   transform: translate(-50%, -50%);
 }
 
-.realMapFrame :global(.naver-marker) {
-  width: 30px;
-  height: 30px;
+.realMapFrame :global(.silsigan-map-marker) {
+  min-width: 44px;
+  max-width: 112px;
+  height: 44px;
+  padding: 0 10px;
   border: 2px solid #ffffff;
   border-radius: 999px;
   color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.2);
 }
 
-.realMapFrame :global(.naver-marker--good) {
+.realMapFrame :global(.silsigan-map-marker span) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.realMapFrame :global(.silsigan-map-marker--good) {
   background: #15803d;
 }
 
-.realMapFrame :global(.naver-marker--normal) {
+.realMapFrame :global(.silsigan-map-marker--normal) {
   background: #0f766e;
 }
 
-.realMapFrame :global(.naver-marker--busy) {
+.realMapFrame :global(.silsigan-map-marker--busy) {
   background: #b45309;
 }
 
-.realMapFrame :global(.naver-marker--avoid) {
+.realMapFrame :global(.silsigan-map-marker--avoid) {
   background: #b91c1c;
+}
+
+.realMapFrame :global(.silsigan-map-marker--unknown) {
+  background: #667085;
 }
 
 .mapSelectedPlaceBar {
@@ -1793,7 +2040,7 @@
 }
 
 .mapSelectedActions button {
-  min-height: 40px;
+  min-height: 44px;
   border: 0;
   border-radius: 14px;
   background: #0f172a;
@@ -2628,6 +2875,7 @@
 
 .placeSummaryCard,
 .trustCard,
+.sourceEvidenceCard,
 .fieldQuestCard,
 .warningCard,
 .formIntroCard,
@@ -2657,7 +2905,7 @@
 
 .placeStatsRow {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   gap: 7px;
   margin-bottom: 12px;
 }
@@ -2705,8 +2953,10 @@
 
 .trustCard strong {
   display: block;
-  font-size: 30px;
-  line-height: 1;
+  max-width: 280px;
+  font-size: 18px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .trustCard span {
@@ -2716,14 +2966,13 @@
 }
 
 .trustRing {
-  --score: 80%;
   width: 64px;
   height: 64px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   color: #16a34a;
-  background: conic-gradient(#22c55e var(--score), #e2e8f0 0);
+  background: #dcfce7;
   position: relative;
 }
 
@@ -2737,6 +2986,51 @@
 
 .trustRing svg {
   position: relative;
+}
+
+.sourceEvidenceCard {
+  padding: 16px;
+}
+
+.sourceEvidenceItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.sourceEvidenceItem > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.sourceEvidenceItem strong {
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.sourceEvidenceItem span,
+.sourceEvidenceItem time,
+.sourceEvidenceEmpty {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.45;
+  font-weight: 750;
+}
+
+.sourceEvidenceMeta {
+  display: grid;
+  gap: 4px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sourceEvidenceEmpty {
+  margin: 10px 0 0;
 }
 
 .warningCard {
@@ -3109,6 +3403,7 @@
 
 .photoUploadCard > button {
   width: fit-content;
+  min-height: 44px;
   padding: 11px 12px;
   background: #0f172a;
   color: #fff;
@@ -3239,7 +3534,7 @@
 }
 
 .verifyCard button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 12px;
   background: #0f172a;
   color: #fff;
@@ -3328,6 +3623,373 @@
   font-size: 12px;
   font-weight: 800;
   line-height: 1.45;
+}
+
+.homeWeather {
+  padding: 16px;
+  border: 1px solid #e5e5ea;
+  border-radius: 18px;
+  background: #ffffff;
+  display: grid;
+  gap: 8px;
+}
+
+.homeDecisionHero {
+  overflow: hidden;
+  padding: 20px;
+  border-radius: 24px;
+  color: #1d1d1f;
+  display: grid;
+  gap: 17px;
+  border: 1px solid #e5e5ea;
+  background:
+    radial-gradient(circle at 94% 4%, rgba(0, 122, 255, 0.13), transparent 34%),
+    linear-gradient(145deg, #ffffff, #f5f7fb);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.055);
+}
+
+.homeDecisionHero > div:first-child {
+  display: grid;
+  gap: 7px;
+}
+
+.homeDecisionEyebrow {
+  margin: 0;
+  color: #0066cc;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.homeDecisionHero h2,
+.homeDecisionHero p {
+  margin: 0;
+}
+
+.homeDecisionHero h2 {
+  max-width: 290px;
+  font-size: 25px;
+  line-height: 1.22;
+  letter-spacing: -0.04em;
+}
+
+.homeDecisionHero > div:first-child > p:last-child {
+  max-width: 300px;
+  color: #6e6e73;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.homeDecisionActions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.homeDecisionActions button {
+  min-height: 46px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.homeDecisionPrimary {
+  border: 0;
+  background: #007aff;
+  color: #fff;
+}
+
+.homeDecisionSecondary {
+  border: 1px solid #dedee3;
+  background: #ffffff;
+  color: #1d1d1f;
+}
+
+.homeTrustPromise {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e5ea;
+  color: #515154;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.homeTrustPromise svg {
+  flex: 0 0 auto;
+  color: #007aff;
+}
+
+.homeEvidencePulse {
+  padding: 14px 15px;
+  border: 1px solid #e5e5ea;
+  border-radius: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  background: #ffffff;
+}
+
+.homeEvidencePulse > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.homeEvidencePulse strong {
+  color: #1d1d1f;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.homeEvidencePulse span {
+  color: #6e6e73;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.homeEvidencePulse > svg {
+  color: #007aff;
+}
+
+.homeWeatherHeader,
+.nearbyHeadingActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.homeWeatherHeader h2,
+.homeWeatherHeader p,
+.homeWeather > p {
+  margin: 0;
+}
+
+.homeWeatherHeader h2 {
+  margin-top: 2px;
+  font-size: 16px;
+}
+
+.homeWeatherHeader svg {
+  color: #2563eb;
+}
+
+.homeWeatherValue {
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.homeWeather > p,
+.homeWeatherEmpty p {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.homeWeatherMeta {
+  padding-top: 8px;
+  border-top: 1px solid #e5e5ea;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 5px 12px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.homeWeatherEmpty {
+  display: grid;
+  gap: 4px;
+}
+
+.homeWeatherEmpty p {
+  margin: 0;
+}
+
+.homeCategorySection {
+  overflow: hidden;
+}
+
+.homeCategoryRail {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.homeCategoryRail::-webkit-scrollbar {
+  display: none;
+}
+
+.homeCategoryRail button {
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.homeCategoryRail .homeCategoryActive {
+  border-color: #1d1d1f;
+  background: #1d1d1f;
+  color: #fff;
+}
+
+.nearbyHeadingActions > div {
+  flex: 1;
+}
+
+.nearbyMapButton {
+  min-width: 72px;
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 11px;
+  background: #fff;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-weight: 900;
+}
+
+.blockedUserList {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.blockedUserRow {
+  min-height: 52px;
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #fff;
+}
+
+.blockedUserRow div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.blockedUserRow strong,
+.blockedUserRow span {
+  overflow-wrap: anywhere;
+}
+
+.blockedUserRow span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.blockedUserRow button {
+  min-width: 84px;
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #334155;
+  font-weight: 800;
+}
+
+.accountSection {
+  padding: 16px;
+  border: 1px solid #fecaca;
+  border-radius: 16px;
+  display: grid;
+  gap: 12px;
+  background: #fff;
+}
+
+.accountSection h3,
+.accountSection p {
+  margin: 0;
+}
+
+.accountSection p:not(.eyebrow),
+.accountSection > span {
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.accountDeleteButton {
+  min-height: 44px;
+  border: 1px solid #dc2626;
+  border-radius: 12px;
+  background: #fff;
+  color: #b91c1c;
+  font-weight: 900;
+}
+
+.accountDeleteButton:disabled {
+  border-color: #e2e8f0;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.deletionConfirmationField {
+  display: grid;
+  gap: 7px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.deletionConfirmationField input {
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 11px;
+  font: inherit;
+}
+
+.deletionActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.deletionActions button {
+  min-height: 46px;
+  border: 1px solid #cbd5e1;
+  border-radius: 11px;
+  background: #fff;
+  color: #334155;
+  font-weight: 900;
+}
+
+.deletionActions button:last-child {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
+}
+
+.deletionActions button:disabled {
+  border-color: #e2e8f0;
+  background: #e2e8f0;
+  color: #94a3b8;
 }
 
 .myStatsGrid,
@@ -3632,11 +4294,11 @@
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: center;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid #e5e5ea;
   border-radius: 26px;
   background: #ffffff;
   backdrop-filter: blur(18px);
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.12);
   isolation: isolate;
   z-index: 10;
 }
@@ -3821,7 +4483,7 @@
 }
 
 .navActive {
-  color: #16a34a;
+  color: #007aff;
 }
 
 .reportNav svg {
@@ -3830,8 +4492,8 @@
   padding: 10px;
   color: #fff;
   border-radius: 17px;
-  background: linear-gradient(135deg, #16a34a, #22c55e);
-  box-shadow: 0 10px 18px rgba(34, 197, 94, 0.32);
+  background: #007aff;
+  box-shadow: 0 8px 18px rgba(0, 122, 255, 0.28);
 }
 
 .reportNav span {
@@ -3948,6 +4610,26 @@
 
   .mapBottomSheet {
     margin-top: -86px;
+  }
+}
+
+@media (max-width: 370px) {
+  .phoneBody {
+    padding-inline: 13px;
+  }
+
+  .homeDecisionActions {
+    grid-template-columns: 1fr;
+  }
+
+  .liveReportOpen {
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .reportPhoto {
+    width: 84px;
+    min-height: 112px;
   }
 }
 

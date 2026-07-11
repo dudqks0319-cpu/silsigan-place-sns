@@ -57,6 +57,18 @@ ON CONFLICT(id) DO UPDATE SET
   is_active = excluded.is_active,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
 
+INSERT INTO place_decision_profiles (place_id, profile_id, assigned_by, manually_verified)
+VALUES
+  ('busan-gwangalli', 'profile-beach', 'core_seed', 1),
+  ('ulsan-taehwagang', 'profile-park', 'core_seed', 1),
+  ('gyeongju-hwangridan', 'profile-restaurant', 'core_seed', 1),
+  ('seoul-yeouido', 'profile-park', 'core_seed', 1)
+ON CONFLICT(place_id) DO UPDATE SET
+  profile_id = excluded.profile_id,
+  assigned_by = excluded.assigned_by,
+  manually_verified = excluded.manually_verified,
+  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+
 INSERT INTO place_rankings (id, place_id, region_id, score, rank, window_hours)
 VALUES
   ('rank_24_busan-gwangalli', 'busan-gwangalli', 'busan', 98, 1, 24),

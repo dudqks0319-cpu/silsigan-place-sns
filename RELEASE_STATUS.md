@@ -2,59 +2,48 @@
 
 ## 한 줄 상태
 
-로컬 Cloudflare 전환 검증과 staging/production D1 `0002` 원격 적용 증적은 준비됐지만, Cloudflare R2 활성화, staging/production 배포 URL, real staging smoke가 남아 있어 public release는 `blocked-external`이다.
+V2 로컬 구현은 `184/184` 테스트와 무경고 production build를 통과했지만, 원격 D1 V2 migration, R2, API Worker/URL, NAVER origin 제한, source 권리, 법무·운영 서명, native 실기기 증거가 남아 public release는 `blocked-external`이다.
 
-상세 source of truth는 [docs/current-release-state.md](docs/current-release-state.md)이다. 이 파일은 공통 release harness가 읽는 요약 index다.
-
-2026-07-10 GitHub 스냅샷과 이번 검증 결과는 [docs/github-progress-2026-07-10.md](docs/github-progress-2026-07-10.md)에 기록했다. 현재 검토 브랜치는 `codex/silsigan-progress-20260710`이며, 로컬 `pnpm lint`, `pnpm typecheck`, `pnpm test`는 133 / 133 통과했다. 외부 release blocker는 이 문서의 `막힌 항목`과 동일하다.
-
-R2 checkout 이후 실행 순서는 [docs/cloudflare-staging-operator-packet.md](docs/cloudflare-staging-operator-packet.md)에 모았다.
+상세 source of truth는 [docs/current-release-state.md](docs/current-release-state.md), 11개 결정은 [docs/v2-decision-register.md](docs/v2-decision-register.md), 법무·운영 중단 조건은 [docs/v2-legal-operations-gate.md](docs/v2-legal-operations-gate.md)이다.
 
 ## 현재 후보
 
 - Version: `0.1.0`
 - Build: `not_applicable`
-- Git SHA: `bd4f46389c8c13d6eb158f7e683c70edc1e93982`
-- Branch: `agent/silsigan-map-click-fix-20260622-1456`
-- Phase: `local_ready_external_blocked`
-- Pushed evidence baseline: `agent/silsigan-map-click-fix-20260622-1456` at `bd4f46389c8c13d6eb158f7e683c70edc1e93982`
-- Continuing local delta: release-status can now ingest a captured `cf:external-state` JSON report and surface `R2_NOT_ENABLED`, missing API/web Worker deployments, and deployment URL blockers while production D1 `0002` passes; D1 ranking abuse smoke proves repeated same-user click/like signals do not inflate ranking counts; privacy/support URL readiness is now separated into `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` gates.
+- Base Git SHA: `8198cf745d59895ae28bdd46bc8b32016505308a`
+- Branch: `codex/silsigan-progress-20260710`
+- Phase: `v2_local_ready_external_blocked`
+- Local checks: `pnpm lint`, `pnpm typecheck`, `pnpm test` (`184/184`), `pnpm build` pass
+- External read-only check: Cloudflare auth and staging/production dry-runs pass; staging/production web Workers have deployment history
+- Identity decision: anonymous-first with optional signed member-link seam; external member login remains disabled
+- Deferred features: ads, rewards, Q&A, live streams, Seoul realtime, social feed, and demo data remain disabled
 
 ## 통과한 증거
 
-- `pnpm test -- tests/cloudflare-api.test.ts`: 125 passed, including D1 ranking abuse smoke, UGC moderation runbook guard coverage, Cloudflare cost/usage runbook guard coverage, TestFlight review notes guard coverage, privacy/support URL guard coverage, real-device QA ledger guard coverage, public privacy/support page guard coverage, auth-aware external-state blocker canonicalization, and Worker deployment absence classification
-- `node scripts/release-state-check.mjs --strict`: expected blocked-external with `release_harness.ledger.open_blockers` and deployment URL blockers
-- `node scripts/release-state-check.mjs --strict --cloudflare-external-state-report=<captured-json>`: expected blocked-external with ledger/URL blockers plus `R2_NOT_ENABLED`; production D1 `0002` passes
-- `node scripts/release-state-check.mjs --strict`: UGC moderation, Cloudflare cost/usage, and TestFlight review notes gates pass; current failure remains expected external blockers plus missing `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL`
-- `node scripts/release-state-check.mjs --strict`: real-device QA ledger structure passes against `docs/real-device-qa.md`; actual iPhone/Android evidence remains blocked until staging URLs and R2 pass
-- `node scripts/release-state-check.mjs --strict`: `/privacy` and `/support` page source checks pass; actual HTTPS `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` remain blocked until deployment URLs are final
-- `pnpm cf:external-state`: expected blocked-external on 2026-06-27; Wrangler auth passes, staging and production D1 `0002` evidence pass with `posts=4`, `questions=3`, and remaining external blockers are `R2_NOT_ENABLED`, four missing Worker deployments, and four missing deployment URLs
-- `pnpm release:gate -- --plan-only`: pass
-- `git diff --check`: pass
-- `pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
-- `pnpm cf:d1:evidence -- --env=production --apply --confirm-production --timeout-ms=120000`: pass, applied `0002_posts_questions.sql`, reran seed, verified `posts=4`, `questions=3`
-- `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`: pass, no pending migrations, `posts=4`, `questions=3`
-- `pnpm release:gate -- --skip-verify --skip-dry-run --collect-blockers --tail-file=tests/fixtures/redacted-worker-tail.log --timeout-ms=120000`: expected fail with `resultCounts.pass=9` / `resultCounts.fail=7`; tail redaction, audit, typegen, build, frontend dry-runs, staging D1 evidence, and production D1 evidence pass while remaining failures are external blockers
+- D1 migration chain, V2 TTL/decision/conflict rules, source registry activation policy, public-data adapters, trust-safety identity, account deletion, block/unblock, report votes, photo privacy/moderation, Capacitor bridge/navigation, and release guards pass in the full suite.
+- Next.js 16.2.6 production build compiles without warnings and generates all 21 routes.
+- `pnpm audit --audit-level critical` reports no known vulnerabilities after the Capacitor dependencies were added.
+- 390x844 local browser smoke passes all 31 required interactions; 206 network events store no request body and have no sensitive hits. Home and map evidence is under `artifacts/silsigan-v2-local-report-20260710`.
+- Public source credentials and stream URLs are not exposed; CCTV normalization drops playback URLs and treats metadata as static.
+- Original photos are not retained; metadata stripping, pixel re-encoding, duplicate rejection, pending moderation, approval/rejection, and deletion paths are covered.
+- `ADS_ENABLED=false`, `LIVE_STREAMS_ENABLED=false`, and `SOCIAL_FEED_ENABLED=false` remain launch defaults.
 
 ## 막힌 항목
 
-- P0: Cloudflare R2 subscription is not enabled: `R2_NOT_ENABLED`
-- P0: Configured staging/production API/web Workers are not deployed: `worker_deployment.*`
-- P0: Missing staging/production Pages/API URLs: `deployment_url.*`, `URL_REQUIRED`
-- P0: Real staging Worker/Pages smoke, R2/Images mutation smoke, admin smoke, and captured Workers tail redaction are not complete
-- P0: iPhone and Android real-device QA evidence is not captured: `docs/real-device-qa.md`
-- P1: Final privacy/support URLs are not configured: `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`
+- P0: staging and production D1 are missing V2 migrations: `D1_0006_NOT_APPLIED`.
+- P0: Cloudflare R2 is not enabled: `R2_NOT_ENABLED`.
+- P0: staging/production API Workers are missing: `WORKER_DEPLOYMENT_MISSING`; selected deployment URLs are absent: `deployment_url.*`.
+- P0: NAVER Web Maps console and exact HTTPS origin evidence are missing: `SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED`, `SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS`.
+- P0: source-by-source rights, attribution, credentials, health, and audited activation evidence remain in `docs/current-release-state.md`.
+- P0: live moderation queue and redacted alert evidence require `MODERATION_ALERT_WEBHOOK_URL`; staging mutation/tail smoke remains incomplete.
+- P0: Capacitor native projects, signing, custom settings adapter, staging build, and iPhone/Android real-device evidence remain external.
+- P0: named legal and operations reviewers have not signed the location, privacy, UGC, account deletion, source terms, or store disclosure gates.
+- P1: final public URLs are not set: `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`.
 
 ## 다음 행동
 
-```bash
-pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=60000
-```
-
-Cloudflare Dashboard > Storage & databases > R2 > Overview에서 R2 subscription checkout을 완료한 뒤 위 check를 먼저 다시 실행한다. R2 check가 통과하면 `pnpm cf:r2:evidence -- --env=staging --apply`로 누락 staging bucket을 만들고, staging Worker/Pages URL을 설정한 뒤 release-candidate smoke로 넘어간다. Production D1은 이미 적용됐으므로 이후에는 `pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000`로 유지 검증만 한다.
-
-## 사람이 직접 해야 하는 일
-
-- Cloudflare Dashboard에서 R2 subscription checkout 완료
-- Staging/production Pages와 Worker 배포 URL 확정
-- Staging admin token과 captured Workers tail log 제공
+1. Review and apply `0004`-`0006` to staging D1 with backup and approval, then verify `D1_0006_NOT_APPLIED` is cleared.
+2. Enable R2, deploy the staging API Worker, and select the staging web/API URLs.
+3. Confirm NAVER origins and source rights, then run staging ingestion, map/fallback, mutation, admin, R2/Images, and tail-redaction evidence.
+4. Generate signed Capacitor builds, complete iPhone/Android QA, and record named legal/operations sign-off.
+5. Apply production changes only after staging evidence is clean and separately approved.

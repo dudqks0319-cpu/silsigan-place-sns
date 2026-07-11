@@ -12,6 +12,8 @@ const DEFAULT_UGC_MODERATION_RUNBOOK_PATH = "docs/ugc-moderation-runbook.md";
 const DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH = "docs/cloudflare-cost-usage-runbook.md";
 const DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH = "docs/testflight-review-notes.md";
 const DEFAULT_REAL_DEVICE_QA_LEDGER_PATH = "docs/real-device-qa.md";
+const DEFAULT_V2_DECISION_REGISTER_PATH = "docs/v2-decision-register.md";
+const DEFAULT_V2_LEGAL_OPERATIONS_GATE_PATH = "docs/v2-legal-operations-gate.md";
 const DEFAULT_PRIVACY_PAGE_PATH = "src/app/privacy/page.tsx";
 const DEFAULT_SUPPORT_PAGE_PATH = "src/app/support/page.tsx";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
@@ -142,6 +144,45 @@ const REQUIRED_REAL_DEVICE_QA_LEDGER_TOKENS = [
   "network-redacted.json",
   "known-issues.md",
 ];
+const REQUIRED_V2_DECISION_REGISTER_SECTIONS = [
+  "# #실시간 V2 의사결정 및 완료 기준",
+  "## 결정 상태",
+  "## 11번: 익명과 회원의 차이",
+  "## 공공데이터 활성화 규칙",
+  "## 완료 판정",
+];
+const REQUIRED_V2_DECISION_REGISTER_TOKENS = [
+  "kr.silsigan.mobile",
+  "SOCIAL_FEED_ENABLED=false",
+  "ADS_ENABLED=false",
+  "LIVE_STREAMS_ENABLED",
+  "D1_0006_NOT_APPLIED",
+  "영상 URL 저장·노출·중계 금지",
+  "원본 사진은 보관하지 않는다",
+  "익명 우선 + 선택적 회원 전환",
+  "blocked-external",
+];
+const REQUIRED_V2_LEGAL_OPERATIONS_GATE_SECTIONS = [
+  "# #실시간 V2 법무 및 운영 게이트",
+  "## Ownership",
+  "## Legal Review",
+  "## Source Activation",
+  "## Moderation Readiness",
+  "## Ads Gate",
+  "## Sign-Off Record",
+  "## Stop Conditions",
+];
+const REQUIRED_V2_LEGAL_OPERATIONS_GATE_TOKENS = [
+  "ADS_ENABLED=false",
+  "MODERATION_ALERT_WEBHOOK_URL",
+  "SILSIGAN_PRIVACY_POLICY_URL",
+  "SILSIGAN_SUPPORT_URL",
+  "national_cctv",
+  "M6",
+  "M8",
+  "named reviewer",
+  "blocked-external",
+];
 const REQUIRED_PRIVACY_PAGE_TOKENS = [
   "개인정보 처리방침",
   "위치정보",
@@ -206,6 +247,8 @@ const ugcModerationRunbookPath = options.get("ugc-moderation-runbook") ?? option
 const cloudflareCostUsageRunbookPath = options.get("cloudflare-cost-usage-runbook") ?? options.get("cost-usage-runbook") ?? DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH;
 const testFlightReviewNotesPath = options.get("testflight-review-notes") ?? options.get("review-notes") ?? DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH;
 const realDeviceQaLedgerPath = options.get("real-device-qa") ?? options.get("real-device-qa-ledger") ?? DEFAULT_REAL_DEVICE_QA_LEDGER_PATH;
+const v2DecisionRegisterPath = options.get("v2-decision-register") ?? DEFAULT_V2_DECISION_REGISTER_PATH;
+const v2LegalOperationsGatePath = options.get("v2-legal-operations-gate") ?? DEFAULT_V2_LEGAL_OPERATIONS_GATE_PATH;
 const privacyPagePath = options.get("privacy-page") ?? DEFAULT_PRIVACY_PAGE_PATH;
 const supportPagePath = options.get("support-page") ?? DEFAULT_SUPPORT_PAGE_PATH;
 const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
@@ -218,6 +261,8 @@ await checkUgcModerationRunbook(ugcModerationRunbookPath);
 await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
 await checkTestFlightReviewNotes(testFlightReviewNotesPath);
 await checkRealDeviceQaLedger(realDeviceQaLedgerPath);
+await checkV2DecisionRegister(v2DecisionRegisterPath);
+await checkV2LegalOperationsGate(v2LegalOperationsGatePath);
 await checkPublicPolicySupportPages(privacyPagePath, supportPagePath);
 checkPolicySupportUrls();
 await checkLegacyArtifacts();
@@ -242,6 +287,8 @@ const summary = {
   cloudflareCostUsageRunbookPath,
   testFlightReviewNotesPath,
   realDeviceQaLedgerPath,
+  v2DecisionRegisterPath,
+  v2LegalOperationsGatePath,
   privacyPagePath,
   supportPagePath,
   policySupportUrlEnvNames: Object.keys(REQUIRED_POLICY_SUPPORT_URLS),
@@ -347,6 +394,66 @@ async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, so
       { missingEvidence },
     );
   }
+}
+
+async function checkV2DecisionRegister(path) {
+  let register = "";
+  try {
+    register = await readFile(path, "utf8");
+    record("v2_decision_register.doc", "pass", "V2 decision register is present.");
+  } catch (error) {
+    record("v2_decision_register.doc", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_V2_DECISION_REGISTER_SECTIONS) {
+    record(
+      `v2_decision_register.doc.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      register.includes(section) ? "pass" : "fail",
+      `V2 decision register must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_V2_DECISION_REGISTER_TOKENS.filter((token) => !register.includes(token));
+  record(
+    "v2_decision_register.doc.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "V2 decision register covers platform, feature flags, source rights, photo privacy, identity, and external completion boundaries."
+      : "V2 decision register is missing required decision tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("v2_decision_register.doc.redaction", register, path);
+}
+
+async function checkV2LegalOperationsGate(path) {
+  let gate = "";
+  try {
+    gate = await readFile(path, "utf8");
+    record("v2_legal_operations_gate.doc", "pass", "V2 legal and operations gate is present.");
+  } catch (error) {
+    record("v2_legal_operations_gate.doc", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_V2_LEGAL_OPERATIONS_GATE_SECTIONS) {
+    record(
+      `v2_legal_operations_gate.doc.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      gate.includes(section) ? "pass" : "fail",
+      `V2 legal and operations gate must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_V2_LEGAL_OPERATIONS_GATE_TOKENS.filter((token) => !gate.includes(token));
+  record(
+    "v2_legal_operations_gate.doc.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "V2 legal and operations gate covers named ownership, source rights, moderation, ads, public URLs, and stop conditions."
+      : "V2 legal and operations gate is missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("v2_legal_operations_gate.doc.redaction", gate, path);
 }
 
 async function checkUgcModerationRunbook(path) {

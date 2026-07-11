@@ -161,6 +161,29 @@ const posts: StoredPost[] = [
     minutesAgo: 52,
   }),
 ];
+
+const samplePhotoByPlaceId: Record<string, { url: string; attribution: string; sourceUrl: string }> = {
+  "busan-gwangalli": {
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Gwangalli_Beach_Busan_%2831877282438%29.jpg/960px-Gwangalli_Beach_Busan_%2831877282438%29.jpg",
+    attribution: "bryan... · CC BY-SA 2.0 · Wikimedia Commons",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:Gwangalli_Beach_Busan_(31877282438).jpg",
+  },
+  "gyeongju-hwangridan": {
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Hwangnidan-gil_01.jpg/960px-Hwangnidan-gil_01.jpg",
+    attribution: "Seefooddiet · CC BY-SA 4.0 · Wikimedia Commons",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:Hwangnidan-gil_01.jpg",
+  },
+  "ulsan-taehwagang": {
+    url: "/silsigan/fallback/taehwagang.png",
+    attribution: "체험용 내부 이미지",
+    sourceUrl: "",
+  },
+  "ulsan-city-hall": {
+    url: "/silsigan/fallback/taehwagang.png",
+    attribution: "체험용 내부 이미지",
+    sourceUrl: "",
+  },
+};
 const reports: StoredReport[] = posts.map(postToReport);
 const questions: StoredQuestion[] = [
   {
@@ -287,19 +310,49 @@ export function createReport(input: CreateReportInput) {
   const verifiedRadiusM = verifiedRadiusForInput(place, input.clientLocation);
 
   const now = new Date();
+  const expiresAt = getReportExpiry(now).toISOString();
+  const lineStatus = input.lineStatus ?? (
+    input.queueStatus === "under_10" ? "short"
+      : input.queueStatus === "10_to_30" ? "medium"
+        : input.queueStatus === "30_to_60" || input.queueStatus === "60_plus" ? "long"
+          : input.queueStatus === "none" ? "none"
+            : undefined
+  );
+  const parkingStatus = input.parkingStatus ?? (
+    input.parkingObservation === "available" ? "available"
+      : input.parkingObservation === "limited" || input.parkingObservation === "almost_full" ? "limited"
+        : input.parkingObservation === "full" || input.parkingObservation === "closed" ? "full"
+          : undefined
+  );
+  const weatherFeel = input.weatherFeel ?? (
+    input.localConditions?.includes("rain") ? "rainy"
+      : input.localConditions?.includes("strong_wind") ? "windy"
+        : undefined
+  );
+  const observations: Array<{ dimension: string; valueCode: string; expiresAt: string }> = [];
+  if (input.crowdLevel) observations.push({ dimension: "crowd", valueCode: input.crowdLevel, expiresAt });
+  if (input.queueStatus || lineStatus) observations.push({ dimension: "queue", valueCode: input.queueStatus ?? lineStatus ?? "none", expiresAt });
+  if (input.parkingObservation || parkingStatus) observations.push({ dimension: "parking", valueCode: input.parkingObservation ?? parkingStatus ?? "unknown", expiresAt });
+  for (const valueCode of input.localConditions ?? []) observations.push({ dimension: "local_condition", valueCode, expiresAt });
+  if (input.weatherFeel && !input.localConditions?.length) observations.push({ dimension: "local_condition", valueCode: input.weatherFeel, expiresAt });
   const report: StoredReport = {
     id: `report_${crypto.randomUUID()}`,
     placeId: input.placeId,
     category: input.category,
     crowdLevel: input.crowdLevel,
-    lineStatus: input.lineStatus,
-    parkingStatus: input.parkingStatus,
-    weatherFeel: input.weatherFeel,
+    lineStatus,
+    parkingStatus,
+    weatherFeel,
+    localConditions: input.localConditions ?? [],
+    observations,
     comment: input.comment || null,
     photoUrl: input.photoUrl || null,
+    photoAttribution: null,
+    photoSourceUrl: null,
+    isSample: false,
     verifiedRadiusM,
     createdAt: now.toISOString(),
-    expiresAt: getReportExpiry(now).toISOString(),
+    expiresAt,
     flagCount: 0,
     hiddenAt: null,
   };
@@ -620,12 +673,14 @@ function publicPost(post: StoredPost) {
     shareCard: buildShareCard(post, place),
     judgement: buildShareCard(post, place).headline.replace(`${place.name} `, ""),
     safetyWarning: getCategorySafetyWarning(place.category),
+    isSample: post.id.startsWith("post_seed_"),
   };
 }
 
 function postToReport(post: StoredPost): StoredReport {
   const place = findPlace(post.placeId);
   const createdAt = new Date(post.createdAt);
+  const samplePhoto = samplePhotoByPlaceId[post.placeId] ?? samplePhotoByPlaceId["ulsan-taehwagang"];
 
   return {
     id: post.id,
@@ -636,25 +691,18 @@ function postToReport(post: StoredPost): StoredReport {
     parkingStatus: post.parkingStatus,
     weatherFeel: post.weatherFeel,
     comment: post.caption,
-    photoUrl: post.photoCount > 0 ? fallbackPhotoUrlForPlace(post.placeId) : null,
+    photoUrl: post.photoCount > 0 ? samplePhoto.url : null,
+    photoAttribution: post.photoCount > 0 ? samplePhoto.attribution : null,
+    photoSourceUrl: post.photoCount > 0 ? samplePhoto.sourceUrl : null,
+    isSample: true,
+    localConditions: [],
+    observations: [],
     verifiedRadiusM: post.verifiedRadiusM,
     createdAt: post.createdAt,
     expiresAt: getReportExpiry(createdAt).toISOString(),
     flagCount: 0,
     hiddenAt: post.hiddenAt,
   };
-}
-
-function fallbackPhotoUrlForPlace(placeId: string): string {
-  if (placeId === "busan-gwangalli") {
-    return "/silsigan/fallback/gwangalli.png";
-  }
-
-  if (placeId === "gyeongju-hwangridan") {
-    return "/silsigan/fallback/hwangridan.png";
-  }
-
-  return "/silsigan/fallback/taehwagang.png";
 }
 
 function makeSeedPost(input: Omit<StoredPost, "userId" | "locationVerified" | "verifiedRadiusM" | "hiddenAt" | "createdAt"> & { minutesAgo: number }): StoredPost {

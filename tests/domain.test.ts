@@ -26,7 +26,7 @@ const { redactAnalyticsProperties, trackEvent } = await import(new URL("../src/l
 const { buildScopedApiPath, clampApiLimit, normalizeRegionScope } = await import(new URL("../src/lib/api-scope.ts", import.meta.url).href);
 const { workerPlaceToAppPlace } = await import(new URL("../src/lib/cloudflare-place-adapter.ts", import.meta.url).href);
 const { findSharedPost } = await import(new URL("../src/lib/shared-post.ts", import.meta.url).href);
-const { moderatePostSchema } = await import(new URL("../src/lib/validators.ts", import.meta.url).href);
+const { createReportSchema, moderatePostSchema } = await import(new URL("../src/lib/validators.ts", import.meta.url).href);
 const { listWorkerModerationReports, moderateWorkerReport, workerAdminApiConfigured } = await import(new URL("../src/lib/worker-admin-api.ts", import.meta.url).href);
 const {
   handleAdminWorkerCoordinateStatusPost,
@@ -139,6 +139,29 @@ test("status-only reports can be created without location permission", () => {
 
   assert.equal(result.report.verifiedRadiusM, null);
   assert.deepEqual(result.credits, []);
+});
+
+test("field reports accept only the dimensions the user actually observed", () => {
+  const result = createReport({
+    placeId: "busan-gwangalli",
+    category: "tourism",
+    crowdLevel: "busy",
+  });
+
+  assert.equal(result.report.lineStatus, undefined);
+  assert.deepEqual(result.report.observations?.map((observation: { dimension: string }) => observation.dimension), ["crowd"]);
+});
+
+test("report photo URLs allow only public http protocols", () => {
+  const base = {
+    placeId: "busan-gwangalli",
+    category: "tourism",
+    crowdLevel: "normal",
+  } as const;
+
+  assert.equal(createReportSchema.safeParse({ ...base, photoUrl: "https://example.com/photo.jpg" }).success, true);
+  assert.equal(createReportSchema.safeParse({ ...base, photoUrl: "data:image/png;base64,AAAA" }).success, false);
+  assert.equal(createReportSchema.safeParse({ ...base, photoUrl: "javascript:alert(1)" }).success, false);
 });
 
 test("hashtag recommendation is specific and capped at five", () => {
@@ -330,9 +353,21 @@ test("local demo lists support region-scoped bounded reads", () => {
   assert.equal(listPosts({ regionId: "busan", limit: 1 }).length, 1);
   assert.equal(listPosts({ regionId: "busan", limit: 100 }).every((post: { placeId: string }) => busanPlaceIds.has(post.placeId)), true);
   assert.equal(busanHashtagPosts.length > 0, true);
+  assert.equal(busanHashtagPosts.every((post: { isSample?: boolean }) => post.isSample === true), true);
   assert.equal(busanHashtagPosts.every((post: { placeId: string; hashtagNames: string[] }) => busanPlaceIds.has(post.placeId) && post.hashtagNames.includes("광안리주차살려줘")), true);
   assert.equal(listPosts({ regionId: "seoul", hashtagName: "광안리주차살려줘", limit: 100 }).length, 0);
   assert.equal(listQuestions({ regionId: "busan", limit: 100 }).every((question: { placeId: string }) => busanPlaceIds.has(question.placeId)), true);
+});
+
+test("local sample reports stay labeled and retain licensed photo attribution", () => {
+  const sampleReport = listReports({ regionId: "busan", includeExpired: true, limit: 100 }).find(
+    (report: { placeId: string }) => report.placeId === "busan-gwangalli",
+  );
+
+  assert.equal(sampleReport?.isSample, true);
+  assert.match(sampleReport?.photoUrl ?? "", /^https:\/\/upload\.wikimedia\.org\//);
+  assert.match(sampleReport?.photoAttribution ?? "", /CC BY-SA/);
+  assert.match(sampleReport?.photoSourceUrl ?? "", /^https:\/\/commons\.wikimedia\.org\/wiki\/File:/);
 });
 
 test("shared post lookup reads from Worker API when configured", async () => {

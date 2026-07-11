@@ -1,10 +1,12 @@
 import { fail, ok } from "@/lib/api";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { createQuestion, listQuestions } from "@/lib/mock-store";
+import { assertLocalDemoApiAvailable } from "@/lib/runtime-data-mode";
 import { createQuestionSchema, listQuestionsSchema } from "@/lib/validators";
 
 export async function GET(request: Request) {
   try {
+    assertLocalDemoApiAvailable();
     const url = new URL(request.url);
     const filters = listQuestionsSchema.parse({
       placeId: url.searchParams.get("placeId") ?? undefined,
@@ -22,6 +24,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    assertLocalDemoApiAvailable();
     assertRateLimit({ key: rateLimitKey(request, "create-question"), limit: 10, windowMs: 60_000 });
     const input = createQuestionSchema.parse(await request.json());
 

@@ -31,7 +31,32 @@ const demoStore: SilsiganStore = {
   moderatePost,
 };
 
-export function getStore(driver = process.env.SILSIGAN_STORE_DRIVER ?? "demo"): SilsiganStore {
+function liveBackendRequired(): never {
+  throw new ApiError(
+    503,
+    "LIVE_BACKEND_REQUIRED",
+    "운영 환경에서는 Cloudflare Workers 실시간 API만 사용할 수 있습니다.",
+  );
+}
+
+const failClosedStore: SilsiganStore = {
+  createPost: liveBackendRequired,
+  flagPost: liveBackendRequired,
+  listHashtags: liveBackendRequired,
+  listPosts: liveBackendRequired,
+  listPostModerationQueue: liveBackendRequired,
+  listRegionActivationDashboard: liveBackendRequired,
+  moderatePost: liveBackendRequired,
+};
+
+export function getStore(
+  driver = process.env.SILSIGAN_STORE_DRIVER ?? "demo",
+  environment = process.env.NODE_ENV,
+): SilsiganStore {
+  if (environment === "production") {
+    return failClosedStore;
+  }
+
   if (driver === "demo" || driver === "mock") {
     return demoStore;
   }

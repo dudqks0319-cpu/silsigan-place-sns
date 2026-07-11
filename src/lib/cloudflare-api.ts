@@ -1,3 +1,5 @@
+import type { FeatureFlagKey, LiveSignalDimension } from "../../packages/contracts/src/index.ts";
+
 export type CloudflareApiSuccess<TData> = {
   success: true;
   data: TData;
@@ -58,11 +60,11 @@ export type CloudflareRanking = {
 export type CloudflareComment = {
   id: string;
   placeId: string;
-  anonymousUserId: string;
   body: string;
   likeCount: number;
   hiddenAt: string | null;
   createdAt: string;
+  ownedByCurrentSession: boolean;
 };
 
 export type CloudflarePhoto = {
@@ -104,6 +106,51 @@ export type CloudflareRealtimeRoom = {
   events: CloudflareRealtimeEvent[];
 };
 
+export type CloudflareRuntimeConfig = {
+  contractVersion: 2;
+  dataMode: "live" | "demo";
+  featureFlags: Record<FeatureFlagKey, boolean>;
+  dimensionSettings: Array<{
+    settingKey: string;
+    dimension: LiveSignalDimension | null;
+    defaultTtlSeconds: number;
+    currentEligible: boolean;
+  }>;
+};
+
+export type CloudflarePlaceStatus = {
+  contractVersion: 2;
+  placeId: string;
+  dataMode: "live" | "demo";
+  status: "likely_good" | "check_before_visit" | "likely_crowded" | "insufficient";
+  currentSignals: Array<{
+    id: string;
+    placeId: string;
+    dimension: LiveSignalDimension;
+    valueCode: string;
+    valueNumber?: number;
+    valueText?: string;
+    unit?: string;
+    sourceId: string;
+    sourceType: string;
+    sourceName: string;
+    attributionText?: string;
+    observedAt: string;
+    fetchedAt: string;
+    expiresAt?: string;
+    confidenceScore: number;
+    isEstimated: boolean;
+    isExpired: false;
+  }>;
+  missingRequiredDimensions: LiveSignalDimension[];
+  conflictingDimensions: LiveSignalDimension[];
+  independentSourceCount: number;
+  confidenceScore: number;
+  reasonCodes: string[];
+  observedAt: string | null;
+  computedAt: string;
+};
+
 export type CompletePhotoInput = {
   uploadId: string;
   placeId: string;
@@ -125,6 +172,8 @@ export type ListRankingParams = {
 
 export type CloudflareApiClient = {
   anonymousId: string | null;
+  getRuntimeConfig: (regionCode?: string) => Promise<CloudflareApiSuccess<CloudflareRuntimeConfig>>;
+  getPlaceStatus: (placeId: string) => Promise<CloudflareApiSuccess<CloudflarePlaceStatus>>;
   listPlaces: (params?: { limit?: number; bbox?: string; lat?: number; lng?: number; radius?: number; regionId?: string; categoryId?: string }) => Promise<CloudflareApiSuccess<CloudflarePlace[]>>;
   listRankings: (params?: ListRankingParams) => Promise<CloudflareApiSuccess<CloudflareRanking[]>>;
   listComments: (params?: { placeId?: string; limit?: number }) => Promise<CloudflareApiSuccess<CloudflareComment[]>>;
@@ -173,6 +222,12 @@ export function createCloudflareApiClient(options: CloudflareApiClientOptions): 
   return {
     get anonymousId() {
       return anonymousId;
+    },
+    getRuntimeConfig(regionCode) {
+      return request(`/api/config${query({ regionCode })}`);
+    },
+    getPlaceStatus(placeId) {
+      return request(`/api/places/${encodeURIComponent(placeId)}/status`);
     },
     listPlaces(params = {}) {
       return request(`/api/places${query(params)}`);

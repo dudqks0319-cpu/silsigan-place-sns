@@ -1,9 +1,46 @@
 # #실시간 Cloudflare 전환 보안 게이트
 
-기준일: 2026-06-18
-범위: 무료 출시 기준의 Cloudflare Pages/Workers, D1, R2, KV 또는 Cache API 전환.
+기준일: 2026-07-10
+범위: Cloudflare Pages/Workers, D1, R2, KV/Durable Objects, 공공데이터 source, Capacitor WebView를 포함한 실시간 V2.
 
-출시 전 P0 항목은 모두 통과해야 한다. 2026-06-25 현재 로컬 기준선은 `node --check workers/api/src/index.ts`, `pnpm test -- tests/cloudflare-api.test.ts` 116 passed, `pnpm audit --audit-level critical`, `git diff --check`가 통과한 상태다. Staging D1 `0002` migration/seed 증적은 원격 적용까지 완료됐고, Cloudflare staging/production URL, R2 활성화, production D1 `0002` migration 증적은 외부 blocker로 별도 남아 있다.
+출시 전 P0 항목은 모두 통과해야 한다. 아래 V2 sign-off가 현재 기준이며, 이후의 6월 세부 기록은 Cloudflare 전환 이력으로 유지한다. 2026-07-10 로컬 코드는 `184/184` 테스트, lint, typecheck, 무경고 production build, dependency audit, SQLite schema load, frozen lockfile, 390x844 browser smoke를 통과했다. 출시 상태는 원격 D1 V2 migration, R2, API Worker/URL, source 권리, 운영 채널, native 실기기, 법무 서명이 없어 계속 `blocked-external`이다.
+
+## V2 Security Gate Sign-Off
+
+```txt
+SECURITY GATE
+- Secrets: PASS LOCAL - no hardcoded provider/admin secrets; public source and WebView outputs are redacted
+- AuthN/AuthZ: PASS LOCAL - admin source, moderation, deletion, restriction, and identity link paths deny by default
+- Input/Output: PASS LOCAL - provider payload, bridge command, report, URL, ID, enum, and length validation have negative tests
+- Dependencies: PASS LOCAL - pinned Capacitor packages; pnpm audit reports no known vulnerabilities
+- Data Handling: PASS LOCAL - raw user coordinates and original photos are not stored; metadata and filenames are removed
+- Abuse Controls: PASS LOCAL - rate limits, duplicate suppression, votes, blocks, restrictions, moderation, circuit breaker, and audit paths exist
+- Tests: PASS LOCAL - 184 passed, 0 failed; 390x844 smoke passed 31 required checks with 206 redacted network events
+- Residual Risk: BLOCKED EXTERNAL - see owner and due milestone table below
+```
+
+Security Owner: Orchestrator
+Date: 2026-07-10
+Release Security Decision: `blocked-external`
+
+| Residual risk | Owner | Due milestone | Stop condition |
+| --- | --- | --- | --- |
+| Staging/production D1 lack additive V2 migrations through `0006` | data-operations | before V2 staging smoke / before production candidate | `D1_0006_NOT_APPLIED` remains release-blocking |
+| R2 is not enabled and real photo privacy/deletion evidence is unavailable | release-operator + data-operations | before staging release candidate | `R2_NOT_ENABLED` remains release-blocking |
+| API Workers and selected staging/production URLs are missing | release-operator | before staging release candidate | no live smoke or production readiness claim |
+| NAVER Web Maps origin restriction and source-by-source rights/attribution are unsigned | release-operator + legal-safety | before map/source enable | source stays disabled; map uses explicit fallback |
+| Live moderation webhook, on-call owner, and tail-redaction evidence are missing | trust-safety lead | before staging mutation smoke | no external beta with UGC writes |
+| Capacitor native settings adapter, signing, and iPhone/Android QA are missing | mobile-release | before internal testing | no TestFlight/Android internal readiness claim |
+| Privacy, location, UGC, account deletion, source terms, store disclosure sign-off is missing | legal-safety | before external TestFlight review | no external review submission |
+
+Evidence:
+
+- `artifacts/silsigan-v2-local-report-20260710/pages-smoke-home-1783658142487.png`
+- `artifacts/silsigan-v2-local-report-20260710/pages-smoke-map-1783658142487.png`
+- `artifacts/silsigan-v2-local-report-20260710/pages-smoke-network-1783658142487.json`
+- `docs/v2-decision-register.md`
+- `docs/v2-legal-operations-gate.md`
+- `release-ledger.yaml`
 
 ## P0 출시 차단 항목
 

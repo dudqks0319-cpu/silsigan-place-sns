@@ -1,7 +1,7 @@
 "use client";
 
 import { type CSSProperties, type FormEvent, useState } from "react";
-import { Flag, Heart, Send, ShieldCheck, X } from "lucide-react";
+import { Flag, Heart, Send, ShieldAlert, ShieldCheck, X } from "lucide-react";
 import styles from "./SilsiganRedesign.module.css";
 import { CommentFeed, type PlaceComment } from "./CommentFeed";
 import { PhotoUploader, type PlacePhoto, type PreparedPhotoUpload } from "./PhotoUploader";
@@ -19,6 +19,7 @@ export type SheetPlace = {
   updated: string;
   score: number;
   tone: "calm" | "normal" | "busy" | "danger";
+  isSample?: boolean;
 };
 
 export type PlaceRealtimeEvent = {
@@ -30,6 +31,7 @@ export type PlaceRealtimeEvent = {
 export function PlaceDetailSheet({
   comments,
   liked,
+  onBlockComment,
   onClose,
   onCommentLike,
   onLike,
@@ -50,6 +52,7 @@ export function PlaceDetailSheet({
 }: {
   comments: PlaceComment[];
   liked: boolean;
+  onBlockComment: (comment: PlaceComment) => void;
   onClose: () => void;
   onCommentLike: (comment: PlaceComment) => Promise<void>;
   onLike: () => void;
@@ -115,7 +118,7 @@ export function PlaceDetailSheet({
 
       <div className={styles.detailStatusRow}>
         <span className={`${styles.statusChip} ${styles[place.tone]}`}>{place.signal}</span>
-        <span><ShieldCheck size={14} /> 신뢰도 {place.score}%</span>
+        <span>{place.isSample ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />} {place.isSample ? "체험용 샘플" : `신뢰도 ${place.score}%`}</span>
         <span>최근 {place.updated}</span>
       </div>
       <p className={styles.detailSummary}>{place.summary}</p>
@@ -182,7 +185,12 @@ export function PlaceDetailSheet({
           </div>
           <span>{trimmedComment.length}/300</span>
         </form>
-        <CommentFeed comments={comments} onLikeComment={onCommentLike} onReportComment={onReportComment} />
+        <CommentFeed
+          comments={comments}
+          onBlockComment={onBlockComment}
+          onLikeComment={onCommentLike}
+          onReportComment={onReportComment}
+        />
       </section>
 
       <section className={styles.detailSection}>

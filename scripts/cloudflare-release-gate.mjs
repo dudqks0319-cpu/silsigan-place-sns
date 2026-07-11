@@ -8,6 +8,9 @@ const LOCAL_PAGES_REPORT_TIMEOUT_MS = 45_000;
 const MUTATING_REQUIRED_ENV_KEYS = ["SILSIGAN_STAGING_ADMIN_TOKEN"];
 const RELEASE_CANDIDATE_REQUIRED_URL_ENV_KEYS = ["SILSIGAN_STAGING_PAGES_URL", "SILSIGAN_STAGING_API_BASE_URL"];
 const PRODUCTION_CANDIDATE_REQUIRED_URL_ENV_KEYS = ["SILSIGAN_PRODUCTION_PAGES_URL", "SILSIGAN_PRODUCTION_API_BASE_URL"];
+const NAVER_MAP_CLIENT_ID_KEY = "NEXT_PUBLIC_NAVER_MAP_CLIENT_ID";
+const NAVER_MAP_ALLOWED_ORIGINS_KEY = "SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS";
+const NAVER_MAP_WEB_MAPS_CONFIRMED_KEY = "SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED";
 const COORDINATE_STATUS_REQUIRED_ENV_KEYS = [
   "SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID",
   "SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE",
@@ -21,7 +24,7 @@ const CANONICAL_BLOCKER_ALIASES = new Map([
   ["production.pages.url", "deployment_url.production.pages"],
   ["production.worker_api.url", "deployment_url.production.worker_api"],
   ["cloudflare.r2.enabled", "R2_NOT_ENABLED"],
-  ["cloudflare.d1.production.migration_0002", "D1_0002_NOT_APPLIED"],
+  ["cloudflare.d1.production.migration_0006", "D1_0006_NOT_APPLIED"],
   ["DEPLOYMENT_URL_REQUIRED", null],
 ]);
 
@@ -94,6 +97,17 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
 
   if (productionCandidate) {
     collectHttpsUrlErrors(errors, PRODUCTION_CANDIDATE_REQUIRED_URL_ENV_KEYS, env);
+  }
+
+  if (releaseCandidate || productionCandidate) {
+    collectNaverMapReleaseErrors(
+      errors,
+      [
+        ...(releaseCandidate ? ["SILSIGAN_STAGING_PAGES_URL"] : []),
+        ...(productionCandidate ? ["SILSIGAN_PRODUCTION_PAGES_URL"] : []),
+      ],
+      env,
+    );
   }
 
   if (requirePhoto && !mutating) {
@@ -584,6 +598,81 @@ function collectHttpsUrlErrors(errors, keys, env) {
         message: `${key} 은 HTTPS 배포 URL이어야 합니다.`,
       });
     }
+  }
+}
+
+export function collectNaverMapReleaseErrors(errors, pagesUrlKeys, env) {
+  const clientId = env[NAVER_MAP_CLIENT_ID_KEY]?.trim() ?? "";
+  if (!clientId) {
+    errors.push({
+      code: `${NAVER_MAP_CLIENT_ID_KEY}_REQUIRED`,
+      message: `${NAVER_MAP_CLIENT_ID_KEY} 이 필요합니다.`,
+    });
+  } else if (!/^[A-Za-z0-9_-]{5,100}$/.test(clientId)) {
+    errors.push({
+      code: `${NAVER_MAP_CLIENT_ID_KEY}_INVALID`,
+      message: `${NAVER_MAP_CLIENT_ID_KEY} 형식이 올바르지 않습니다.`,
+    });
+  }
+
+  if (env[NAVER_MAP_WEB_MAPS_CONFIRMED_KEY]?.trim() !== "1") {
+    errors.push({
+      code: `${NAVER_MAP_WEB_MAPS_CONFIRMED_KEY}_REQUIRED`,
+      message: `${NAVER_MAP_WEB_MAPS_CONFIRMED_KEY}=1 확인이 필요합니다.`,
+    });
+  }
+
+  const rawAllowedOrigins = env[NAVER_MAP_ALLOWED_ORIGINS_KEY]?.trim() ?? "";
+  if (!rawAllowedOrigins) {
+    errors.push({
+      code: `${NAVER_MAP_ALLOWED_ORIGINS_KEY}_REQUIRED`,
+      message: `${NAVER_MAP_ALLOWED_ORIGINS_KEY} 이 필요합니다.`,
+    });
+    return;
+  }
+
+  const allowedOrigins = new Set();
+  for (const rawOrigin of rawAllowedOrigins.split(",")) {
+    const origin = normalizeHttpsOrigin(rawOrigin);
+    if (!origin) {
+      errors.push({
+        code: `${NAVER_MAP_ALLOWED_ORIGINS_KEY}_INVALID`,
+        message: `${NAVER_MAP_ALLOWED_ORIGINS_KEY} 은 쉼표로 구분한 HTTPS origin만 허용합니다.`,
+      });
+      return;
+    }
+    allowedOrigins.add(origin);
+  }
+
+  for (const pagesUrlKey of pagesUrlKeys) {
+    const pagesOrigin = normalizeHttpsOrigin(env[pagesUrlKey]);
+    if (pagesOrigin && !allowedOrigins.has(pagesOrigin)) {
+      errors.push({
+        code: `${NAVER_MAP_ALLOWED_ORIGINS_KEY}_MISSING_${pagesUrlKey}`,
+        message: `${NAVER_MAP_ALLOWED_ORIGINS_KEY} 에 ${pagesUrlKey} origin이 필요합니다.`,
+      });
+    }
+  }
+}
+
+function normalizeHttpsOrigin(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      (url.pathname !== "/" && url.pathname !== "") ||
+      ["localhost", "127.0.0.1", "0.0.0.0"].includes(url.hostname)
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
   }
 }
 

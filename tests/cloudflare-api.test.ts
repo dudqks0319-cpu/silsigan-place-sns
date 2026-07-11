@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -65,14 +66,17 @@ type Ranking = {
 
 type Comment = {
   id: string;
-  anonymousUserId: string;
+  placeId: string;
+  body: string;
   likeCount: number;
+  ownedByCurrentSession: boolean;
 };
 
 type PhotoCompleteData = {
   photo: {
     id: string;
     clickCount: number;
+    status: "pending" | "ready" | "rejected";
   };
   storageKey: string;
 };
@@ -82,10 +86,12 @@ type FieldReportData = {
     id: string;
     placeId: string;
     category: string;
-    crowdLevel: string;
-    lineStatus: string;
-    parkingStatus: string;
-    weatherFeel: string;
+    crowdLevel?: string;
+    lineStatus?: string;
+    parkingStatus?: string;
+    weatherFeel?: string;
+    localConditions: string[];
+    observations: Array<{ dimension: string; valueCode: string; expiresAt: string }>;
     verifiedRadiusM: number | null;
     createdAt: string;
     expiresAt: string;
@@ -324,13 +330,13 @@ test("release state check separates ready fixtures from external release blocker
                 message: "SILSIGAN_PRODUCTION_PAGES_URL is required.",
               },
               {
-                name: "cloudflare.d1.production.migration_0002",
+                name: "cloudflare.d1.production.migration_0006",
                 status: "fail",
-                code: "D1_0002_NOT_APPLIED",
-                message: "Remote production D1 is missing the posts/questions migration.",
+                code: "D1_0006_NOT_APPLIED",
+                message: "Remote production D1 is missing the V2 data-truth migrations.",
               },
             ],
-            blockers: ["R2_NOT_ENABLED", "deployment_url.production.pages", "D1_0002_NOT_APPLIED"],
+            blockers: ["R2_NOT_ENABLED", "deployment_url.production.pages", "D1_0006_NOT_APPLIED"],
           },
           null,
           2,
@@ -382,6 +388,8 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "v2_legal_operations_gate.doc" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "v2_legal_operations_gate.doc.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.privacy" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.privacy.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "public_policy_page.support" && check.status === "pass"));
@@ -423,7 +431,7 @@ test("release state check separates ready fixtures from external release blocker
       assert.ok(blockedPayload.blockers.includes("deployment_url.staging.worker_api"));
       assert.ok(blockedPayload.blockers.includes("R2_NOT_ENABLED"));
       assert.ok(blockedPayload.blockers.includes("deployment_url.production.pages"));
-      assert.ok(blockedPayload.blockers.includes("D1_0002_NOT_APPLIED"));
+      assert.ok(blockedPayload.blockers.includes("D1_0006_NOT_APPLIED"));
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1490,6 +1498,9 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
       SILSIGAN_STAGING_ADMIN_TOKEN: "super-secret-admin-token",
       SILSIGAN_STAGING_PAGES_URL: "https://silsigan-staging.pages.dev",
       SILSIGAN_STAGING_API_BASE_URL: "https://silsigan-api-staging.workers.dev",
+      NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
+      SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://silsigan-staging.pages.dev",
     },
   });
 
@@ -1533,6 +1544,9 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
   assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_ADMIN_TOKEN_REQUIRED"));
   assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_PAGES_URL_REQUIRED"));
   assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_API_BASE_URL_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "NEXT_PUBLIC_NAVER_MAP_CLIENT_ID_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS_REQUIRED"));
 
   const unsafeUrlPlan = releaseGate.resolveReleaseGatePlan({
     flags: releaseGate.parseArgs(["--release-candidate", "--tail-file", "tests/fixtures/redacted-worker-tail.log"]).flags,
@@ -1559,6 +1573,9 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
     env: {
       SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.pages.dev",
       SILSIGAN_PRODUCTION_API_BASE_URL: "https://silsigan-api.workers.dev",
+      NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
+      SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://silsigan.pages.dev",
     },
   });
 
@@ -1599,8 +1616,25 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
   assert.equal(missingUrlsPlan.ok, false);
   assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_PRODUCTION_PAGES_URL_REQUIRED"));
   assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_PRODUCTION_API_BASE_URL_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "NEXT_PUBLIC_NAVER_MAP_CLIENT_ID_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS_REQUIRED"));
   assert.equal(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "TAIL_FILE_REQUIRED"), false);
   assert.equal(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_ADMIN_TOKEN_REQUIRED"), false);
+
+  const originMismatchPlan = releaseGate.resolveReleaseGatePlan({
+    flags: parsed.flags,
+    options: parsed.options,
+    env: {
+      SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.pages.dev",
+      SILSIGAN_PRODUCTION_API_BASE_URL: "https://silsigan-api.workers.dev",
+      NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
+      SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://other.pages.dev",
+    },
+  });
+  assert.equal(originMismatchPlan.ok, false);
+  assert.ok(originMismatchPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS_MISSING_SILSIGAN_PRODUCTION_PAGES_URL"));
 
   const unsafeUrlPlan = releaseGate.resolveReleaseGatePlan({
     flags: parsed.flags,
@@ -1719,7 +1753,7 @@ test("Cloudflare external state check canonicalizes missing auth before remote c
       "In a non-interactive environment, set CLOUDFLARE_API_TOKEN. Account user@example.com /accounts/2a0a85b82393ae6cfb2dea0b41853458 failed.",
   });
   const r2Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.r2.enabled", "R2 bucket visibility check");
-  const d1Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.d1.staging.migration_0002", "Remote staging D1 migration evidence check");
+  const d1Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.d1.staging.migration_0006", "Remote staging D1 migration evidence check");
 
   assert.equal(authCheck.name, "cloudflare.auth");
   assert.equal(authCheck.status, "fail");
@@ -1763,15 +1797,15 @@ test("Cloudflare external state check classifies remote D1 migration and seed ev
     },
     "staging",
   );
-  assert.equal(missingMigration.name, "cloudflare.d1.staging.migration_0002");
+  assert.equal(missingMigration.name, "cloudflare.d1.staging.migration_0006");
   assert.equal(missingMigration.status, "fail");
-  assert.equal(missingMigration.code, "D1_0002_NOT_APPLIED");
+  assert.equal(missingMigration.code, "D1_0006_NOT_APPLIED");
   assert.equal(JSON.stringify(missingMigration).includes("no such table"), false);
 
   const incompleteSeed = externalState.classifyD1MigrationResult(
     {
       exitCode: 0,
-      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nposts=3\nquestions=2\n",
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nposts=3\nquestions=2\n",
       stderr: "",
     },
     "production",
@@ -1784,12 +1818,12 @@ test("Cloudflare external state check classifies remote D1 migration and seed ev
   const ready = externalState.classifyD1MigrationResult(
     {
       exitCode: 0,
-      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nposts=4\nquestions=3\n",
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nposts=4\nquestions=3\n",
       stderr: "",
     },
     "staging",
   );
-  assert.equal(ready.name, "cloudflare.d1.staging.migration_0002");
+  assert.equal(ready.name, "cloudflare.d1.staging.migration_0006");
   assert.equal(ready.status, "pass");
   assert.deepEqual(ready.counts, { posts: 4, questions: 3 });
 });
@@ -1972,8 +2006,8 @@ test("Cloudflare external state check summarizes canonical release blockers", ()
     { name: "deployment_url.staging.worker_api", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
     { name: "deployment_url.production.pages", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
     { name: "deployment_url.production.worker_api", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
-    { name: "cloudflare.d1.production.migration_0002", status: "fail", code: "D1_0002_NOT_APPLIED" },
-    { name: "cloudflare.d1.production.migration_0002", status: "fail", code: "D1_0002_NOT_APPLIED" },
+    { name: "cloudflare.d1.production.migration_0006", status: "fail", code: "D1_0006_NOT_APPLIED" },
+    { name: "cloudflare.d1.production.migration_0006", status: "fail", code: "D1_0006_NOT_APPLIED" },
   ]);
 
   assert.deepEqual(blockers, [
@@ -1982,7 +2016,7 @@ test("Cloudflare external state check summarizes canonical release blockers", ()
     "deployment_url.staging.worker_api",
     "deployment_url.production.pages",
     "deployment_url.production.worker_api",
-    "D1_0002_NOT_APPLIED",
+    "D1_0006_NOT_APPLIED",
   ]);
 });
 
@@ -2946,6 +2980,555 @@ test("Cloudflare API supports required place and ranking route aliases", async (
   assert.ok(areaRanking.data.every((ranking) => ranking.regionId === "busan"));
 });
 
+test("Worker runtime config defaults launch flags to false in explicit demo storage", async () => {
+  const response = await worker.handleRequest(new Request("https://api.test/api/config"), { ENVIRONMENT: "development" });
+  assert.equal(response.status, 200);
+
+  const payload = (await response.json()) as SuccessPayload<{
+    contractVersion: number;
+    dataMode: string;
+    featureFlags: Record<string, boolean>;
+    dimensionSettings: Array<{ settingKey: string; defaultTtlSeconds: number }>;
+  }>;
+  assert.equal(payload.data.contractVersion, 2);
+  assert.equal(payload.data.dataMode, "demo");
+  assert.deepEqual(payload.data.featureFlags, {
+    QNA_ENABLED: false,
+    REWARDS_ENABLED: false,
+    ADS_ENABLED: false,
+    LIVE_STREAMS_ENABLED: false,
+    DEMO_DATA_ENABLED: false,
+    SEOUL_REALTIME_ENABLED: false,
+    SOCIAL_FEED_ENABLED: false,
+  });
+  assert.equal(payload.data.dimensionSettings.find((setting) => setting.settingKey === "parking")?.defaultTtlSeconds, 900);
+  assert.equal(payload.meta?.storage, "memory");
+});
+
+test("Worker runtime config applies a D1 region feature override", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    await db
+      .prepare("INSERT INTO feature_flags (scope_type, scope_key, flag_key, enabled) VALUES ('region', ?, 'QNA_ENABLED', 1)")
+      .bind("busan")
+      .run();
+    const response = await worker.handleRequest(new Request("https://api.test/api/config?regionCode=busan"), {
+      DB: db,
+      ENVIRONMENT: "staging",
+    });
+    assert.equal(response.status, 200);
+
+    const payload = (await response.json()) as SuccessPayload<{
+      dataMode: string;
+      featureFlags: Record<string, boolean>;
+    }>;
+    assert.equal(payload.data.dataMode, "live");
+    assert.equal(payload.data.featureFlags.QNA_ENABLED, true);
+    assert.equal(payload.data.featureFlags.REWARDS_ENABLED, false);
+    assert.equal(payload.meta?.storage, "d1");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("public source registry is redacted and fail-closed until rights and health are approved", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const response = await worker.handleRequest(new Request("https://api.test/api/sources"), {
+      DB: db,
+      ENVIRONMENT: "staging",
+    });
+    assert.equal(response.status, 200);
+    const payload = (await response.json()) as SuccessPayload<Array<{
+      sourceKey: string;
+      activationStatus: string;
+      commercialUseStatus: string;
+      enabled: boolean;
+      healthStatus: string;
+    }>>;
+    const userReport = payload.data.find((source) => source.sourceKey === "user_report");
+    const kma = payload.data.find((source) => source.sourceKey === "kma_weather");
+    const tour = payload.data.find((source) => source.sourceKey === "tour_api");
+
+    assert.equal(userReport?.activationStatus, "active");
+    assert.equal(kma?.commercialUseStatus, "allowed_with_attribution");
+    assert.equal(kma?.enabled, false);
+    assert.equal(kma?.activationStatus, "inactive");
+    assert.equal(tour?.commercialUseStatus, "pending");
+    assert.equal(tour?.activationStatus, "awaiting_rights");
+    assert.equal(JSON.stringify(payload).includes("ownerContact"), false);
+    assert.equal(JSON.stringify(payload).includes("internalNote"), false);
+    assert.equal(JSON.stringify(payload).includes("baseUrl"), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("source health updates require an operator and immediately affect public activation", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const unauthorized = await rawD1AdminPost(db, "https://api.test/api/admin/sources/user_report/health", {
+      status: "down",
+      message: "fixture outage",
+      responseTimeMs: 900,
+    });
+    assert.equal(unauthorized.status, 403);
+
+    const updated = await d1AdminPost<SuccessPayload<{
+      sourceKey: string;
+      status: string;
+      responseTimeMs: number;
+    }>>(
+      db,
+      "https://api.test/api/admin/sources/user_report/health",
+      { status: "down", message: "fixture outage", responseTimeMs: 900 },
+      {},
+      "test-operator-token",
+    );
+    assert.equal(updated.data.sourceKey, "user_report");
+    assert.equal(updated.data.status, "down");
+
+    const health = await d1AdminGet<SuccessPayload<Array<{ sourceKey: string; status: string; message: string | null }>>>(
+      db,
+      "https://api.test/api/admin/sources/health?limit=10",
+    );
+    assert.equal(health.data[0]?.sourceKey, "user_report");
+    assert.equal(health.data[0]?.status, "down");
+    assert.equal(health.data[0]?.message, "fixture outage");
+
+    const sources = await d1Get<SuccessPayload<Array<{ sourceKey: string; activationStatus: string; healthStatus: string }>>>(
+      db,
+      "https://api.test/api/sources",
+      "anon_source_health_test",
+    );
+    const userReport = sources.data.find((source) => source.sourceKey === "user_report");
+    assert.equal(userReport?.healthStatus, "down");
+    assert.equal(userReport?.activationStatus, "unhealthy");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("source policy activation requires admin rights review health region and audit evidence", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const reviewedAt = "2026-07-10T00:00:00.000Z";
+  const kmaPolicy = {
+    commercialUseStatus: "allowed_with_attribution",
+    enabled: true,
+    agreementRequired: false,
+    imageUseAllowed: false,
+    videoUseAllowed: false,
+    enabledRegions: ["*"],
+    attributionText: "기상청",
+    ownerContact: "data-operations",
+    internalNote: "official data portal terms reviewed",
+    rightsReviewedAt: reviewedAt,
+    defaultTtlSeconds: 1_800,
+  };
+
+  try {
+    const operatorDenied = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/kma_weather", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify(kmaPolicy),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens },
+    );
+    assert.equal(operatorDenied.status, 403);
+
+    const pendingActivation = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/tour_api", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-admin-token",
+        },
+        body: JSON.stringify({
+          ...kmaPolicy,
+          commercialUseStatus: "pending",
+          attributionText: "한국관광공사",
+          defaultTtlSeconds: null,
+        }),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens },
+    );
+    const pendingPayload = (await pendingActivation.json()) as FailurePayload;
+    assert.equal(pendingActivation.status, 409);
+    assert.equal(pendingPayload.error.code, "SOURCE_RIGHTS_REQUIRED");
+
+    await db.prepare("UPDATE data_sources SET health_status = 'healthy' WHERE source_key = 'kma_weather'").run();
+    const activated = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/kma_weather", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-admin-token",
+          "x-silsigan-admin-subject": "source-owner@example.test",
+        },
+        body: JSON.stringify(kmaPolicy),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens },
+    );
+    assert.equal(activated.status, 200);
+    const activatedPayload = (await activated.json()) as SuccessPayload<{
+      sourceKey: string;
+      enabled: boolean;
+      enabledRegions: string[];
+      rightsReviewedAt: string;
+    }>;
+    assert.equal(activatedPayload.data.sourceKey, "kma_weather");
+    assert.equal(activatedPayload.data.enabled, true);
+    assert.deepEqual(activatedPayload.data.enabledRegions, ["*"]);
+    assert.equal(activatedPayload.data.rightsReviewedAt, reviewedAt);
+
+    const sources = await d1Get<SuccessPayload<Array<{ sourceKey: string; activationStatus: string }>>>(
+      db,
+      "https://api.test/api/sources",
+      "anon_source_policy_test",
+    );
+    assert.equal(sources.data.find((source) => source.sourceKey === "kma_weather")?.activationStatus, "active");
+
+    const audit = await db.prepare(`
+      SELECT action_type AS actionType, target_type AS targetType, target_id AS targetId
+      FROM admin_actions
+      WHERE action_type = 'source_policy_updated'
+    `).first<{ actionType: string; targetType: string; targetId: string }>();
+    assert.equal(audit?.targetType, "data_source");
+    assert.equal(audit?.targetId, "source-kma-weather");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("KMA ingestion stays disabled until approved and then persists hashed official evidence", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const serviceKey = "kma-fixture-secret-key";
+  let fetchCount = 0;
+
+  try {
+    const providerKst = new Date(Date.now() + 9 * 60 * 60 * 1_000 - 5 * 60 * 1_000);
+    const baseDate = `${providerKst.getUTCFullYear()}${String(providerKst.getUTCMonth() + 1).padStart(2, "0")}${String(providerKst.getUTCDate()).padStart(2, "0")}`;
+    const baseTime = `${String(providerKst.getUTCHours()).padStart(2, "0")}${String(providerKst.getUTCMinutes()).padStart(2, "0")}`;
+    const expectedObservedAt = new Date(
+      `${baseDate.slice(0, 4)}-${baseDate.slice(4, 6)}-${baseDate.slice(6, 8)}T${baseTime.slice(0, 2)}:${baseTime.slice(2, 4)}:00+09:00`,
+    ).toISOString();
+    const requestBody = {
+      placeId: "busan-gwangalli",
+      nx: 98,
+      ny: 76,
+      baseDate,
+      baseTime,
+    };
+    const disabled = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/kma_weather/ingest", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify(requestBody),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens, KMA_SERVICE_KEY: serviceKey },
+    );
+    const disabledPayload = (await disabled.json()) as FailurePayload;
+    assert.equal(disabled.status, 409);
+    assert.equal(disabledPayload.error.code, "SOURCE_NOT_ACTIVE");
+
+    await db.prepare("UPDATE data_sources SET enabled = 1, health_status = 'healthy' WHERE source_key = 'kma_weather'").run();
+    globalThis.fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      fetchCount += 1;
+      const requestedUrl = String(input);
+      assert.equal(requestedUrl.includes(serviceKey), true);
+      return Response.json({
+        response: {
+          header: { resultCode: "00", resultMsg: "NORMAL_SERVICE" },
+          body: {
+            totalCount: 4,
+            items: {
+              item: [
+                { baseDate, baseTime, category: "T1H", nx: 98, ny: 76, obsrValue: "26.4" },
+                { baseDate, baseTime, category: "RN1", nx: 98, ny: 76, obsrValue: "0" },
+                { baseDate, baseTime, category: "WSD", nx: 98, ny: 76, obsrValue: "2.1" },
+                { baseDate, baseTime, category: "PTY", nx: 98, ny: 76, obsrValue: "0" },
+              ],
+            },
+          },
+        },
+      });
+    };
+
+    const ingest = () => worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/kma_weather/ingest", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify(requestBody),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens, KMA_SERVICE_KEY: serviceKey },
+    );
+    const first = await ingest();
+    const firstPayload = (await first.json()) as SuccessPayload<{
+      sourceKey: string;
+      placeId: string;
+      normalizedCount: number;
+      observedAt: string;
+      status: { currentSignals: Array<{ sourceName: string; observedAt: string }> };
+    }>;
+    assert.equal(first.status, 201);
+    assert.equal(firstPayload.data.sourceKey, "kma_weather");
+    assert.equal(firstPayload.data.normalizedCount, 1);
+    assert.equal(firstPayload.data.observedAt, expectedObservedAt);
+    assert.equal(firstPayload.data.status.currentSignals.some((signal) => signal.sourceName.includes("기상청")), true);
+
+    const signal = await db.prepare(`
+      SELECT source_id AS sourceId, source_type AS sourceType, observed_at AS observedAt, fetched_at AS fetchedAt,
+             expires_at AS expiresAt, idempotency_key AS idempotencyKey
+      FROM live_signals
+      WHERE source_id = 'source-kma-weather'
+    `).first<{
+      sourceId: string;
+      sourceType: string;
+      observedAt: string;
+      fetchedAt: string;
+      expiresAt: string;
+      idempotencyKey: string;
+    }>();
+    assert.equal(signal?.sourceType, "official_periodic");
+    assert.equal(signal?.observedAt, expectedObservedAt);
+    assert.notEqual(signal?.observedAt, signal?.fetchedAt);
+    assert.equal(Date.parse(signal?.expiresAt ?? "") - Date.parse(signal?.observedAt ?? ""), 1_800_000);
+    assert.equal(signal?.idempotencyKey.includes(serviceKey), false);
+
+    const evidence = await db.prepare(`
+      SELECT raw_payload_hash AS rawPayloadHash, provider_observed_at AS providerObservedAt
+      FROM official_observations
+      WHERE source_id = 'source-kma-weather'
+    `).first<{ rawPayloadHash: string; providerObservedAt: string }>();
+    assert.match(evidence?.rawPayloadHash ?? "", /^sha256:[a-f0-9]{64}$/);
+    assert.equal(evidence?.providerObservedAt, expectedObservedAt);
+    assert.equal(JSON.stringify(firstPayload).includes(serviceKey), false);
+
+    const second = await ingest();
+    assert.equal(second.status, 201);
+    const signalCount = await db.prepare("SELECT COUNT(*) AS count FROM live_signals WHERE source_id = 'source-kma-weather'").first<{ count: number }>();
+    assert.equal(signalCount?.count, 1);
+    assert.equal(fetchCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("official static ingestion creates a source mapping without creating a current signal", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const serviceKey = "tour-fixture-secret-key";
+
+  try {
+    await db.prepare(`
+      UPDATE data_sources
+      SET commercial_use_status = 'allowed_with_attribution', attribution_text = '한국관광공사',
+          enabled = 1, enabled_regions_json = '["*"]', health_status = 'healthy'
+      WHERE source_key = 'tour_api'
+    `).run();
+    globalThis.fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      assert.equal(String(input).includes(serviceKey), true);
+      return Response.json({
+        response: {
+          header: { resultCode: "0000", resultMsg: "OK" },
+          body: {
+            totalCount: 1,
+            items: { item: [{
+              contentid: "126508",
+              title: "광안리해수욕장",
+              addr1: "부산광역시 수영구 광안해변로 219",
+              mapx: "129.1185509",
+              mapy: "35.1531696",
+              modifiedtime: "20260710083000",
+            }] },
+          },
+        },
+      });
+    };
+
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/tour_api/ingest", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify({
+          placeId: "busan-gwangalli",
+          externalId: "126508",
+          matchMethod: "manual",
+          manuallyVerified: true,
+          areaCode: "6",
+          contentTypeId: "12",
+          pageNo: 1,
+          numOfRows: 10,
+        }),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens, TOUR_API_SERVICE_KEY: serviceKey },
+    );
+    assert.equal(response.status, 201);
+    const payload = (await response.json()) as SuccessPayload<{
+      sourceKey: string;
+      placeId: string;
+      externalId: string;
+      metadataOnly: boolean;
+      currentSignalCreated: boolean;
+    }>;
+    assert.equal(payload.data.sourceKey, "tour_api");
+    assert.equal(payload.data.metadataOnly, true);
+    assert.equal(payload.data.currentSignalCreated, false);
+
+    const mapping = await db.prepare(`
+      SELECT place_id AS placeId, external_name AS externalName, manually_verified AS manuallyVerified
+      FROM place_source_mappings
+      WHERE source_id = 'source-tour-api' AND external_place_id = '126508'
+    `).first<{ placeId: string; externalName: string; manuallyVerified: number }>();
+    assert.equal(mapping?.placeId, "busan-gwangalli");
+    assert.equal(mapping?.externalName, "광안리해수욕장");
+    assert.equal(mapping?.manuallyVerified, 1);
+    const liveCount = await db.prepare("SELECT COUNT(*) AS count FROM live_signals WHERE source_id = 'source-tour-api'").first<{ count: number }>();
+    assert.equal(liveCount?.count, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("national traffic ingestion persists one estimated speed signal with provider time and idempotency", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const serviceKey = "its-fixture-secret-key";
+  let fetchCount = 0;
+
+  try {
+    await db.prepare(`
+      UPDATE data_sources
+      SET commercial_use_status = 'allowed_with_attribution', attribution_text = '국토교통부',
+          enabled = 1, enabled_regions_json = '["*"]', health_status = 'healthy', default_ttl_seconds = 600
+      WHERE source_key = 'national_traffic'
+    `).run();
+    const providerKst = new Date(Date.now() + 9 * 60 * 60 * 1_000 - 5 * 60 * 1_000);
+    const createdDate = [
+      providerKst.getUTCFullYear(),
+      String(providerKst.getUTCMonth() + 1).padStart(2, "0"),
+      String(providerKst.getUTCDate()).padStart(2, "0"),
+      String(providerKst.getUTCHours()).padStart(2, "0"),
+      String(providerKst.getUTCMinutes()).padStart(2, "0"),
+      String(providerKst.getUTCSeconds()).padStart(2, "0"),
+    ].join("");
+    const expectedObservedAt = new Date(
+      `${createdDate.slice(0, 4)}-${createdDate.slice(4, 6)}-${createdDate.slice(6, 8)}T${createdDate.slice(8, 10)}:${createdDate.slice(10, 12)}:${createdDate.slice(12, 14)}+09:00`,
+    ).toISOString();
+    globalThis.fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      fetchCount += 1;
+      const requestedUrl = new URL(String(input));
+      assert.equal(requestedUrl.searchParams.get("apiKey"), serviceKey);
+      assert.equal(requestedUrl.searchParams.get("type"), "all");
+      return Response.json({
+        response: {
+          header: { resultCode: "0", resultMsg: "SUCCESS" },
+          body: {
+            totalCount: "2",
+            items: { item: [
+              { roadName: "광안대로", linkId: "2600012400", speed: "42", travelTime: "88.1", createdDate },
+              { roadName: "다른 도로", linkId: "2600099999", speed: "12", travelTime: "120", createdDate },
+            ] },
+          },
+        },
+      });
+    };
+    const requestBody = {
+      placeId: "busan-gwangalli",
+      linkId: "2600012400",
+      roadType: "all",
+      minLng: 129.1,
+      maxLng: 129.14,
+      minLat: 35.14,
+      maxLat: 35.17,
+    };
+    const ingest = () => worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/national_traffic/ingest", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify(requestBody),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens, ITS_SERVICE_KEY: serviceKey },
+    );
+
+    const first = await ingest();
+    assert.equal(first.status, 201);
+    const firstPayload = (await first.json()) as SuccessPayload<{
+      sourceKey: string;
+      linkId: string;
+      observedAt: string;
+      isEstimated: boolean;
+    }>;
+    assert.equal(firstPayload.data.sourceKey, "national_traffic");
+    assert.equal(firstPayload.data.linkId, "2600012400");
+    assert.equal(firstPayload.data.observedAt, expectedObservedAt);
+    assert.equal(firstPayload.data.isEstimated, true);
+
+    const signal = await db.prepare(`
+      SELECT value_code AS valueCode, value_number AS valueNumber, unit, is_estimated AS isEstimated,
+             observed_at AS observedAt, expires_at AS expiresAt, idempotency_key AS idempotencyKey
+      FROM live_signals
+      WHERE source_id = 'source-national-traffic'
+    `).first<{
+      valueCode: string;
+      valueNumber: number;
+      unit: string;
+      isEstimated: number;
+      observedAt: string;
+      expiresAt: string;
+      idempotencyKey: string;
+    }>();
+    assert.equal(signal?.valueCode, "slow");
+    assert.equal(signal?.valueNumber, 42);
+    assert.equal(signal?.unit, "km/h");
+    assert.equal(signal?.isEstimated, 1);
+    assert.equal(signal?.observedAt, expectedObservedAt);
+    assert.equal(Date.parse(signal?.expiresAt ?? "") - Date.parse(signal?.observedAt ?? ""), 600_000);
+    assert.equal(signal?.idempotencyKey.includes(serviceKey), false);
+
+    const second = await ingest();
+    assert.equal(second.status, 201);
+    const count = await db.prepare("SELECT COUNT(*) AS count FROM live_signals WHERE source_id = 'source-national-traffic'").first<{ count: number }>();
+    assert.equal(count?.count, 1);
+    assert.equal(fetchCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging and production reject memory fallback when D1 is unavailable", async () => {
+  for (const environment of ["staging", "production"]) {
+    const response = await worker.handleRequest(new Request("https://api.test/api/places"), { ENVIRONMENT: environment });
+    assert.equal(response.status, 503);
+    const payload = (await response.json()) as FailurePayload;
+    assert.equal(payload.error.code, "PERSISTENT_STORE_REQUIRED");
+    assert.equal(JSON.stringify(payload).includes(environment), false);
+  }
+});
+
 test("Cloudflare Worker serves posts hashtags and questions without Next.js mock APIs", async () => {
   const anonymousId = "anon_posts_questions_test";
   const postsPayload = await get<SuccessPayload<FeedPost[]>>("https://api.test/api/posts?regionId=seoul&limit=10", anonymousId);
@@ -3080,6 +3663,7 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
         SELECT 'rankings=' || COUNT(*) FROM place_rankings;
         SELECT 'posts=' || COUNT(*) FROM posts;
         SELECT 'questions=' || COUNT(*) FROM questions;
+        SELECT 'profile_assignments=' || COUNT(*) FROM place_decision_profiles;
         SELECT 'todo=' || COUNT(*) FROM places WHERE coordinate_status = 'TODO_COORDINATE_VERIFY' AND latitude IS NULL AND longitude IS NULL;
       `,
     });
@@ -3088,6 +3672,7 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
     assert.match(output, /rankings=6/);
     assert.match(output, /posts=4/);
     assert.match(output, /questions=3/);
+    assert.match(output, /profile_assignments=4/);
     assert.match(output, /todo=1/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -3097,7 +3682,14 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
 test("D1 migration chain and core seed are release-order idempotent", { skip: !sqlite3Available() }, () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-migrations-"));
   const dbPath = join(tempDir, "migrations.db");
-  const migrations = ["0001_initial.sql", "0002_posts_questions.sql", "0003_post_moderation_targets.sql"]
+  const migrations = [
+    "0001_initial.sql",
+    "0002_posts_questions.sql",
+    "0003_post_moderation_targets.sql",
+    "0004_v2_foundation.sql",
+    "0005_v2_signals.sql",
+    "0006_trust_safety_identity.sql",
+  ]
     .map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8"))
     .join("\n");
   const seed = readFileSync(new URL("../workers/api/seeds/001_core_seed.sql", import.meta.url), "utf8");
@@ -3113,6 +3705,16 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
         SELECT 'tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('regions', 'areas', 'places', 'place_rankings', 'posts', 'questions');
         SELECT 'post_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_posts_place_created', 'idx_posts_status_created');
         SELECT 'question_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_questions_place_created', 'idx_questions_anon_created');
+        SELECT 'v2_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('profiles', 'identity_links', 'data_sources', 'place_source_mappings', 'dimension_settings', 'feature_flags', 'decision_profiles', 'decision_profile_dimensions', 'place_decision_profiles', 'live_signals', 'official_observations', 'aggregated_place_status');
+        SELECT 'trust_safety_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_moderation_states', 'report_votes', 'user_blocks', 'consents', 'terms_acceptances', 'account_deletion_requests', 'identity_link_events');
+        SELECT 'v2_flags=' || COUNT(*) FROM feature_flags WHERE scope_type = 'global' AND scope_key = '*' AND enabled = 0;
+        SELECT 'parking_ttl=' || default_ttl_seconds FROM dimension_settings WHERE setting_key = 'parking';
+        SELECT 'queue_ttl=' || default_ttl_seconds FROM dimension_settings WHERE setting_key = 'queue';
+        SELECT 'photo_current_ttl=' || default_ttl_seconds FROM dimension_settings WHERE setting_key = 'photo_current';
+        SELECT 'enabled_external_sources=' || COUNT(*) FROM data_sources WHERE enabled = 1 AND source_key != 'user_report';
+        SELECT 'cctv_metadata_policy=' || source_type || ':' || video_use_allowed || ':' || agreement_required FROM data_sources WHERE source_key = 'national_cctv';
+        SELECT 'tour_image_policy=' || image_use_allowed FROM data_sources WHERE source_key = 'tour_api';
+        SELECT 'rights_owners=' || COUNT(*) FROM data_sources WHERE source_key != 'user_report' AND owner_contact IN ('data-operations', 'legal-safety');
         SELECT 'places=' || COUNT(*) FROM places;
         SELECT 'rankings=' || COUNT(*) FROM place_rankings;
         SELECT 'posts=' || COUNT(*) FROM posts;
@@ -3123,10 +3725,94 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
     assert.match(output, /tables=6/);
     assert.match(output, /post_indexes=2/);
     assert.match(output, /question_indexes=2/);
+    assert.match(output, /v2_tables=12/);
+    assert.match(output, /trust_safety_tables=7/);
+    assert.match(output, /v2_flags=7/);
+    assert.match(output, /parking_ttl=900/);
+    assert.match(output, /queue_ttl=1200/);
+    assert.match(output, /photo_current_ttl=7200/);
+    assert.match(output, /enabled_external_sources=0/);
+    assert.match(output, /cctv_metadata_policy=official_static:0:1/);
+    assert.match(output, /tour_image_policy=0/);
+    assert.match(output, /rights_owners=7/);
     assert.match(output, /places=6/);
     assert.match(output, /rankings=6/);
     assert.match(output, /posts=4/);
     assert.match(output, /questions=3/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 live signal schema rejects invalid expiry and accepts a valid current observation", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const insert = `
+      INSERT INTO live_signals (
+        id,
+        place_id,
+        dimension,
+        value_code,
+        source_id,
+        source_type,
+        source_name,
+        observed_at,
+        fetched_at,
+        expires_at,
+        confidence_score,
+        is_publicly_visible
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    await assert.rejects(
+      db
+        .prepare(insert)
+        .bind(
+          "signal-invalid-expiry",
+          "busan-gwangalli",
+          "crowd",
+          "busy",
+          "source-user-report",
+          "ugc",
+          "User field report",
+          "2026-07-10T00:20:00.000Z",
+          "2026-07-10T00:21:00.000Z",
+          "2026-07-10T00:19:59.000Z",
+          0.7,
+          1,
+        )
+        .run(),
+      /CHECK constraint failed/,
+    );
+
+    await db
+      .prepare(insert)
+      .bind(
+        "signal-valid",
+        "busan-gwangalli",
+        "parking",
+        "available",
+        "source-user-report",
+        "verified_ugc",
+        "Verified field report",
+        "2026-07-10T00:20:00.000Z",
+        "2026-07-10T00:21:00.000Z",
+        "2026-07-10T00:35:00.000Z",
+        0.85,
+        1,
+      )
+      .run();
+
+    const row = await db
+      .prepare("SELECT dimension, value_code AS valueCode, observed_at AS observedAt FROM live_signals WHERE id = ?")
+      .bind("signal-valid")
+      .first<{ dimension: string; valueCode: string; observedAt: string }>();
+    assert.deepEqual(row, {
+      dimension: "parking",
+      valueCode: "available",
+      observedAt: "2026-07-10T00:20:00.000Z",
+    });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -3424,7 +4110,8 @@ test("Cloudflare Worker persists user actions and moderation state to D1", { ski
       body: "D1 댓글 저장 테스트입니다.",
     });
     assert.equal(comment.meta?.storage, "d1");
-    assert.notEqual(comment.data.anonymousUserId, anonymousId);
+    assert.equal(comment.data.ownedByCurrentSession, true);
+    assert.equal("anonymousUserId" in comment.data, false);
 
     const comments = await d1Get<SuccessPayload<Comment[]>>(db, "https://api.test/api/comments?placeId=busan-gwangalli", anonymousId);
     assert.equal(comments.meta?.storage, "d1");
@@ -3462,6 +4149,14 @@ test("Cloudflare Worker persists user actions and moderation state to D1", { ski
       clientReencoded: true,
     });
     assert.equal(photo.meta?.storage, "d1");
+    assert.equal(photo.data.photo.status, "pending");
+    await d1AdminPost<SuccessPayload<{ decision: string }>>(
+      db,
+      `https://api.test/api/admin/photos/${photo.data.photo.id}/moderation`,
+      { decision: "approved", reason: "D1 클릭 회귀 테스트 검수 승인" },
+      {},
+      "test-moderator-token",
+    );
 
     const firstPhotoClick = await d1Post<SuccessPayload<{ clickCount: number; created: boolean }>>(
       db,
@@ -3547,8 +4242,11 @@ test("Cloudflare Worker persists user actions and moderation state to D1", { ski
     );
     assert.equal(moderated.data.status, "accepted");
 
-    const adminAction = await db.prepare("SELECT COUNT(*) AS count FROM admin_actions WHERE target_id = ?").bind(photo.data.photo.id).first<{ count: number }>();
-    assert.equal(adminAction?.count, 1);
+    const adminActions = await db
+      .prepare("SELECT action_type AS actionType FROM admin_actions WHERE target_id = ? ORDER BY created_at ASC")
+      .bind(photo.data.photo.id)
+      .all<{ actionType: string }>();
+    assert.deepEqual(adminActions.results?.map((action) => action.actionType), ["photo_approved", "report_accepted"]);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -3661,6 +4359,15 @@ test("D1 field reports store coarse realtime status without client coordinates",
     assert.equal(payload.meta?.locationPolicy, "clientLocation-used-only-for-distance-and-not-stored");
     assert.equal(payload.data.report.placeId, "busan-gwangalli");
     assert.equal(payload.data.report.verifiedRadiusM, 50);
+    assert.deepEqual(
+      payload.data.report.observations.map((observation) => [observation.dimension, observation.valueCode]),
+      [
+        ["crowd", "busy"],
+        ["queue", "under_10"],
+        ["parking", "limited"],
+        ["local_condition", "strong_wind"],
+      ],
+    );
     assert.deepEqual(payload.data.credits, [
       { type: "verified_report", amount: 1 },
       { type: "photo_report", amount: 1 },
@@ -3670,6 +4377,45 @@ test("D1 field reports store coarse realtime status without client coordinates",
     assert.equal(serializedPayload.includes("images.example.test"), false);
     assert.equal("clientLocation" in payload.data.report, false);
     assert.equal("anonymousUserId" in payload.data.report, false);
+
+    const signalRows = await db
+      .prepare(
+        `SELECT
+          dimension,
+          value_code AS valueCode,
+          source_type AS sourceType,
+          observed_at AS observedAt,
+          expires_at AS expiresAt,
+          actor_type AS actorType
+        FROM live_signals
+        WHERE evidence_id = ?
+        ORDER BY dimension`,
+      )
+      .bind(payload.data.report.id)
+      .all<{
+        dimension: string;
+        valueCode: string;
+        sourceType: string;
+        observedAt: string;
+        expiresAt: string;
+        actorType: string;
+      }>();
+    assert.equal(signalRows.results?.length, 4);
+    assert.equal(signalRows.results?.every((signal) => signal.sourceType === "verified_ugc" && signal.actorType === "anonymous"), true);
+    assert.deepEqual(
+      Object.fromEntries(
+        (signalRows.results ?? []).map((signal) => [
+          signal.dimension,
+          (new Date(signal.expiresAt).getTime() - new Date(signal.observedAt).getTime()) / 1_000,
+        ]),
+      ),
+      {
+        crowd: 1800,
+        local_condition: 3600,
+        parking: 900,
+        queue: 1200,
+      },
+    );
 
     const event = await db
       .prepare(
@@ -3782,6 +4528,453 @@ test("D1 field reports store coarse realtime status without client coordinates",
   }
 });
 
+test("field report accepts only observed dimensions and rejects an empty observation", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const response = await rawD1Post(db, "https://api.test/api/reports", "anon_d1_optional_report", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      queueStatus: "10_to_30",
+      comment: "대기 시간만 확인했습니다.",
+    });
+    const payload = (await response.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(response.status, 201);
+    assert.equal("crowdLevel" in payload.data.report, false);
+    assert.equal("parkingStatus" in payload.data.report, false);
+    assert.equal("weatherFeel" in payload.data.report, false);
+    assert.deepEqual(payload.data.report.observations.map((observation) => [observation.dimension, observation.valueCode]), [
+      ["queue", "10_to_30"],
+    ]);
+
+    const event = await db
+      .prepare("SELECT crowd_level AS crowdLevel, line_status AS lineStatus, parking_status AS parkingStatus FROM place_events WHERE id = ?")
+      .bind(payload.data.report.id)
+      .first<{ crowdLevel: string | null; lineStatus: string | null; parkingStatus: string | null }>();
+    assert.deepEqual(event, { crowdLevel: null, lineStatus: "medium", parkingStatus: null });
+    const signal = await db
+      .prepare("SELECT dimension, value_code AS valueCode FROM live_signals WHERE evidence_id = ?")
+      .bind(payload.data.report.id)
+      .first<{ dimension: string; valueCode: string }>();
+    assert.deepEqual(signal, { dimension: "queue", valueCode: "10_to_30" });
+
+    const rejected = await rawD1Post(db, "https://api.test/api/reports", "anon_d1_empty_report", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      parkingStatus: "unknown",
+    });
+    const rejectedPayload = (await rejected.json()) as FailurePayload;
+    assert.equal(rejected.status, 400);
+    assert.equal(rejectedPayload.error.code, "REPORT_OBSERVATION_REQUIRED");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("field report votes reject self and duplicates, then invalidate stale consensus safely", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const ownerId = "anon_vote_report_owner";
+    const reportResponse = await rawD1Post(db, "https://api.test/api/reports", ownerId, {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+    });
+    const reportPayload = (await reportResponse.json()) as SuccessPayload<FieldReportData>;
+    const voteUrl = `https://api.test/api/reports/${reportPayload.data.report.id}/votes`;
+
+    const selfVote = await rawD1Post(db, voteUrl, ownerId, { voteType: "agree" });
+    const selfVotePayload = (await selfVote.json()) as FailurePayload;
+    assert.equal(selfVote.status, 403);
+    assert.equal(selfVotePayload.error.code, "SELF_REPORT_VOTE_FORBIDDEN");
+
+    const agree = await rawD1Post(db, voteUrl, "anon_vote_agree", { voteType: "agree" });
+    const agreePayload = (await agree.json()) as SuccessPayload<{ agreeCount: number; changedCount: number; invalidated: boolean }>;
+    assert.equal(agree.status, 201);
+    assert.deepEqual(agreePayload.data, {
+      reportId: reportPayload.data.report.id,
+      voteType: "agree",
+      agreeCount: 1,
+      changedCount: 0,
+      invalidated: false,
+    });
+    const duplicate = await rawD1Post(db, voteUrl, "anon_vote_agree", { voteType: "changed" });
+    const duplicatePayload = (await duplicate.json()) as FailurePayload;
+    assert.equal(duplicate.status, 409);
+    assert.equal(duplicatePayload.error.code, "REPORT_VOTE_ALREADY_EXISTS");
+
+    const changedOne = await rawD1Post(db, voteUrl, "anon_vote_changed_one", { voteType: "changed" });
+    const changedTwo = await rawD1Post(db, voteUrl, "anon_vote_changed_two", { voteType: "changed" });
+    const changedThree = await rawD1Post(db, voteUrl, "anon_vote_changed_three", {
+      voteType: "changed",
+      clientLocation: { latitude: 35.1532, longitude: 129.1186 },
+    });
+    const changedOnePayload = (await changedOne.json()) as SuccessPayload<{ invalidated: boolean }>;
+    const changedTwoPayload = (await changedTwo.json()) as SuccessPayload<{ invalidated: boolean }>;
+    const changedThreePayload = (await changedThree.json()) as SuccessPayload<{ changedCount: number; invalidated: boolean }>;
+    assert.equal(changedOnePayload.data.invalidated, false);
+    assert.equal(changedTwoPayload.data.invalidated, false);
+    assert.equal(changedThreePayload.data.changedCount, 3);
+    assert.equal(changedThreePayload.data.invalidated, true);
+
+    const event = await db
+      .prepare("SELECT expires_at AS expiresAt FROM place_events WHERE id = ?")
+      .bind(reportPayload.data.report.id)
+      .first<{ expiresAt: string }>();
+    assert.ok(Date.parse(event?.expiresAt ?? "") <= Date.now());
+    const signals = await db
+      .prepare("SELECT COUNT(*) AS count FROM live_signals WHERE evidence_id = ? AND is_publicly_visible = 1")
+      .bind(reportPayload.data.report.id)
+      .first<{ count: number }>();
+    assert.equal(signals?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("user blocks use content ids, hide the creator across feeds, and never expose identity ids", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const creatorSession = "anon_block_target_creator";
+    const viewerSession = "anon_block_viewer";
+    const comment = await d1Post<SuccessPayload<Comment>>(db, "https://api.test/api/comments", creatorSession, {
+      placeId: "busan-gwangalli",
+      body: "차단 테스트 댓글입니다.",
+    });
+    const postResponse = await rawD1Post(db, "https://api.test/api/posts", creatorSession, {
+      placeId: "busan-gwangalli",
+      crowdLevel: "normal",
+      lineStatus: "none",
+      parkingStatus: "available",
+      weatherFeel: "good",
+      caption: "차단 테스트 게시물입니다.",
+      photoCount: 0,
+      hashtagNames: [],
+    });
+    const postPayload = (await postResponse.json()) as SuccessPayload<{ post: FeedPost }>;
+    assert.equal(postResponse.status, 201);
+    assert.equal("anonymousUserId" in comment.data, false);
+
+    const selfBlock = await rawD1Post(db, "https://api.test/api/blocks", creatorSession, {
+      targetType: "comment",
+      targetId: comment.data.id,
+    });
+    const selfBlockPayload = (await selfBlock.json()) as FailurePayload;
+    assert.equal(selfBlock.status, 400);
+    assert.equal(selfBlockPayload.error.code, "SELF_BLOCK_FORBIDDEN");
+
+    const blockResponse = await rawD1Post(db, "https://api.test/api/blocks", viewerSession, {
+      targetType: "comment",
+      targetId: comment.data.id,
+    });
+    const blockPayload = (await blockResponse.json()) as SuccessPayload<{ id: string; blocked: boolean }>;
+    assert.equal(blockResponse.status, 201);
+    assert.equal(blockPayload.data.blocked, true);
+    const serializedBlock = JSON.stringify(blockPayload);
+    assert.equal(serializedBlock.includes("anonymousUserId"), false);
+    assert.equal(serializedBlock.includes("anon_"), false);
+
+    const commentsAfterBlock = await d1Get<SuccessPayload<Comment[]>>(
+      db,
+      "https://api.test/api/comments?placeId=busan-gwangalli",
+      viewerSession,
+    );
+    const postsAfterBlock = await d1Get<SuccessPayload<FeedPost[]>>(
+      db,
+      "https://api.test/api/posts?placeId=busan-gwangalli",
+      viewerSession,
+    );
+    assert.equal(commentsAfterBlock.data.some((item) => item.id === comment.data.id), false);
+    assert.equal(postsAfterBlock.data.some((item) => item.id === postPayload.data.post.id), false);
+
+    const blockList = await d1Get<SuccessPayload<Array<{ id: string; createdAt: string; label: string }>>>(
+      db,
+      "https://api.test/api/blocks",
+      viewerSession,
+    );
+    assert.equal(blockList.data.length, 1);
+    assert.equal(blockList.data[0]?.id, blockPayload.data.id);
+    assert.equal(blockList.data[0]?.label, "차단한 사용자");
+    assert.equal(JSON.stringify(blockList).includes("anon_"), false);
+
+    const unblock = await rawD1Delete(db, `https://api.test/api/blocks/${blockPayload.data.id}`, viewerSession);
+    const unblockPayload = (await unblock.json()) as SuccessPayload<{ blocked: boolean }>;
+    assert.equal(unblock.status, 200);
+    assert.equal(unblockPayload.data.blocked, false);
+    const commentsAfterUnblock = await d1Get<SuccessPayload<Comment[]>>(
+      db,
+      "https://api.test/api/comments?placeId=busan-gwangalli",
+      viewerSession,
+    );
+    assert.equal(commentsAfterUnblock.data.some((item) => item.id === comment.data.id), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("anonymous account deletion purges owned content and rejects future writes", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_account_delete";
+
+  try {
+    const comment = await d1Post<SuccessPayload<Comment>>(db, "https://api.test/api/comments", anonymousId, {
+      placeId: "busan-gwangalli",
+      body: "삭제될 댓글입니다.",
+    });
+    const storedUser = await db
+      .prepare("SELECT anonymous_user_id AS anonymousUserId FROM comments WHERE id = ?")
+      .bind(comment.data.id)
+      .first<{ anonymousUserId: string }>();
+    const fieldReport = await rawD1Post(db, "https://api.test/api/reports", anonymousId, {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      queueStatus: "under_10",
+    });
+    assert.equal(fieldReport.status, 201);
+    const source = jpegWithGpsExifSample();
+    const photoResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": anonymousId },
+        body: JSON.stringify({
+          uploadId: "upload_account_delete",
+          placeId: "busan-gwangalli",
+          byteSize: source.byteLength,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(source),
+        }),
+      }),
+      { DB: db, PHOTOS: r2 },
+    );
+    const photoPayload = (await photoResponse.json()) as SuccessPayload<PhotoCompleteData>;
+    assert.equal(photoResponse.status, 201);
+
+    const deletionResponse = await worker.handleRequest(
+      new Request("https://api.test/api/account/deletion", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": anonymousId },
+        body: JSON.stringify({ confirmation: "DELETE_MY_ACCOUNT" }),
+      }),
+      { DB: db, PHOTOS: r2 },
+    );
+    const deletionPayload = (await deletionResponse.json()) as SuccessPayload<{
+      deleted: boolean;
+      actorType: string;
+      removedPhotoCount: number;
+    }>;
+    assert.equal(deletionResponse.status, 200);
+    assert.deepEqual(deletionPayload.data, {
+      deleted: true,
+      actorType: "anonymous",
+      removedPhotoCount: 1,
+      alreadyCompleted: false,
+    });
+    assert.equal(r2.deletedKeys.includes(photoPayload.data.storageKey), true);
+
+    for (const table of ["comments", "photos", "place_events", "live_signals"]) {
+      const column = table === "live_signals" ? "actor_id" : "anonymous_user_id";
+      const count = await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).bind(storedUser?.anonymousUserId ?? "").first<{ count: number }>();
+      assert.equal(count?.count, 0, table);
+    }
+    const requestRow = await db
+      .prepare("SELECT status FROM account_deletion_requests WHERE anonymous_user_id = ? ORDER BY requested_at DESC LIMIT 1")
+      .bind(storedUser?.anonymousUserId ?? "")
+      .first<{ status: string }>();
+    assert.equal(requestRow?.status, "completed");
+
+    const blockedWrite = await rawD1Post(db, "https://api.test/api/comments", anonymousId, {
+      placeId: "busan-gwangalli",
+      body: "삭제 후 작성 시도입니다.",
+    });
+    const blockedWritePayload = (await blockedWrite.json()) as FailurePayload;
+    assert.equal(blockedWrite.status, 403);
+    assert.equal(blockedWritePayload.error.code, "ACCOUNT_DELETED");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("member identity linking requires action-scoped HMAC and member deletion marks the profile deleted", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const anonymousId = "anon_member_link";
+  const memberSubject = "member-fixture-123";
+  const secret = "test-member-link-secret-at-least-32-bytes";
+
+  try {
+    const timestamp = String(Date.now());
+    const linkSignature = createHmac("sha256", secret)
+      .update(`identity-link.${timestamp}.${anonymousId}.${memberSubject}`)
+      .digest("hex");
+    const linkResponse = await worker.handleRequest(
+      new Request("https://api.test/api/identity/link", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": anonymousId,
+          "x-silsigan-link-timestamp": timestamp,
+          "x-silsigan-link-signature": linkSignature,
+        },
+        body: JSON.stringify({ memberSubject }),
+      }),
+      { DB: db, MEMBER_LINK_HMAC_SECRET: secret },
+    );
+    const linkPayload = (await linkResponse.json()) as SuccessPayload<{ linked: boolean; alreadyLinked: boolean }>;
+    assert.equal(linkResponse.status, 201);
+    assert.deepEqual(linkPayload.data, { linked: true, alreadyLinked: false });
+    assert.equal(JSON.stringify(linkPayload).includes(memberSubject), false);
+
+    const profile = await db
+      .prepare(
+        `SELECT p.id, p.auth_subject AS authSubject, p.status
+         FROM profiles p
+         JOIN identity_links il ON il.profile_id = p.id
+         LIMIT 1`,
+      )
+      .first<{ id: string; authSubject: string; status: string }>();
+    assert.match(profile?.authSubject ?? "", /^sha256:[a-f0-9]{64}$/);
+    assert.equal(profile?.status, "active");
+
+    const reusedSignatureDeletion = await worker.handleRequest(
+      new Request("https://api.test/api/account/deletion", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": anonymousId,
+          "x-silsigan-link-timestamp": timestamp,
+          "x-silsigan-link-signature": linkSignature,
+        },
+        body: JSON.stringify({ confirmation: "DELETE_MY_ACCOUNT", memberSubject }),
+      }),
+      { DB: db, MEMBER_LINK_HMAC_SECRET: secret },
+    );
+    const reusedPayload = (await reusedSignatureDeletion.json()) as FailurePayload;
+    assert.equal(reusedSignatureDeletion.status, 403);
+    assert.equal(reusedPayload.error.code, "MEMBER_LINK_SIGNATURE_INVALID");
+
+    const deletionTimestamp = String(Date.now());
+    const deletionSignature = createHmac("sha256", secret)
+      .update(`account-deletion.${deletionTimestamp}.${anonymousId}.${memberSubject}`)
+      .digest("hex");
+    const deletionResponse = await worker.handleRequest(
+      new Request("https://api.test/api/account/deletion", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": anonymousId,
+          "x-silsigan-link-timestamp": deletionTimestamp,
+          "x-silsigan-link-signature": deletionSignature,
+        },
+        body: JSON.stringify({ confirmation: "DELETE_MY_ACCOUNT", memberSubject }),
+      }),
+      { DB: db, MEMBER_LINK_HMAC_SECRET: secret },
+    );
+    const deletionPayload = (await deletionResponse.json()) as SuccessPayload<{ deleted: boolean; actorType: string }>;
+    assert.equal(deletionResponse.status, 200);
+    assert.equal(deletionPayload.data.deleted, true);
+    assert.equal(deletionPayload.data.actorType, "member");
+    const deletedProfile = await db.prepare("SELECT status, deleted_at AS deletedAt FROM profiles WHERE id = ?").bind(profile?.id ?? "").first<{ status: string; deletedAt: string | null }>();
+    assert.equal(deletedProfile?.status, "deleted");
+    assert.ok(deletedProfile?.deletedAt);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 place status uses enabled current sources and preserves provider observation time", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const reportResponse = await rawD1Post(db, "https://api.test/api/reports", "anon_d1_status_report", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "quiet",
+    });
+    const reportPayload = (await reportResponse.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(reportResponse.status, 201);
+
+    const insufficientResponse = await worker.handleRequest(
+      new Request("https://api.test/api/places/busan-gwangalli/status"),
+      { DB: db, ENVIRONMENT: "staging" },
+    );
+    const insufficient = (await insufficientResponse.json()) as SuccessPayload<{
+      status: string;
+      observedAt: string | null;
+      currentSignals: Array<Record<string, unknown>>;
+      missingRequiredDimensions: string[];
+    }>;
+    assert.equal(insufficientResponse.status, 200);
+    assert.equal(insufficient.data.status, "insufficient");
+    assert.deepEqual(insufficient.data.missingRequiredDimensions, ["weather"]);
+    assert.equal(insufficient.data.observedAt, reportPayload.data.report.createdAt);
+    assert.equal(insufficient.data.currentSignals.length, 1);
+    assert.equal(JSON.stringify(insufficient).includes("actorId"), false);
+    assert.equal(JSON.stringify(insufficient).includes("actorKey"), false);
+
+    const observedAt = reportPayload.data.report.createdAt;
+    const expiresAt = new Date(new Date(observedAt).getTime() + 30 * 60 * 1_000).toISOString();
+    await db
+      .prepare("UPDATE data_sources SET commercial_use_status = 'allowed_with_attribution', enabled = 1, health_status = 'healthy' WHERE id = 'source-kma-weather'")
+      .run();
+    await db
+      .prepare(
+        `INSERT INTO live_signals (
+          id,
+          place_id,
+          dimension,
+          value_code,
+          source_id,
+          source_type,
+          source_name,
+          observed_at,
+          fetched_at,
+          expires_at,
+          confidence_score,
+          is_publicly_visible
+        ) VALUES (?, 'busan-gwangalli', 'weather', 'clear', 'source-kma-weather', 'official_periodic', 'KMA', ?, ?, ?, 0.9, 1)`,
+      )
+      .bind("signal-kma-status", observedAt, observedAt, expiresAt)
+      .run();
+
+    const currentResponse = await worker.handleRequest(
+      new Request("https://api.test/api/places/busan-gwangalli/status"),
+      { DB: db, ENVIRONMENT: "staging" },
+    );
+    const current = (await currentResponse.json()) as SuccessPayload<{
+      status: string;
+      observedAt: string | null;
+      currentSignals: Array<{ sourceName: string; observedAt: string }>;
+      independentSourceCount: number;
+    }>;
+    assert.equal(current.data.status, "likely_good");
+    assert.equal(current.data.observedAt, observedAt);
+    assert.equal(current.data.independentSourceCount, 2);
+    assert.equal(current.data.currentSignals.some((signal) => signal.sourceName === "KMA" && signal.observedAt === observedAt), true);
+    assert.equal(current.meta?.storage, "d1");
+
+    await db.prepare("UPDATE data_sources SET health_status = 'unknown' WHERE id = 'source-kma-weather'").run();
+    const unknownHealthResponse = await worker.handleRequest(
+      new Request("https://api.test/api/places/busan-gwangalli/status"),
+      { DB: db, ENVIRONMENT: "staging" },
+    );
+    const unknownHealth = (await unknownHealthResponse.json()) as SuccessPayload<{
+      status: string;
+      currentSignals: Array<{ sourceName: string }>;
+      missingRequiredDimensions: string[];
+    }>;
+    assert.equal(unknownHealth.data.status, "insufficient");
+    assert.deepEqual(unknownHealth.data.missingRequiredDimensions, ["weather"]);
+    assert.equal(unknownHealth.data.currentSignals.some((signal) => signal.sourceName === "KMA"), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("memory fallback field reports can be listed without raw location data", async () => {
   const anonymousId = "anon_memory_field_report";
   const created = await post<SuccessPayload<FieldReportData>>("https://api.test/api/reports", anonymousId, {
@@ -3842,6 +5035,13 @@ test("D1 public live surfaces ignore expired three-hour place signals", { skip: 
       height: 600,
       clientReencoded: true,
     });
+    await d1AdminPost<SuccessPayload<{ decision: string; public: boolean }>>(
+      db,
+      `https://api.test/api/admin/photos/${photo.data.photo.id}/moderation`,
+      { decision: "approved", reason: "expiry fixture review passed" },
+      {},
+      "test-moderator-token",
+    );
     await d1Post<SuccessPayload<{ clickCount: number; created: boolean }>>(
       db,
       "https://api.test/api/places/busan-gwangalli/click",
@@ -4028,6 +5228,13 @@ test("admin moderation role gates update D1 R2 and CACHE invalidation", { skip: 
       height: 600,
       clientReencoded: true,
     });
+    await d1AdminPost<SuccessPayload<{ decision: string; public: boolean }>>(
+      db,
+      `https://api.test/api/admin/photos/${photo.data.photo.id}/moderation`,
+      { decision: "approved", reason: "moderation fixture review passed" },
+      {},
+      "test-moderator-token",
+    );
 
     const forbidden = await rawD1AdminPost(db, "https://api.test/api/admin/moderation/hide", {
       targetType: "comment",
@@ -4157,7 +5364,7 @@ test("admin moderation role gates update D1 R2 and CACHE invalidation", { skip: 
     assert.equal(rankingsAfterRestore.data.some((ranking) => ranking.placeId === "busan-gwangalli"), true);
 
     const actions = await db.prepare("SELECT COUNT(*) AS count FROM admin_actions").first<{ count: number }>();
-    assert.equal(actions?.count, 7);
+    assert.equal(actions?.count, 8);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -4172,7 +5379,12 @@ test("admin user restrictions block public D1 writes until unrestricted", { skip
       placeId: "busan-gwangalli",
       body: "제한 전 작성한 댓글입니다.",
     });
-    const anonymousUserId = existingComment.data.anonymousUserId;
+    const storedUser = await db
+      .prepare("SELECT anonymous_user_id AS anonymousUserId FROM comments WHERE id = ?")
+      .bind(existingComment.data.id)
+      .first<{ anonymousUserId: string }>();
+    const anonymousUserId = storedUser?.anonymousUserId ?? "";
+    assert.match(anonymousUserId, /^anon_[a-f0-9]{48}$/);
     const blockedUntil = "2099-01-01T00:00:00.000Z";
 
     const moderatorRestrict = await rawD1AdminPostWithToken(
@@ -4317,6 +5529,13 @@ test("admin bulk moderation hides and restores D1 targets with partial results a
       height: 600,
       clientReencoded: true,
     });
+    await d1AdminPost<SuccessPayload<{ decision: string; public: boolean }>>(
+      db,
+      `https://api.test/api/admin/photos/${photo.data.photo.id}/moderation`,
+      { decision: "approved", reason: "bulk moderation fixture review passed" },
+      {},
+      "test-moderator-token",
+    );
 
     const forbidden = await rawD1AdminPostWithToken(
       db,
@@ -4640,15 +5859,67 @@ test("D1 photo complete rejects duplicate sanitized image content before a secon
     );
     const firstPayload = (await first.json()) as SuccessPayload<PhotoCompleteData>;
     assert.equal(first.status, 201);
+    assert.equal(firstPayload.data.photo.status, "pending");
+    assert.equal(firstPayload.meta?.moderation, "pending_moderation");
     assert.equal(firstPayload.meta?.duplicatePolicy, "exact-sanitized-content-sha256-blocks-active-duplicates");
     assert.equal(r2.putObjects.length, 1);
 
     const stored = await db
-      .prepare("SELECT image_hash AS imageHash, duplicate_status AS duplicateStatus FROM photos WHERE id = ?")
+      .prepare("SELECT image_hash AS imageHash, duplicate_status AS duplicateStatus, status FROM photos WHERE id = ?")
       .bind(firstPayload.data.photo.id)
-      .first<{ imageHash: string; duplicateStatus: string }>();
+      .first<{ imageHash: string; duplicateStatus: string; status: string }>();
     assert.match(stored?.imageHash ?? "", /^sha256:[0-9a-f]{64}$/);
     assert.equal(stored?.duplicateStatus, "unique");
+    assert.equal(stored?.status, "pending");
+    const moderationState = await db
+      .prepare("SELECT status, risk_flags_json AS riskFlagsJson FROM photo_moderation_states WHERE photo_id = ?")
+      .bind(firstPayload.data.photo.id)
+      .first<{ status: string; riskFlagsJson: string }>();
+    assert.equal(moderationState?.status, "pending_moderation");
+    assert.deepEqual(JSON.parse(moderationState?.riskFlagsJson ?? "[]"), [
+      "face_review_required",
+      "plate_review_required",
+      "content_safety_review_required",
+    ]);
+
+    const pendingList = await d1Get<SuccessPayload<Array<{ id: string }>>>(
+      db,
+      "https://api.test/api/photos?placeId=busan-gwangalli",
+      "anon_photo_duplicate_source",
+    );
+    assert.equal(pendingList.data.some((photo) => photo.id === firstPayload.data.photo.id), false);
+    const pendingFile = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${firstPayload.data.photo.id}/file`),
+      { DB: db, PHOTOS: r2 },
+    );
+    assert.equal(pendingFile.status, 404);
+
+    const approved = await d1AdminPost<SuccessPayload<{ photoId: string; decision: string; public: boolean }>>(
+      db,
+      `https://api.test/api/admin/photos/${firstPayload.data.photo.id}/moderation`,
+      { decision: "approved", reason: "fixture privacy and content review passed" },
+      { PHOTOS: r2 },
+      "test-moderator-token",
+    );
+    assert.equal(approved.data.decision, "approved");
+    assert.equal(approved.data.public, true);
+    const approvedListResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos?placeId=busan-gwangalli", {
+        headers: { "x-silsigan-anon-id": "anon_photo_duplicate_source" },
+      }),
+      { DB: db, PHOTOS: r2 },
+    );
+    assert.equal(approvedListResponse.status, 200);
+    const approvedList = (await approvedListResponse.json()) as SuccessPayload<Array<{ id: string; previewUrl: string }>>;
+    const approvedPhoto = approvedList.data.find((photo) => photo.id === firstPayload.data.photo.id);
+    assert.ok(approvedPhoto);
+    const approvedFile = await worker.handleRequest(new Request(approvedPhoto?.previewUrl ?? ""), { DB: db, PHOTOS: r2 });
+    assert.equal(approvedFile.status, 200);
+    const photoEventCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM place_events WHERE event_type = 'photo' AND place_id = ?")
+      .bind("busan-gwangalli")
+      .first<{ count: number }>();
+    assert.equal(photoEventCount?.count, 1);
 
     const duplicate = await worker.handleRequest(
       new Request("https://api.test/api/photos/complete", {
@@ -4682,6 +5953,23 @@ test("D1 photo complete rejects duplicate sanitized image content before a secon
 
     const rowCount = await db.prepare("SELECT COUNT(*) AS count FROM photos").first<{ count: number }>();
     assert.equal(rowCount?.count, 1);
+
+    const rejectedModeration = await d1AdminPost<SuccessPayload<{ decision: string; public: boolean; r2Deleted: boolean }>>(
+      db,
+      `https://api.test/api/admin/photos/${firstPayload.data.photo.id}/moderation`,
+      { decision: "rejected", reason: "fixture privacy review failed" },
+      { PHOTOS: r2 },
+      "test-moderator-token",
+    );
+    assert.equal(rejectedModeration.data.decision, "rejected");
+    assert.equal(rejectedModeration.data.public, false);
+    assert.equal(rejectedModeration.data.r2Deleted, true);
+    assert.equal(r2.deletedKeys.includes(firstPayload.data.storageKey), true);
+    const rejectedFile = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${firstPayload.data.photo.id}/file`),
+      { DB: db, PHOTOS: r2 },
+    );
+    assert.equal(rejectedFile.status, 404);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -1,11 +1,13 @@
 import { assertAdminRequest } from "@/lib/admin-auth";
 import { fail, ok } from "@/lib/api";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { assertLocalDemoApiAvailable } from "@/lib/runtime-data-mode";
 import { store } from "@/lib/store";
 import { moderatePostSchema } from "@/lib/validators";
 
 export async function GET(request: Request) {
   try {
+    assertLocalDemoApiAvailable();
     assertAdminRequest(request);
 
     return ok(await store.listPostModerationQueue());
@@ -16,6 +18,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    assertLocalDemoApiAvailable();
     assertAdminRequest(request);
     assertRateLimit({ key: rateLimitKey(request, "admin-moderate-post"), limit: 30, windowMs: 60_000 });
     const input = moderatePostSchema.parse(await request.json());

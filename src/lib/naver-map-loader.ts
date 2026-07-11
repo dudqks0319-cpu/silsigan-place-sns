@@ -74,8 +74,10 @@ export function loadNaverMaps(): Promise<NaverMapsNamespace> {
   }
 
   pendingLoad = new Promise<NaverMapsNamespace>((resolve, reject) => {
+    let activeScript: HTMLScriptElement | null = null;
     const rejectAndReset = (error: Error) => {
       pendingLoad = null;
+      activeScript?.remove();
       reject(error);
     };
 
@@ -97,25 +99,31 @@ export function loadNaverMaps(): Promise<NaverMapsNamespace> {
     const existing = document.getElementById(naverMapScriptId);
     if (existing) {
       const script = existing instanceof HTMLScriptElement ? existing : null;
-      const startedAt = Number(script?.dataset.silsiganStartedAt) || scriptLoadStartedAt || Date.now();
-      scriptLoadStartedAt = startedAt;
-      if (resolveIfReady()) {
+      if (script && script.dataset.silsiganLoadState !== "failed") {
+        const startedAt = Number(script.dataset.silsiganStartedAt) || scriptLoadStartedAt || Date.now();
+        activeScript = script;
+        scriptLoadStartedAt = startedAt;
+        if (resolveIfReady()) {
+          return;
+        }
+
+        script.addEventListener("load", resolveIfReady, { once: true });
+        script.addEventListener("error", () => rejectAndReset(new Error("NAVER_MAP_SDK_LOAD_FAILED")), { once: true });
+        window.setTimeout(() => {
+          if (!window.naver?.maps && Date.now() - startedAt >= naverMapScriptTimeoutMs) {
+            activeScript?.remove();
+            pendingLoad = null;
+            reject(new Error("NAVER_MAP_SDK_TIMEOUT"));
+          }
+        }, naverMapScriptTimeoutMs);
         return;
       }
 
-      script?.addEventListener("load", resolveIfReady, { once: true });
-      script?.addEventListener("error", () => rejectAndReset(new Error("NAVER_MAP_SDK_LOAD_FAILED")), { once: true });
-      window.setTimeout(() => {
-        if (!window.naver?.maps && Date.now() - startedAt >= naverMapScriptTimeoutMs) {
-          pendingLoad = null;
-          script?.remove();
-          reject(new Error("NAVER_MAP_SDK_TIMEOUT"));
-        }
-      }, naverMapScriptTimeoutMs);
-      return;
+      existing.remove();
     }
 
     const script = document.createElement("script");
+    activeScript = script;
     script.id = naverMapScriptId;
     script.async = true;
     scriptLoadStartedAt = Date.now();
@@ -126,7 +134,10 @@ export function loadNaverMaps(): Promise<NaverMapsNamespace> {
     script.onload = () => {
       resolveIfReady();
     };
-    script.onerror = () => rejectAndReset(new Error("NAVER_MAP_SDK_LOAD_FAILED"));
+    script.onerror = () => {
+      script.dataset.silsiganLoadState = "failed";
+      rejectAndReset(new Error("NAVER_MAP_SDK_LOAD_FAILED"));
+    };
     document.head.appendChild(script);
   });
 

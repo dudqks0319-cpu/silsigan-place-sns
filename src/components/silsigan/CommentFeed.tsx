@@ -1,6 +1,6 @@
 "use client";
 
-import { Flag, Heart, MessageCircle } from "lucide-react";
+import { Flag, Heart, MessageCircle, UserX } from "lucide-react";
 import { useState } from "react";
 import styles from "./SilsiganRedesign.module.css";
 import { EmptyState } from "./EmptyState";
@@ -14,14 +14,17 @@ export type PlaceComment = {
   likeCount?: number;
   liked?: boolean;
   workerCommentId?: string;
+  ownedByCurrentSession?: boolean;
 };
 
 export function CommentFeed({
   comments,
+  onBlockComment,
   onLikeComment,
   onReportComment,
 }: {
   comments: PlaceComment[];
+  onBlockComment?: (comment: PlaceComment) => void;
   onLikeComment?: (comment: PlaceComment) => Promise<void>;
   onReportComment?: (comment: PlaceComment) => void;
 }) {
@@ -59,7 +62,7 @@ export function CommentFeed({
             <p>{comment.body}</p>
             <span>{comment.meta}{comment.verified ? " · 현장 인증" : ""}</span>
           </div>
-          {comment.workerCommentId && (onLikeComment || onReportComment) && (
+          {comment.workerCommentId && (onLikeComment || onReportComment || onBlockComment) && (
             <div className={styles.commentActions}>
               {onLikeComment && (
                 <button
@@ -83,6 +86,17 @@ export function CommentFeed({
                 >
                   <Flag size={14} />
                   신고
+                </button>
+              )}
+              {onBlockComment && !comment.ownedByCurrentSession && (
+                <button
+                  className={[styles.commentActionButton, styles.commentReportButton].join(" ")}
+                  type="button"
+                  onClick={() => onBlockComment(comment)}
+                  aria-label="작성자 차단"
+                >
+                  <UserX size={14} />
+                  차단
                 </button>
               )}
             </div>

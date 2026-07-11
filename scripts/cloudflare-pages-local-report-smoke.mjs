@@ -333,11 +333,77 @@ async function startMockWorker(port) {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/config") {
+      send(
+        200,
+        success({
+          contractVersion: 2,
+          dataMode: "live",
+          featureFlags: {
+            QNA_ENABLED: false,
+            REWARDS_ENABLED: false,
+            ADS_ENABLED: false,
+            LIVE_STREAMS_ENABLED: false,
+            DEMO_DATA_ENABLED: false,
+            SEOUL_REALTIME_ENABLED: false,
+            SOCIAL_FEED_ENABLED: false,
+          },
+          dimensionSettings: [],
+        }),
+      );
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/places") {
       const place = workerPlace();
       const query = url.searchParams.get("q")?.trim().toLocaleLowerCase("ko-KR") ?? "";
       const matchesQuery = !query || [place.name, place.address, place.category, place.regionId].join(" ").toLocaleLowerCase("ko-KR").includes(query);
       send(200, success(matchesQuery ? [place] : []));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === `/api/places/${DEFAULT_PLACE_ID}/status`) {
+      const observedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      send(
+        200,
+        success({
+          contractVersion: 2,
+          placeId: DEFAULT_PLACE_ID,
+          dataMode: "live",
+          status: "check_before_visit",
+          currentSignals: [
+            {
+              id: "signal-local-report-smoke-weather",
+              placeId: DEFAULT_PLACE_ID,
+              dimension: "weather",
+              valueCode: "clear",
+              valueText: "맑음",
+              sourceId: "source-kma-local-report-smoke",
+              sourceType: "official_periodic",
+              sourceName: "기상청 단기예보",
+              attributionText: "기상청 공공데이터",
+              observedAt,
+              fetchedAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 25 * 60 * 1000).toISOString(),
+              confidenceScore: 0.95,
+              isEstimated: false,
+              isExpired: false,
+            },
+          ],
+          missingRequiredDimensions: ["crowd"],
+          conflictingDimensions: [],
+          independentSourceCount: 1,
+          confidenceScore: 0.62,
+          reasonCodes: ["MORE_CURRENT_EVIDENCE_REQUIRED"],
+          observedAt,
+          computedAt: new Date().toISOString(),
+        }),
+      );
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/blocks") {
+      send(200, success([]));
       return;
     }
 

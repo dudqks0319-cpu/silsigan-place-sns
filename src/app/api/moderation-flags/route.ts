@@ -1,10 +1,12 @@
 import { fail, ok } from "@/lib/api";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { assertLocalDemoApiAvailable } from "@/lib/runtime-data-mode";
 import { flagReport } from "@/lib/mock-store";
 import { flagReportSchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
   try {
+    assertLocalDemoApiAvailable();
     assertRateLimit({ key: rateLimitKey(request, "flag-report"), limit: 20, windowMs: 60_000 });
     const input = flagReportSchema.parse(await request.json());
 
