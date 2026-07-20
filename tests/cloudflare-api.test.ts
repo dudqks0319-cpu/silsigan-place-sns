@@ -1676,11 +1676,13 @@ test("Cloudflare Pages browser smoke helpers parse args and redact URLs", () => 
     "--mutating",
     "--local-admin-cost-guard",
     "--account-deletion",
+    "--mock-external-search",
   ]);
 
   assert.equal(parsed.flags.has("mutating"), true);
   assert.equal(parsed.flags.has("local-admin-cost-guard"), true);
   assert.equal(parsed.flags.has("account-deletion"), true);
+  assert.equal(parsed.flags.has("mock-external-search"), true);
   assert.equal(parsed.options.get("api-base-url"), "https://api.example.test");
   assert.equal(pagesSmoke.sanitizeUrl(parsed.options.get("pages-url")), "https://silsigan-staging.pages.dev/");
   assert.equal(pagesSmoke.validateLocalAdminCostGuardTarget(new URL("http://127.0.0.1:3000"), "runtime-test-token"), true);
@@ -1708,6 +1710,11 @@ test("Cloudflare Pages browser smoke helpers parse args and redact URLs", () => 
       new URL("https://api.example.test"),
     ),
     /API.*loopback/,
+  );
+  assert.equal(pagesSmoke.validateMockExternalSearchTarget(new URL("http://127.0.0.1:3000")), true);
+  assert.throws(
+    () => pagesSmoke.validateMockExternalSearchTarget(new URL("https://silsigan-staging.example.test")),
+    /loopback/,
   );
 });
 

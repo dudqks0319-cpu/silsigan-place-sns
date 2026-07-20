@@ -154,6 +154,13 @@ export function validateLocalAccountDeletionTarget(pagesUrl, mutating, apiBaseUr
   return true;
 }
 
+export function validateMockExternalSearchTarget(pagesUrl) {
+  if (!pagesUrl || !["127.0.0.1", "localhost", "::1"].includes(pagesUrl.hostname)) {
+    throw new SmokeError("MOCK_EXTERNAL_SEARCH_LOOPBACK_REQUIRED", "외부 장소 fixture는 실서비스 증거와 섞이지 않도록 loopback Pages에서만 사용할 수 있습니다.");
+  }
+  return true;
+}
+
 async function main() {
   const { flags, options } = parseArgs(process.argv.slice(2));
   if (flags.has("help")) {
@@ -187,6 +194,9 @@ async function main() {
     if (config.accountDeletion) {
       validateLocalAccountDeletionTarget(pagesUrl, config.mutating, apiBaseUrl);
     }
+    if (config.mockExternalSearch) {
+      validateMockExternalSearchTarget(pagesUrl);
+    }
 
     await mkdir(config.artifactDir, { recursive: true });
     const browser = await launchChrome(config.chromePath);
@@ -207,6 +217,7 @@ async function main() {
       fieldReportPhoto: config.fieldReportPhoto,
       localAdminCostGuard: config.localAdminCostGuard,
       accountDeletion: config.accountDeletion,
+      mockExternalSearch: config.mockExternalSearch,
       localAdminToken: config.localAdminToken,
       timeoutMs: config.timeoutMs,
       checks,
@@ -328,6 +339,7 @@ function resolveConfig(flags, options, env) {
     fieldReportPhoto: flags.has("field-report-photo"),
     localAdminCostGuard: flags.has("local-admin-cost-guard"),
     accountDeletion: flags.has("account-deletion"),
+    mockExternalSearch: flags.has("mock-external-search"),
     localAdminToken: env.SILSIGAN_LOCAL_ADMIN_SMOKE_TOKEN ?? "",
   };
 }
@@ -371,6 +383,35 @@ async function runBrowserSmoke(client, config) {
   client.on("Log.entryAdded", (event) => {
     consoleMessages.push(`log.${event.entry?.level}: ${event.entry?.text ?? ""}`);
   });
+
+  if (config.mockExternalSearch) {
+    client.on("Fetch.requestPaused", (event) => {
+      const body = Buffer.from(JSON.stringify({
+        success: true,
+        data: {
+          items: [{
+            title: "성수 테스트 광장",
+            category: "관광,명소",
+            roadAddress: "서울특별시 성동구 연무장길 1",
+            address: "서울특별시 성동구 성수동2가 1",
+            mapx: "",
+            mapy: "",
+            link: "",
+          }],
+          coordinateNote: "browser smoke fixture",
+        },
+      })).toString("base64");
+      void client.send("Fetch.fulfillRequest", {
+        requestId: event.requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: "Content-Type", value: "application/json; charset=utf-8" }],
+        body,
+      });
+    });
+    await client.send("Fetch.enable", {
+      patterns: [{ urlPattern: "*://*/api/external/naver/local-search*", requestStage: "Request" }],
+    });
+  }
 
   await client.send("Network.enable", { maxPostDataSize: 8_192 });
   await client.send("Runtime.enable");
@@ -2012,19 +2053,52 @@ async function createFieldReportFromBrowser(client, config, networkEvents) {
     await delay(250);
     const hashtagScreenshot = await captureViewportScreenshot(client);
     await fillSearchInput(client, "장소, 해시태그, 지역 검색", "성수 웨이팅");
-    await waitForEvaluate(
-      client,
-      `document.body.innerText.includes('현재는 앱에 등록된 장소만 검색합니다.')
-        && document.body.innerText.includes('앱 안 지도에서 보기')
-        && !document.body.innerText.includes('장소 추가 검색은 준비 중')`,
-      "search.externalFallback",
-      config.timeoutMs,
-    );
-    record(config.checks, "search.externalFallback", "pass", "외부 장소 검색이 미설정이어도 완성된 앱 안 검색 범위와 지도 복구 행동을 표시했습니다.");
+    const placeRequestName = config.mockExternalSearch ? "성수 테스트 광장" : "성수 새 장소";
+    const placeRequestAddress = config.mockExternalSearch ? "서울특별시 성동구 연무장길 1" : "서울특별시 성동구 테스트로 1";
 
-    await clickHitTestedTextButton(client, "장소 추가 요청 작성", { exact: true });
-    await fillTextInput(client, 'input[placeholder="직접 알고 있는 장소명"]', "성수 새 장소", "장소 추가 요청 장소명");
-    await fillTextInput(client, 'input[placeholder="도로명 또는 지번 주소"]', "서울특별시 성동구 테스트로 1", "장소 추가 요청 주소");
+    if (config.mockExternalSearch) {
+      await waitForEvaluate(
+        client,
+        `document.body.innerText.includes('성수 테스트 광장')
+          && document.body.innerText.includes('서울특별시 성동구 연무장길 1')
+          && document.body.innerText.includes('검토 요청에 담기')`,
+        "placeRequests.externalResult",
+        config.timeoutMs,
+      );
+      const placeRequestCountBeforePrefill = countApiRequests(networkEvents, config.apiBaseUrl, "/api/place-requests", "POST");
+      await clickHitTestedTextButton(client, "검토 요청에 담기", { exact: true });
+      await waitForEvaluate(
+        client,
+        `(() => {
+          const name = document.querySelector('input[placeholder="직접 알고 있는 장소명"]');
+          const address = document.querySelector('input[placeholder="도로명 또는 지번 주소"]');
+          const category = document.querySelector('input[placeholder="예: 공원, 시장, 해수욕장"]');
+          return name instanceof HTMLInputElement && name.value === '성수 테스트 광장'
+            && address instanceof HTMLInputElement && address.value === '서울특별시 성동구 연무장길 1'
+            && category instanceof HTMLInputElement && category.value === '관광,명소'
+            && document.body.innerText.includes('아직 저장되지 않았으니 내용을 직접 확인해 주세요.');
+        })()`,
+        "placeRequests.externalPrefill",
+        config.timeoutMs,
+      );
+      if (countApiRequests(networkEvents, config.apiBaseUrl, "/api/place-requests", "POST") !== placeRequestCountBeforePrefill) {
+        throw new SmokeError("PLACE_REQUEST_PREFILL_PERSISTED", "외부 검색 결과 확인만으로 장소 요청이 저장됐습니다.");
+      }
+      record(config.checks, "placeRequests.externalPrefill", "pass", "외부 검색 결과를 명시적으로 선택해 최소 필드만 검토 폼에 옮기고 제출 전에는 저장하지 않았습니다.");
+    } else {
+      await waitForEvaluate(
+        client,
+        `document.body.innerText.includes('현재는 앱에 등록된 장소만 검색합니다.')
+          && document.body.innerText.includes('앱 안 지도에서 보기')
+          && !document.body.innerText.includes('장소 추가 검색은 준비 중')`,
+        "search.externalFallback",
+        config.timeoutMs,
+      );
+      record(config.checks, "search.externalFallback", "pass", "외부 장소 검색이 미설정이어도 완성된 앱 안 검색 범위와 지도 복구 행동을 표시했습니다.");
+      await clickHitTestedTextButton(client, "장소 추가 요청 작성", { exact: true });
+      await fillTextInput(client, 'input[placeholder="직접 알고 있는 장소명"]', placeRequestName, "장소 추가 요청 장소명");
+      await fillTextInput(client, 'input[placeholder="도로명 또는 지번 주소"]', placeRequestAddress, "장소 추가 요청 주소");
+    }
     const placeRequestCountBefore = countApiRequests(networkEvents, config.apiBaseUrl, "/api/place-requests", "POST");
     await clickHitTestedTextButton(client, "검토 요청 보내기", { exact: true });
     await waitFor(
@@ -2040,7 +2114,7 @@ async function createFieldReportFromBrowser(client, config, networkEvents) {
     );
     record(config.checks, "placeRequests.create", "pass", "미등록 장소를 자동 공개하지 않고 익명 증명 기반 비공개 검토 큐로 접수했습니다.");
 
-    await clickBottomNavButton(client, "마이");
+    await clickHitTestedTextButton(client, "마이에서 요청 상태 보기", { exact: true });
     await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '마이'`, "placeRequests.myScreen", config.timeoutMs);
     await waitFor(
       () => hasApiRequestWithSearchParam(networkEvents, config.apiBaseUrl, "/api/place-requests", "GET", "mine", "1"),
@@ -2049,9 +2123,9 @@ async function createFieldReportFromBrowser(client, config, networkEvents) {
     );
     await waitForEvaluate(
       client,
-      `document.body.innerText.includes('성수 새 장소')
+      `document.body.innerText.includes(${JSON.stringify(placeRequestName)})
         && document.body.innerText.includes('추가 확인 중')
-        && document.body.innerText.includes('서울특별시 성동구 테스트로 1')`,
+        && document.body.innerText.includes(${JSON.stringify(placeRequestAddress)})`,
       "placeRequests.ownerStatus",
       config.timeoutMs,
     );
@@ -2565,6 +2639,7 @@ Environment:
   SILSIGAN_STAGING_BROWSER_REPORT=1   # requires mutation; creates place/comment/photo reports
   --field-report-photo                # local fixture mode; uploads one JPEG and links it to the field report
   --account-deletion                  # loopback + --mutating only; permanently deletes mock-owned content and verifies session rotation
+  --mock-external-search              # loopback harness only; fulfills one deterministic external place result in Chrome
   SILSIGAN_STAGING_BROWSER_SHARE_POST_ID=post_id_for_share_smoke
   SILSIGAN_CHROME_PATH=/path/to/chrome
 `);

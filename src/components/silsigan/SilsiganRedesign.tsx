@@ -2915,6 +2915,10 @@ export default function SilsiganRedesign() {
                       setActiveView("map");
                       setToast(query ? `${query} 기준으로 지도에서 볼게요.` : "지도에서 주변 장소를 볼게요.");
                     }}
+                    onGoMy={() => {
+                      setActiveView("my");
+                      setToast("접수한 장소의 검토 상태를 확인합니다.");
+                    }}
                     onGoUpload={(place) => {
                       startReportForPlace(place);
                     }}
@@ -3712,6 +3716,7 @@ function SearchScreen({
   selectedHashtagName,
   onFollowHashtag,
   onGoMap,
+  onGoMy,
   onGoUpload,
   onLoadMoreHashtagMedia,
   onOpenPlace,
@@ -3733,6 +3738,7 @@ function SearchScreen({
   selectedHashtagName: string | null;
   onFollowHashtag: (hashtagName: string) => void;
   onGoMap: (query: string) => void;
+  onGoMy: () => void;
   onGoUpload: (place: Place) => void;
   onLoadMoreHashtagMedia: () => void;
   onOpenPlace: (place: Place) => void;
@@ -3759,6 +3765,9 @@ function SearchScreen({
   const [placeRequestAddress, setPlaceRequestAddress] = useState("");
   const [placeRequestCategory, setPlaceRequestCategory] = useState("");
   const [placeRequestFormMessage, setPlaceRequestFormMessage] = useState("");
+  const [placeRequestSubmitted, setPlaceRequestSubmitted] = useState(false);
+  const placeRequestFormRef = useRef<HTMLDivElement | null>(null);
+  const placeRequestNameInputRef = useRef<HTMLInputElement | null>(null);
   const matchedPlaces = searchPlaces(places, trimmedQuery).slice(0, 6);
   const matchedHashtags = hashtags
     .filter((tag) => !normalizedQuery || tag.name.toLocaleLowerCase("ko-KR").includes(normalizedQuery))
@@ -3806,8 +3815,23 @@ function SearchScreen({
     && placeRequestAddress.trim().length <= 160
     && placeRequestCategory.trim().length <= 80;
 
+  const prepareExternalPlaceRequest = (item: NaverLocalSearchResult) => {
+    const address = item.roadAddress || item.address;
+    setPlaceRequestName(item.title);
+    setPlaceRequestAddress(address);
+    setPlaceRequestCategory(item.category);
+    setPlaceRequestSubmitted(false);
+    setPlaceRequestFormMessage("검색 결과를 입력칸에 옮겼습니다. 아직 저장되지 않았으니 내용을 직접 확인해 주세요.");
+    setPlaceRequestFormOpen(true);
+    window.requestAnimationFrame(() => {
+      placeRequestFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      placeRequestNameInputRef.current?.focus({ preventScroll: true });
+    });
+  };
+
   const submitManualPlaceRequest = async () => {
     if (!placeRequestReady || placeAdditionRequestSubmitting) return;
+    setPlaceRequestSubmitted(false);
     setPlaceRequestFormMessage("");
     try {
       const submitted = await onRequestPlaceAddition({
@@ -3819,6 +3843,7 @@ function SearchScreen({
       setPlaceRequestName("");
       setPlaceRequestAddress("");
       setPlaceRequestCategory("");
+      setPlaceRequestSubmitted(true);
       setPlaceRequestFormMessage("검토 요청을 접수했습니다. 마이에서 진행 상태를 확인할 수 있습니다.");
     } catch {
       setPlaceRequestFormMessage("요청을 접수하지 못했습니다. 잠시 후 다시 시도해 주세요.");
@@ -4027,6 +4052,9 @@ function SearchScreen({
                     <strong>{item.title}</strong>
                     <p>{address}</p>
                   </div>
+                  <button type="button" onClick={() => prepareExternalPlaceRequest(item)}>
+                    검토 요청에 담기
+                  </button>
                 </article>
               );
               })}
@@ -4045,14 +4073,19 @@ function SearchScreen({
             장소 추가 요청 작성
           </button>
         ) : (
-          <div className={styles.placeRequestForm}>
+          <div className={styles.placeRequestForm} ref={placeRequestFormRef}>
             <label>
               장소명
               <input
+                ref={placeRequestNameInputRef}
                 autoComplete="off"
                 maxLength={80}
                 value={placeRequestName}
-                onChange={(event) => setPlaceRequestName(event.target.value)}
+                onChange={(event) => {
+                  setPlaceRequestName(event.target.value);
+                  setPlaceRequestSubmitted(false);
+                  setPlaceRequestFormMessage("");
+                }}
                 placeholder="직접 알고 있는 장소명"
               />
             </label>
@@ -4062,7 +4095,11 @@ function SearchScreen({
                 autoComplete="street-address"
                 maxLength={160}
                 value={placeRequestAddress}
-                onChange={(event) => setPlaceRequestAddress(event.target.value)}
+                onChange={(event) => {
+                  setPlaceRequestAddress(event.target.value);
+                  setPlaceRequestSubmitted(false);
+                  setPlaceRequestFormMessage("");
+                }}
                 placeholder="도로명 또는 지번 주소"
               />
             </label>
@@ -4072,12 +4109,21 @@ function SearchScreen({
                 autoComplete="off"
                 maxLength={80}
                 value={placeRequestCategory}
-                onChange={(event) => setPlaceRequestCategory(event.target.value)}
+                onChange={(event) => {
+                  setPlaceRequestCategory(event.target.value);
+                  setPlaceRequestSubmitted(false);
+                  setPlaceRequestFormMessage("");
+                }}
                 placeholder="예: 공원, 시장, 해수욕장"
               />
             </label>
             <p>접수만으로 지도·랭킹·사진 등록에 공개되지 않습니다.</p>
             {placeRequestFormMessage && <p role="status">{placeRequestFormMessage}</p>}
+            {placeRequestSubmitted && (
+              <button className={styles.placeRequestStatusAction} type="button" onClick={onGoMy}>
+                마이에서 요청 상태 보기
+              </button>
+            )}
             <div className={styles.emptyActionRow}>
               <button type="button" onClick={() => setPlaceRequestFormOpen(false)} disabled={placeAdditionRequestSubmitting}>닫기</button>
               <button

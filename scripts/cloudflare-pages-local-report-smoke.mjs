@@ -55,7 +55,7 @@ const requiredSmokeCheckNames = [
   "hashtags.fieldReportPhoto",
   "hashtags.followReturn",
   "hashtags.pagination",
-  "search.externalFallback",
+  "placeRequests.externalPrefill",
   "placeRequests.create",
   "placeRequests.ownerStatus",
   "fieldReports.publicationContract",
@@ -254,6 +254,7 @@ async function runPagesSmoke({ apiBaseUrl, artifactDir, pagesUrl, timeoutMs, adm
     "--field-report-photo",
     "--local-admin-cost-guard",
     "--account-deletion",
+    "--mock-external-search",
   ], {
     SILSIGAN_LOCAL_ADMIN_SMOKE_TOKEN: adminToken,
   });

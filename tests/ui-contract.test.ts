@@ -372,8 +372,9 @@ test("search empty states keep users moving to map or upload", () => {
   assert.doesNotMatch(searchScreen, /장소 추가 검색은 준비 중/);
 });
 
-test("external search stays display-only while manual place requests remain private until review", () => {
+test("external search requires explicit confirmation before a private place request", () => {
   const searchScreen = sourceBetween(redesignSource, "function SearchScreen", "function MapScreen");
+  const prepareExternalRequest = sourceBetween(searchScreen, "const prepareExternalPlaceRequest =", "const submitManualPlaceRequest = async");
   const submitManualRequest = sourceBetween(searchScreen, "const submitManualPlaceRequest = async", "useEffect(() =>");
   const submitRequest = sourceBetween(redesignSource, "const submitPlaceAdditionRequest = async", "const flagPost = async");
   const requestBody = sourceBetween(submitRequest, "body: JSON.stringify({", "}),");
@@ -382,9 +383,16 @@ test("external search stays display-only while manual place requests remain priv
   assert.match(searchScreen, /네이버 검색 결과이며 #실시간에 등록된 장소가 아닙니다/);
   assert.match(searchScreen, /검색 결과는 별도 저장하지 않습니다/);
   assert.doesNotMatch(searchScreen, /onGoMap\(item\.title\)/);
+  assert.match(searchScreen, /검토 요청에 담기/);
+  assert.match(prepareExternalRequest, /setPlaceRequestName\(item\.title\)/);
+  assert.match(prepareExternalRequest, /item\.roadAddress \|\| item\.address/);
+  assert.match(prepareExternalRequest, /setPlaceRequestCategory\(item\.category\)/);
+  assert.match(prepareExternalRequest, /아직 저장되지 않았으니 내용을 직접 확인해 주세요/);
+  assert.doesNotMatch(prepareExternalRequest, /mapx|mapy|link/);
   assert.doesNotMatch(submitManualRequest, /item\./);
   assert.match(searchScreen, /실시간 장소 직접 제안/);
   assert.match(searchScreen, /접수만으로 지도·랭킹·사진 등록에 공개되지 않습니다/);
+  assert.match(searchScreen, /마이에서 요청 상태 보기/);
   assert.doesNotMatch(submitRequest, /source:/);
   assert.match(requestBody, /clientRequestId/);
   assert.match(requestBody, /name: normalizedDraft\.name/);

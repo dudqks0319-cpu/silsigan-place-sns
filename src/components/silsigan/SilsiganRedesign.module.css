@@ -628,7 +628,6 @@ a.photoLeadCredit:hover {
 }
 
 .externalResultCopy {
-  grid-column: 1 / -1;
   min-height: 68px;
   display: grid;
   gap: 3px;
@@ -673,6 +672,16 @@ a.photoLeadCredit:hover {
   font-size: 11px;
   line-height: 1.45;
   font-weight: 750;
+}
+
+.placeRequestStatusAction {
+  min-height: 44px;
+  border: 0;
+  border-radius: 13px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .keywordRow,
