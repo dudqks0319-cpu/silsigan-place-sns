@@ -88,6 +88,10 @@
     {
       "binding": "CACHE",
       "id": "TODO_CREATE_WITH_WRANGLER_KV"
+    },
+    {
+      "binding": "COST_GUARD_STATE",
+      "id": "TODO_CREATE_WITH_WRANGLER_COST_GUARD_KV"
     }
   ],
   "durable_objects": {
@@ -196,6 +200,10 @@
         {
           "binding": "CACHE",
           "id": "fdb7fa7af2d74554a359f0ce88098bf4"
+        },
+        {
+          "binding": "COST_GUARD_STATE",
+          "id": "c067e26676a7499581fec58b9e7816f1"
         }
       ],
       "durable_objects": {
@@ -298,6 +306,10 @@
         {
           "binding": "CACHE",
           "id": "4bb8fec1a58a4a2188d4b693492a1d9c"
+        },
+        {
+          "binding": "COST_GUARD_STATE",
+          "id": "4d6cd8fdeaca4c52bf16eb4200756f95"
         }
       ],
       "durable_objects": {
