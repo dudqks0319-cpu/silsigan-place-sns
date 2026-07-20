@@ -14,7 +14,7 @@ This ledger records the device evidence required before TestFlight internal test
 | Staging Pages URL | `https://silsigan-web-staging.dudqks0319.workers.dev`; visible nationwide fallback-data UI confirmed |
 | Staging Worker API URL | missing; `silsigan-api-staging` is not deployed |
 | R2 staging bucket visibility | blocked; account check returns `R2_NOT_ENABLED` until the user completes payment/terms checkout and final activation |
-| Staging D1 through `0026` | verified through `0025`; only `0026_global_api_cost_guard.sql` remains pending |
+| Staging D1 through `0026` | verified through `0026`; Wrangler pending 0 and boundary/registry/core seed evidence pass |
 | Production D1 through `0026` | current read-only classifier returns `D1_0006_NOT_APPLIED`; production apply requires separate approval after clean staging evidence |
 | Capacitor native skeleton | local iOS/Android projects, permissions, and `SilsiganShell.openSettings` adapter present |
 | Native static checks | `swiftc -parse`, plist/XML validation, WebView check, and mobile shell verify pass |

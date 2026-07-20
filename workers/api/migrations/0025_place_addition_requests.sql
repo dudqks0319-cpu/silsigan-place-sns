@@ -40,13 +40,14 @@ CREATE INDEX IF NOT EXISTS idx_place_addition_requests_queue
 CREATE TRIGGER IF NOT EXISTS trg_place_addition_requests_daily_guard
 BEFORE INSERT ON place_addition_requests
 BEGIN
-  SELECT CASE WHEN (
+  SELECT RAISE(ABORT, 'PLACE_REQUEST_SESSION_DAILY_LIMIT')
+  WHERE (
     SELECT COUNT(*)
     FROM place_addition_requests
     WHERE anonymous_user_id = NEW.anonymous_user_id
       AND created_at >= strftime('%Y-%m-%dT00:00:00.000Z', 'now')
       AND created_at < strftime('%Y-%m-%dT00:00:00.000Z', 'now', '+1 day')
-  ) >= 3 THEN RAISE(ABORT, 'PLACE_REQUEST_SESSION_DAILY_LIMIT') END;
+  ) >= 3;
 
   INSERT INTO place_addition_request_daily_budget (day_utc, request_count, updated_at)
   VALUES (strftime('%Y-%m-%d', 'now'), 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -55,9 +56,8 @@ BEGIN
     updated_at = excluded.updated_at
   WHERE place_addition_request_daily_budget.request_count < 1600;
 
-  SELECT CASE WHEN changes() != 1
-    THEN RAISE(ABORT, 'PLACE_REQUEST_DAILY_BUDGET_80_PERCENT_STOP')
-  END;
+  SELECT RAISE(ABORT, 'PLACE_REQUEST_DAILY_BUDGET_80_PERCENT_STOP')
+  WHERE changes() != 1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_place_addition_requests_terminal_status

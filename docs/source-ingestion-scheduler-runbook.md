@@ -8,7 +8,7 @@ Scope: staging-first automatic ingestion for approved public data sources. This 
 - Migrations `0018_source_ingestion_scheduler.sql` and `0019_background_job_delivery.sql` are applied to Staging; the Worker `scheduled()` handler is ready locally but the API Worker is not deployed.
 - Staging and production declare `*/5 * * * *` so photo cleanup and publication delivery can run in both environments. Root development has no Cron.
 - `SILSIGAN_SOURCE_INGESTION_SCHEDULED=1` exists only in staging. Production is fixed to `0`, so production Cron cannot call external data providers before separate rights approval.
-- Staging D1 is remotely verified through `0025`, including `0018` and `0019`; the external-state gate also verifies zero unsafe active targets. Only `0026` remains pending.
+- Staging D1 now passes the scheduler and global cost-guard schema boundaries through `0026`, Wrangler reports no pending migrations, and zero unsafe active targets are verified. Source ingestion must remain disabled until provider rights, credentials, quota, health, and post-apply safety evidence pass.
 - No scheduler target is seeded. Every new target defaults to `enabled=0`, so deploying the code alone cannot call a provider.
 - R2 is not enabled and the API Worker does not exist yet. No scheduled ingestion is currently running.
 

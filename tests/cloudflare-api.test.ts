@@ -2837,7 +2837,7 @@ test("Cloudflare D1 release evidence planner defaults to non-mutating steps", as
     assert.equal(plan.targets[0]?.databaseName, "silsigan-staging");
     assert.deepEqual(
       plan.targets[0]?.steps.map((step) => step.name),
-      ["d1.migrations.list", "d1.posts_questions.evidence"],
+      ["d1.migrations.list", "d1.migration.boundary", "d1.posts_questions.evidence"],
     );
     assert.equal(plan.targets[0]?.steps.some((step) => step.applyOnly), false);
     const evidenceCommand = plan.targets[0]?.steps.find((step) => step.name === "d1.posts_questions.evidence")?.args.at(-1) ?? "";
@@ -2954,7 +2954,7 @@ test("Cloudflare D1 release evidence planner gates mutating production apply", a
       confirmed.targets[0]?.steps.map((step) => [step.name, Boolean(step.applyOnly)]),
       [
         ["d1.migrations.list", false],
-        ["d1.preapply.evidence", true],
+        ["d1.migration.boundary", false],
         ["d1.migrations.apply", true],
         ["d1.seed.apply", true],
         ["d1.migrations.list.postapply", true],
@@ -2978,6 +2978,29 @@ test("Cloudflare D1 release evidence never runs migrations apply when registry d
       env: {},
     });
     const calls: string[][] = [];
+    const boundaryThrough0019 = [
+      "m0006_core_tables=2",
+      "m0006_core_indexes=4",
+      "m0006_v2_tables=6",
+      "m0006_trust_safety_tables=7",
+      "m0006_preference_tables=4",
+      "m0006_analytics_tables=1",
+      "m0006_photo_cleanup_tables=1",
+      "m0006_photo_budget_tables=1",
+      "m0006_photo_abuse_tables=3",
+      "m0006_photo_read_tables=2",
+      "m0006_publication_tables=5",
+      "m0006_live_signal_expiry=1",
+      "m0006_place_accuracy=1",
+      "m0006_place_moderation=1",
+      "m0018_tables=1",
+      "m0018_indexes=2",
+      "m0019_cleanup_columns=6",
+      "m0019_cleanup_indexes=1",
+      "m0019_publication_columns=5",
+      "m0019_publication_indexes=1",
+      "m0020_tables=0",
+    ].join("\n");
 
     const execution = await d1ReleaseEvidence.executeD1ReleaseEvidencePlan(plan, {
       commandRunner: async (_command: string, args: string[]) => {
@@ -2990,6 +3013,13 @@ test("Cloudflare D1 release evidence never runs migrations apply when registry d
           };
         }
         if (args.includes("--command")) {
+          if (args.at(-1)?.includes("m0018_tables")) {
+            return {
+              exitCode: 0,
+              stdout: boundaryThrough0019,
+              stderr: "",
+            };
+          }
           return {
             exitCode: 1,
             stdout: "",

@@ -7,12 +7,16 @@ import {
   readExpectedD1Databases,
   sanitizeWranglerOutput,
 } from "./cloudflare-external-state-check.mjs";
+import {
+  D1_MIGRATION_BOUNDARY_QUERY,
+  classifyD1MigrationBoundary,
+} from "./cloudflare-d1-migration-boundary.mjs";
 
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
 const DEFAULT_SEED_PATH = "workers/api/seeds/001_core_seed.sql";
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
 const ALLOWED_ENVS = ["staging", "production"];
-const D1_RELEASE_EVIDENCE_QUERY = [
+export const D1_RELEASE_EVIDENCE_QUERY = [
   "SELECT 'posts_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'posts'",
   "SELECT 'questions_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'questions'",
   "SELECT 'post_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_posts_place_created', 'idx_posts_status_created')",
@@ -211,12 +215,11 @@ function buildTargetSteps(database, configPath, seedPath, apply) {
       collectMigrations: true,
     },
     {
-      name: "d1.preapply.evidence",
+      name: "d1.migration.boundary",
       command: "npx",
-      args: ["--yes", "wrangler", "d1", "execute", database.databaseName, ...baseArgs, "--command", D1_RELEASE_EVIDENCE_QUERY],
-      applyOnly: true,
-      classify: true,
-      registryPreflight: true,
+      args: ["--yes", "wrangler", "d1", "execute", database.databaseName, ...baseArgs, "--command", D1_MIGRATION_BOUNDARY_QUERY],
+      classifyBoundary: true,
+      registryPreflight: apply,
     },
     {
       name: "d1.migrations.apply",
@@ -348,6 +351,48 @@ export async function executeD1ReleaseEvidencePlan(plan, { commandRunner = runCo
           break;
         }
         pendingMigrations = parsePendingD1Migrations(commandResult);
+        continue;
+      }
+
+      if (targetStep.classifyBoundary) {
+        const schemaCheck = classifyD1MigrationBoundary(commandResult, target.envName);
+        const registryCheck = classifyD1MigrationRegistry({
+          envName: target.envName,
+          pendingMigrations,
+          schemaCheck,
+        });
+
+        if (targetStep.registryPreflight) {
+          const preflightResult = {
+            name: `${target.envName}.${targetStep.name}`,
+            status: registryCheck.status,
+            durationMs,
+            check: registryCheck,
+            schemaCheck,
+          };
+          results.push(preflightResult);
+          if (preflightResult.status === "fail") {
+            break;
+          }
+          continue;
+        }
+
+        const schemaResult = {
+          name: `${target.envName}.${targetStep.name}`,
+          status: schemaCheck.status,
+          durationMs,
+          check: schemaCheck,
+        };
+        const registryResult = {
+          name: `${target.envName}.d1.migration_registry`,
+          status: registryCheck.status,
+          durationMs: 0,
+          check: registryCheck,
+        };
+        results.push(schemaResult, registryResult);
+        if (schemaResult.status === "fail" || registryResult.status === "fail") {
+          break;
+        }
         continue;
       }
 

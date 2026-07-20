@@ -3,6 +3,10 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import {
+  D1_MIGRATION_BOUNDARY_QUERY,
+  classifyD1MigrationBoundary,
+} from "./cloudflare-d1-migration-boundary.mjs";
 
 const DEFAULT_CONFIG_PATH = "workers/api/wrangler.jsonc";
 const DEFAULT_FRONTEND_CONFIG_PATH = "wrangler.jsonc";
@@ -934,6 +938,32 @@ async function main() {
 
       if (cloudflareAuthBlocked) {
         checks.push(classifyAuthBlockedRemoteCheck(`cloudflare.d1.${database.envName}.migration_0006`, `Remote ${database.envName} D1 migration evidence check`));
+        continue;
+      }
+
+      const boundaryResult = await runCommand(
+        "npx",
+        [
+          "--yes",
+          "wrangler",
+          "d1",
+          "execute",
+          database.databaseName,
+          "--remote",
+          "--env",
+          database.envName,
+          "--config",
+          configPath,
+          "--command",
+          D1_MIGRATION_BOUNDARY_QUERY,
+        ],
+        timeoutMs,
+      );
+      const boundaryCheck = classifyD1MigrationBoundary(boundaryResult, database.envName, {
+        sanitizeOutput: sanitizeWranglerOutput,
+      });
+      checks.push(boundaryCheck);
+      if (boundaryCheck.status === "fail") {
         continue;
       }
 
