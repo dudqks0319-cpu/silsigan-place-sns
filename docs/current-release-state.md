@@ -1,8 +1,8 @@
 # #실시간 current release state
 
-Updated: 2026-07-20
+Updated: 2026-07-21
 Branch: `codex/silsigan-progress-20260710`
-Release candidate source commit: `744d3032760cf67a25bf1a70f90edf1530437800`; evidence-only documentation follows on the same branch
+Release candidate source commit: `48e672aa3f9ece06e31f40305fc6e080c69fb479`; evidence-only documentation follows on the same branch
 
 ## Objective
 
@@ -12,9 +12,18 @@ Current release target: App Store production submission is not the next mileston
 
 Next unblocked operator packet: `docs/cloudflare-staging-operator-packet.md`.
 
-Remaining development plan: [v2-remaining-development-plan-2026-07-14.md](v2-remaining-development-plan-2026-07-14.md).
+Integrated completion plan: [silsigan-v2-master-completion-plan-2026-07-21.md](silsigan-v2-master-completion-plan-2026-07-21.md).
 
 V2 completion contract: [v2-decision-register.md](v2-decision-register.md). The 11 product, platform, privacy, source-rights, and mobile decisions are fixed there. Local implementation is complete for all 11 decisions, including server-bound anonymous proof lifecycle and the optional member-link seam; external console, rights, migration, deployment, legal, and real-device evidence remains separate and is not represented as complete.
+
+## Integrated candidate update (2026-07-21)
+
+- Source candidate `48e672aa3f9ece06e31f40305fc6e080c69fb479` merges the Mac mini `5055e62` baseline with one shared 1 MiB final-photo contract, a 12 MiB local-source ceiling, bounded browser re-encoding, a 20 MiB/IP-fingerprint/day upload-byte guard, updated dependency locks, and the role-by-role completion plan.
+- `pnpm verify` passed on the candidate: root tests 435/435, mobile tests 4/4, lint, typecheck, Next.js 16.2.6 build with 26 pages/routes, WebView check, OpenNext build, and staging/production web/API dry-runs.
+- `pnpm audit:security` reports no known root or mobile vulnerability. The final 399-file high-confidence secret-pattern scan found no hit; `.env.example` is the only tracked env-shaped file.
+- `pnpm release:status` correctly remains `blocked-external` because the release ledger has open P0 gates and healthy staging/production API URLs are not selected.
+- The 2026-07-21 non-mutating Cloudflare check confirms auth, staging API/web and production web deployment histories, staging D1 through 0026 with V2/core seed evidence, and dry-runs. It still reports `R2_NOT_ENABLED`, missing production API deployment, missing URL/exact-origin environment values, and production `D1_0006_NOT_APPLIED`.
+- No production deployment, remote production migration, provider application submission, payment/terms acceptance, or traffic promotion was performed.
 
 ## V2 Re-audit Closeout (2026-07-14)
 
@@ -104,7 +113,7 @@ Production promotion remains prohibited until every external blocker is checked.
 
 ## Latest Local Verification
 
-Historical verification rows below retain their original test counts for traceability; the current working release-candidate source of truth is the 2026-07-20 `428/428` row.
+Historical verification rows below retain their original test counts for traceability; the current working release-candidate source of truth is the 2026-07-21 integrated candidate update with root `435/435` and mobile `4/4`.
 
 The current browser source of truth is the 2026-07-20 390x844 run with 58 required checks, 614 redacted network events, `storesPostData=false`, `sensitiveHits=[]`, and artifact timestamp `1784510945721`; the browser required explicit report-place selection, directly clicked the per-photo shooting/publishing-rights confirmation before file input activation, uploaded and linked the photo through the unified publication contract, reopened the exact approved report deep link, rendered `#지금` while the legacy social feed was disabled, persisted its follow through the Worker preference API, returned from My, merged a cursor-based next page, explicitly selected a mocked NAVER result to prefill only name/address/category, proved that prefill sent no place-request POST, then submitted one exact-contract private place request and showed its owner-only `needs_verification` state in My. It also verified user-safe map fallback, required the exact `계정 삭제` phrase before permanent deletion, removed all mock-owned content including place requests, rotated to a new server-bound session, rejected the previous proof with 403, authenticated to the local admin surface, rendered aggregate-only plus Tier A/B fresh-coverage KPIs, exercised the five-meter R2/D1/Images stop-and-resume flow, and proved the three-meter global API guard stop -> fresh Cloudflare reconciliation -> below-70% resume flow. Evidence is under `artifacts/cloudflare-pages-smoke-worker-report-local`. This is local mock evidence; staging-live deletion and native real-device evidence remain open. Older dated rows are retained only as historical evidence.
 
@@ -112,7 +121,7 @@ The local store-listing candidate packet is now documented in `docs/store-listin
 
 | Gate | Last result | Evidence |
 | --- | --- | --- |
-| V2 full local verification | pass, 428 tests, 0 skipped | 2026-07-20 the current test set passes `428/428` with no SQLite skip; lint and typecheck also pass. The new boundary coverage proves the first incomplete D1 migration is identified before registry or apply decisions. Attack coverage also proves that idempotent place-request replays and requests rejected by the per-session daily limit consume only bounded validation cost and never increment the global mutation counter. The static-directory UI contract now also requires a clear `실시간 연결 다시 시도` action. Production/OpenNext build, staging web dry-run, `git diff --check`, and live browser revalidation pass. |
+| V2 full local verification | pass, root 435 and mobile 4, 0 skipped | 2026-07-21 `pnpm verify` passes root `435/435`, mobile `4/4`, lint, typecheck, Next.js build, WebView check, OpenNext build, and staging/production web/API dry-runs. New coverage fixes final photo bytes at 1 MiB, accepts the exact boundary, rejects one byte over, and bounds WebView local sources at 12 MiB. Historical browser evidence remains 2026-07-20 local mock evidence and is not restated as live staging proof. |
 | Public source fallback evidence | pass-local, 6/6 sources | `pnpm evidence:public-sources` runs the actual KMA, TourAPI, national parking, national traffic, national CCTV, and Seoul realtime adapters through success, fresh cache, simulated 503 outage, bounded stale/degraded fallback, and expired `insufficient`. The artifact reports `sensitiveHits=[]` at `artifacts/public-source-fallback-local/public-source-fallback.json`. This is deterministic fixture evidence, not rights or live-staging provider evidence. |
 | NAVER Maps domain/operator preflight | limits-and-local-tiles-pass; owner-domain/recipient pending | 2026-07-20 Computer Use created the separate `Silsigan` Dynamic Map application with localhost, current staging/production `workers.dev` preview hosts, and Android/iOS identifier `kr.silsigan.mobile`. The public Client ID is configured in `.env.example` and ignored `.env.local`; the Client Secret was not printed or stored. Localhost loaded the SDK and 13 real NAVER tiles. Console hard limits are saved at daily `160,000` and monthly `4,800,000`, over-limit use is disabled, and both alerts start at `70%`. No email or phone recipient exists, so delivery evidence is missing. Current staging web version `fc15d04e-6534-44d3-b908-8ce8cbb3a336` displays the basic-place fallback and `실시간 연결 다시 시도`; retry keeps protection mode and page assets show zero NAVER provider requests. The shared hosts do not satisfy the owner-domain gate, and the Cloudflare account has no owner domain. Domain selection/addition, representative-account and masked recipient evidence, owner-domain origins, valid-origin success, and invalid-origin rejection remain external. |
 | Capacitor WebView shell local/native smoke | pass-android-and-last-simulator; current-ios-environment-blocked; real-device pending | The actual staging URL/origin is synchronized into iOS/Android. On 2026-07-20 `pnpm --dir apps/webview check` and Android lint/debug APK build pass with Homebrew JDK 21; the APK SHA-256 remains `7439ae76464271f4dd26ae1ef7c4b5753b92ea52d49811b8d12244e53c4ae90f`, and no emulator/device is attached. The last clean unsigned iOS Simulator Debug build/install/launch is the 2026-07-19 iPhone 17 / iOS 26.2 screenshot at `artifacts/ios-simulator/staging-home.png`. The current rerun resolves the project/package graph and validates `Info.plist`/`PrivacyInfo.xcprivacy`, but CoreSimulatorService repeatedly returns `Cannot allocate memory` before asset compilation even after a service-only restart. Signing, push delivery, and real-device execution remain external gates. |

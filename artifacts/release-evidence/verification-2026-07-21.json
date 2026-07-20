@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-20T23:51:28Z",
+  "sourceSha": "48e672aa3f9ece06e31f40305fc6e080c69fb479",
+  "branch": "codex/silsigan-progress-20260710",
+  "local": {
+    "rootTests": {
+      "passed": 435,
+      "failed": 0,
+      "skipped": 0
+    },
+    "mobileTests": {
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    "lint": "pass",
+    "typecheck": "pass",
+    "nextBuild": "pass_26_pages_routes",
+    "webviewCheck": "pass",
+    "openNextBuild": "pass",
+    "wranglerDryRuns": "pass_staging_and_production_web_and_api",
+    "dependencyAudit": "pass_root_and_mobile_no_known_vulnerabilities",
+    "secretPatternScan": {
+      "scannedFiles": 399,
+      "highConfidenceHits": 0,
+      "trackedEnvFiles": [
+        ".env.example"
+      ]
+    },
+    "photoContract": {
+      "finalUploadMaxBytes": 1048576,
+      "localSourceMaxBytes": 12582912,
+      "dailyUploadsPerIpFingerprint": 20,
+      "dailyBytesPerIpFingerprint": 20971520
+    }
+  },
+  "external": {
+    "state": "blocked_external",
+    "passed": [
+      "cloudflare_auth",
+      "staging_api_deployment_history",
+      "staging_web_deployment_history",
+      "production_web_deployment_history",
+      "staging_d1_through_0026_with_v2_core_seed",
+      "staging_and_production_dry_runs"
+    ],
+    "blockers": [
+      "R2_NOT_ENABLED",
+      "PRODUCTION_API_WORKER_MISSING",
+      "DEPLOYMENT_URLS_REQUIRED",
+      "EXACT_API_ALLOWED_ORIGINS_REQUIRED",
+      "PRODUCTION_D1_0006_NOT_APPLIED",
+      "PUBLIC_SOURCE_RIGHTS_AND_CREDENTIALS_NOT_VERIFIED",
+      "REAL_DEVICE_QA_NOT_COMPLETE",
+      "LEGAL_AND_OPERATIONS_SIGNOFF_NOT_COMPLETE"
+    ],
+    "mutationsPerformed": false
+  }
+}
