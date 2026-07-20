@@ -11,7 +11,7 @@ export type RankingPlace = {
   signal: string;
   summary: string;
   score: number;
-  tone: "calm" | "normal" | "busy" | "danger";
+  tone: "calm" | "normal" | "busy" | "danger" | "unknown";
   visitors: string;
 };
 
@@ -36,7 +36,7 @@ export function RankingPanel({
         <Trophy size={19} aria-hidden />
       </div>
       {places.length === 0 ? (
-        <EmptyState title="랭킹을 준비하고 있어요" body={emptyBody} />
+        <EmptyState title="아직 순위를 만들 현장 정보가 없어요" body={emptyBody} />
       ) : (
         <div className={styles.rankingList}>
           {places.slice(0, 10).map((place, index) => (

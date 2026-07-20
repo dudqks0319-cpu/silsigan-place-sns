@@ -18,6 +18,47 @@ const D1_RELEASE_EVIDENCE_QUERY = [
   "SELECT 'v2_settings=' || COUNT(*) FROM dimension_settings",
   "SELECT 'source_registry=' || COUNT(*) FROM data_sources",
   "SELECT 'trust_safety_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_moderation_states', 'report_votes', 'user_blocks', 'consents', 'terms_acceptances', 'account_deletion_requests', 'identity_link_events')",
+  "SELECT 'live_signal_expiry_required=' || COUNT(*) FROM pragma_table_info('live_signals') WHERE name = 'expires_at' AND \"notnull\" = 1",
+  "SELECT 'live_signals_missing_expiry=' || COUNT(*) FROM live_signals WHERE expires_at IS NULL",
+  "SELECT 'place_event_accuracy_required=' || COUNT(*) FROM pragma_table_info('place_events') WHERE name = 'accuracy_bucket' AND \"notnull\" = 1",
+  "SELECT 'place_event_accuracy_invalid=' || COUNT(*) FROM place_events WHERE accuracy_bucket IS NULL OR accuracy_bucket NOT IN ('high', 'medium', 'low', 'unknown')",
+  "SELECT 'preference_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('saved_places', 'saved_posts', 'followed_topics', 'notification_subscriptions')",
+  "SELECT 'analytics_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'analytics_events'",
+  "SELECT 'photo_cleanup_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_cleanup_jobs'",
+  "SELECT 'photo_cleanup_delivery_columns=' || COUNT(*) FROM pragma_table_info('photo_cleanup_jobs') WHERE name IN ('byte_size', 'lease_token', 'lease_expires_at', 'budget_released_at', 'dead_lettered_at', 'updated_at')",
+  "SELECT 'photo_cleanup_delivery_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_photo_cleanup_jobs_pending'",
+  "SELECT 'photo_cleanup_dead_letters=' || COUNT(*) FROM photo_cleanup_jobs WHERE status = 'failed'",
+  "SELECT 'photo_budget_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_storage_budget'",
+  "SELECT 'photo_budget_rows=' || COUNT(*) FROM photo_storage_budget WHERE id = 1",
+  "SELECT 'photo_storage_release_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_storage_releases'",
+  "SELECT 'photo_storage_release_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_photo_storage_releases_released'",
+  "SELECT 'anonymous_session_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'anonymous_sessions'",
+  "SELECT 'anonymous_session_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_anonymous_sessions_status_expiry'",
+  "SELECT 'anonymous_session_budget_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'anonymous_session_issuance_budget'",
+  "SELECT 'place_request_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('place_addition_requests', 'place_addition_request_daily_budget')",
+  "SELECT 'place_request_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_place_addition_requests_owner_created', 'idx_place_addition_requests_queue')",
+  "SELECT 'place_request_triggers=' || COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND name = 'trg_place_addition_requests_daily_guard'",
+  "SELECT 'api_cost_guard_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('api_cost_guard_control', 'api_cost_guard_daily', 'api_cost_guard_reconciliations')",
+  "SELECT 'api_cost_guard_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_api_cost_guard_reconcile_day'",
+  "SELECT 'api_cost_guard_control_rows=' || COUNT(*) FROM api_cost_guard_control WHERE id = 1 AND mode IN ('running', 'degraded', 'stopped') AND generation >= 1",
+  "SELECT 'api_cost_guard_warning_columns=' || COUNT(*) FROM pragma_table_info('api_cost_guard_daily') WHERE name IN ('warned_percent', 'warned_metric')",
+  "SELECT 'photo_abuse_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_upload_claims', 'photo_abuse_budget', 'photo_upload_control')",
+  "SELECT 'photo_upload_control_rows=' || COUNT(*) FROM photo_upload_control WHERE id = 1",
+  "SELECT 'photo_read_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_read_budget', 'photo_read_control')",
+  "SELECT 'photo_read_budget_rows=' || COUNT(*) FROM photo_read_budget WHERE id = 1 AND length(day_utc) = 10 AND reads_in_day >= 0",
+  "SELECT 'photo_read_control_rows=' || COUNT(*) FROM photo_read_control WHERE id = 1",
+  "SELECT 'photo_read_abuse_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_read_abuse_budget'",
+  "SELECT 'photo_transform_budget_rows=' || COUNT(*) FROM photo_transform_budget WHERE id = 1 AND length(period_utc) = 7 AND transforms_in_period >= 0",
+  "SELECT 'source_scheduler_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'source_ingestion_targets'",
+  "SELECT 'source_scheduler_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_source_ingestion_targets_due', 'idx_source_ingestion_targets_lease')",
+  "SELECT 'source_scheduler_targets=' || COUNT(*) FROM source_ingestion_targets",
+  "SELECT 'source_scheduler_enabled_targets=' || COUNT(*) FROM source_ingestion_targets WHERE enabled = 1",
+  "SELECT 'source_scheduler_invalid_active=' || COUNT(*) FROM source_ingestion_targets target JOIN data_sources source ON source.id = target.source_id WHERE target.enabled = 1 AND (source.enabled != 1 OR source.commercial_use_status NOT IN ('allowed', 'allowed_with_attribution') OR source.health_status NOT IN ('healthy', 'degraded'))",
+  "SELECT 'place_event_moderation_required=' || COUNT(*) FROM pragma_table_info('place_events') WHERE name = 'moderation_status' AND \"notnull\" = 1",
+  "SELECT 'publication_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('field_report_publications', 'field_report_media', 'hashtags', 'field_report_hashtags', 'publication_outbox')",
+  "SELECT 'publication_delivery_columns=' || COUNT(*) FROM pragma_table_info('publication_outbox') WHERE name IN ('lease_token', 'lease_expires_at', 'last_error_code', 'dead_lettered_at', 'updated_at')",
+  "SELECT 'publication_delivery_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_publication_outbox_delivery'",
+  "SELECT 'publication_dead_letters=' || COUNT(*) FROM publication_outbox WHERE status = 'failed'",
   "SELECT 'posts=' || COUNT(*) FROM posts",
   "SELECT 'questions=' || COUNT(*) FROM questions",
 ].join("; ");
@@ -30,6 +71,10 @@ const DEPLOYMENT_URL_ENV_BY_ENV = {
     pages: "SILSIGAN_PRODUCTION_PAGES_URL",
     worker_api: "SILSIGAN_PRODUCTION_API_BASE_URL",
   },
+};
+const API_ALLOWED_ORIGINS_ENV_BY_ENV = {
+  staging: "SILSIGAN_STAGING_API_ALLOWED_ORIGINS",
+  production: "SILSIGAN_PRODUCTION_API_ALLOWED_ORIGINS",
 };
 const FIELD_SPECIFIC_BLOCKER_CODES = new Set([
   "DEPLOYMENT_URL_REQUIRED",
@@ -125,6 +170,15 @@ export function classifyR2BucketListResult(result, expectedBucketNames = []) {
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 
   if (result.exitCode !== 0) {
+    if (isWranglerAuthFailure(output)) {
+      return {
+        name: "cloudflare.r2.enabled",
+        status: "fail",
+        code: "CLOUDFLARE_AUTH_REQUIRED",
+        message: "Wrangler subprocess cannot read Cloudflare R2 because API-token authentication is unavailable.",
+      };
+    }
+
     if (/code:\s*10042|enable R2/i.test(output)) {
       return {
         name: "cloudflare.r2.enabled",
@@ -161,11 +215,133 @@ export function classifyR2BucketListResult(result, expectedBucketNames = []) {
   };
 }
 
+export function classifyR2DevUrlResult(result, bucketName) {
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const name = `cloudflare.r2.${bucketName}.dev_url`;
+
+  if (result.exitCode !== 0) {
+    if (isWranglerAuthFailure(output)) {
+      return {
+        name,
+        status: "fail",
+        code: "CLOUDFLARE_AUTH_REQUIRED",
+        message: "Wrangler cannot verify that the R2 public development URL is disabled.",
+      };
+    }
+
+    if (/code:\s*10042|enable R2/i.test(output)) {
+      return {
+        name,
+        status: "fail",
+        code: "R2_NOT_ENABLED",
+        message: "Cloudflare R2 is not enabled, so bucket privacy cannot be verified.",
+      };
+    }
+
+    return {
+      name,
+      status: "fail",
+      code: "R2_DEV_URL_CHECK_FAILED",
+      message: "Wrangler could not prove that the R2 public development URL is disabled.",
+    };
+  }
+
+  if (/Public access via the r2\.dev URL is disabled\./i.test(output)) {
+    return {
+      name,
+      status: "pass",
+      message: "The R2 public development URL is disabled.",
+    };
+  }
+
+  if (/Public access is enabled at/i.test(output)) {
+    return {
+      name,
+      status: "fail",
+      code: "R2_PUBLIC_DEV_URL_ENABLED",
+      message: "The R2 public development URL must be disabled before release.",
+    };
+  }
+
+  return {
+    name,
+    status: "fail",
+    code: "R2_DEV_URL_CHECK_FAILED",
+    message: "Wrangler returned an unrecognized R2 public development URL state.",
+  };
+}
+
+export function classifyR2CustomDomainListResult(result, bucketName) {
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const name = `cloudflare.r2.${bucketName}.custom_domains`;
+
+  if (result.exitCode !== 0) {
+    if (isWranglerAuthFailure(output)) {
+      return {
+        name,
+        status: "fail",
+        code: "CLOUDFLARE_AUTH_REQUIRED",
+        message: "Wrangler cannot verify that the R2 bucket has no public custom domain.",
+      };
+    }
+
+    if (/code:\s*10042|enable R2/i.test(output)) {
+      return {
+        name,
+        status: "fail",
+        code: "R2_NOT_ENABLED",
+        message: "Cloudflare R2 is not enabled, so bucket privacy cannot be verified.",
+      };
+    }
+
+    return {
+      name,
+      status: "fail",
+      code: "R2_CUSTOM_DOMAIN_CHECK_FAILED",
+      message: "Wrangler could not prove that the R2 bucket has no public custom domain.",
+    };
+  }
+
+  if (/There are no custom domains connected to this bucket\./i.test(output)) {
+    return {
+      name,
+      status: "pass",
+      message: "The R2 bucket has no public custom domain.",
+    };
+  }
+
+  if (/Listing custom domains connected to bucket/i.test(output)) {
+    return {
+      name,
+      status: "fail",
+      code: "R2_PUBLIC_CUSTOM_DOMAIN_CONFIGURED",
+      message: "Direct R2 custom-domain access must be removed before release.",
+    };
+  }
+
+  return {
+    name,
+    status: "fail",
+    code: "R2_CUSTOM_DOMAIN_CHECK_FAILED",
+    message: "Wrangler returned an unrecognized R2 custom-domain state.",
+  };
+}
+
 export function classifyWorkerDeploymentResult(result, deployment) {
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
   const name = `worker_deployment.${deployment.envName}.${deployment.kind}`;
 
   if (result.exitCode !== 0) {
+    if (isWranglerAuthFailure(output)) {
+      return {
+        name,
+        status: "fail",
+        code: "CLOUDFLARE_AUTH_REQUIRED",
+        message: `Wrangler subprocess cannot read configured ${deployment.envName} ${deployment.kind} Worker deployments because API-token authentication is unavailable.`,
+        workerName: deployment.workerName,
+      };
+    }
+
     if (/Worker does not exist|code:\s*10007/i.test(output)) {
       return {
         name,
@@ -198,9 +374,88 @@ export function classifyWorkerDeploymentResult(result, deployment) {
 export function classifyD1MigrationResult(result, envName) {
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
   const name = `cloudflare.d1.${envName}.migration_0006`;
+  const transformBudgetName = `cloudflare.d1.${envName}.migration_0020`;
+  const readAbuseBudgetName = `cloudflare.d1.${envName}.migration_0021`;
+  const storageReleaseName = `cloudflare.d1.${envName}.migration_0022`;
+  const anonymousSessionName = `cloudflare.d1.${envName}.migration_0023`;
+  const anonymousSessionBudgetName = `cloudflare.d1.${envName}.migration_0024`;
+  const placeRequestName = `cloudflare.d1.${envName}.migration_0025`;
+  const apiCostGuardName = `cloudflare.d1.${envName}.migration_0026`;
 
   if (result.exitCode !== 0) {
-    if (/no such table:\s*(posts|questions|data_sources|dimension_settings|feature_flags|live_signals|aggregated_place_status|photo_moderation_states|report_votes|user_blocks|consents|terms_acceptances|account_deletion_requests|identity_link_events)|SQLITE_ERROR/i.test(output)) {
+    if (isWranglerAuthFailure(output)) {
+      return {
+        name,
+        status: "fail",
+        code: "CLOUDFLARE_AUTH_REQUIRED",
+        message: `Wrangler subprocess cannot read remote ${envName} D1 because API-token authentication is unavailable.`,
+      };
+    }
+
+    if (/no such table:\s*photo_read_abuse_budget/i.test(output)) {
+      return {
+        name: readAbuseBudgetName,
+        status: "fail",
+        code: "D1_0021_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the per-IP photo read abuse ledger.`,
+      };
+    }
+
+    if (/no such table:\s*photo_storage_releases/i.test(output)) {
+      return {
+        name: storageReleaseName,
+        status: "fail",
+        code: "D1_0022_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the idempotent photo storage-release ledger.`,
+      };
+    }
+
+    if (/no such table:\s*anonymous_sessions/i.test(output)) {
+      return {
+        name: anonymousSessionName,
+        status: "fail",
+        code: "D1_0023_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the server-bound anonymous session ledger.`,
+      };
+    }
+
+    if (/no such table:\s*anonymous_session_issuance_budget/i.test(output)) {
+      return {
+        name: anonymousSessionBudgetName,
+        status: "fail",
+        code: "D1_0024_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the exact anonymous session issuance budget.`,
+      };
+    }
+
+    if (/no such table:\s*place_addition_(?:requests|request_daily_budget)/i.test(output)) {
+      return {
+        name: placeRequestName,
+        status: "fail",
+        code: "D1_0025_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the private place addition request queue.`,
+      };
+    }
+
+    if (/no such table:\s*api_cost_guard_(?:control|daily|reconciliations)/i.test(output)) {
+      return {
+        name: apiCostGuardName,
+        status: "fail",
+        code: "D1_0026_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the global Workers and D1 cost guard.`,
+      };
+    }
+
+    if (/no such table:\s*photo_transform_budget/i.test(output)) {
+      return {
+        name: transformBudgetName,
+        status: "fail",
+        code: "D1_0020_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the Cloudflare Images transformation budget ledger.`,
+      };
+    }
+
+    if (/no such (?:table|column):\s*(posts|questions|data_sources|dimension_settings|feature_flags|live_signals|aggregated_place_status|place_events|photo_moderation_states|report_votes|user_blocks|consents|terms_acceptances|account_deletion_requests|identity_link_events|anonymous_sessions|anonymous_session_issuance_budget|place_addition_requests|place_addition_request_daily_budget|api_cost_guard_control|api_cost_guard_daily|api_cost_guard_reconciliations|saved_places|saved_posts|followed_topics|notification_subscriptions|analytics_events|photo_cleanup_jobs|photo_storage_budget|photo_storage_releases|photo_upload_claims|photo_abuse_budget|photo_upload_control|photo_read_budget|photo_read_control|photo_read_abuse_budget|photo_transform_budget|source_ingestion_targets|field_report_publications|field_report_media|hashtags|field_report_hashtags|publication_outbox|accuracy_bucket|moderation_status|byte_size|lease_token|lease_expires_at|dead_lettered_at|updated_at)|SQLITE_ERROR/i.test(output)) {
       return {
         name,
         status: "fail",
@@ -229,8 +484,168 @@ export function classifyD1MigrationResult(result, envName) {
   if ((counters.v2_settings ?? 0) < 12) missingSchema.push("V2 dimension settings");
   if ((counters.source_registry ?? 0) < 8) missingSchema.push("V2 source registry");
   if ((counters.trust_safety_tables ?? 0) < 7) missingSchema.push("V2 trust-safety tables");
+  if ((counters.live_signal_expiry_required ?? 0) < 1) missingSchema.push("required live-signal expiry");
+  if ((counters.live_signals_missing_expiry ?? 0) > 0) missingSchema.push("live signals without expiry");
+  if ((counters.place_event_accuracy_required ?? 0) < 1) missingSchema.push("required place-event accuracy bucket");
+  if ((counters.place_event_accuracy_invalid ?? 0) > 0) missingSchema.push("invalid place-event accuracy buckets");
+  if ((counters.preference_tables ?? 0) < 4) missingSchema.push("persistent preference tables");
+  if ((counters.analytics_tables ?? 0) < 1) missingSchema.push("analytics events table");
+  if ((counters.photo_cleanup_tables ?? 0) < 1) missingSchema.push("photo cleanup queue");
+  if (
+    (counters.photo_cleanup_delivery_columns ?? 0) < 6 ||
+    (counters.photo_cleanup_delivery_indexes ?? 0) < 1
+  ) {
+    missingSchema.push("photo cleanup delivery worker");
+  }
+  if (counters.photo_cleanup_dead_letters !== 0) missingSchema.push("photo cleanup dead letters");
+  if ((counters.photo_budget_tables ?? 0) < 1 || (counters.photo_budget_rows ?? 0) < 1) missingSchema.push("photo storage budget ledger");
+  if (
+    (counters.photo_storage_release_tables ?? 0) < 1 ||
+    (counters.photo_storage_release_indexes ?? 0) < 1
+  ) {
+    missingSchema.push("idempotent photo storage-release ledger");
+  }
+  if (
+    (counters.anonymous_session_tables ?? 0) < 1 ||
+    (counters.anonymous_session_indexes ?? 0) < 1
+  ) {
+    missingSchema.push("server-bound anonymous session ledger");
+  }
+  if ((counters.anonymous_session_budget_tables ?? 0) < 1) {
+    missingSchema.push("exact anonymous session issuance budget");
+  }
+  if (
+    (counters.place_request_tables ?? 0) < 2 ||
+    (counters.place_request_indexes ?? 0) < 2 ||
+    (counters.place_request_triggers ?? 0) < 1
+  ) {
+    missingSchema.push("private place addition request queue");
+  }
+  if (
+    (counters.api_cost_guard_tables ?? 0) < 3
+    || (counters.api_cost_guard_indexes ?? 0) < 1
+    || (counters.api_cost_guard_control_rows ?? 0) < 1
+    || (counters.api_cost_guard_warning_columns ?? 0) < 2
+  ) {
+    missingSchema.push("global Workers and D1 cost guard");
+  }
+  if ((counters.photo_abuse_tables ?? 0) < 3 || (counters.photo_upload_control_rows ?? 0) < 1) missingSchema.push("photo abuse guard and emergency stop");
+  if (
+    (counters.photo_read_tables ?? 0) < 2 ||
+    (counters.photo_read_budget_rows ?? 0) < 1 ||
+    (counters.photo_read_control_rows ?? 0) < 1
+  ) {
+    missingSchema.push("photo Class B read budget and emergency stop");
+  }
+  if ((counters.photo_transform_budget_rows ?? 0) < 1) {
+    missingSchema.push("Cloudflare Images transformation budget ledger");
+  }
+  if ((counters.photo_read_abuse_tables ?? 0) < 1) {
+    missingSchema.push("per-IP photo read abuse ledger");
+  }
+  if (
+    (counters.source_scheduler_tables ?? 0) < 1 ||
+    (counters.source_scheduler_indexes ?? 0) < 2 ||
+    typeof counters.source_scheduler_targets !== "number" ||
+    typeof counters.source_scheduler_enabled_targets !== "number"
+  ) {
+    missingSchema.push("source ingestion scheduler");
+  }
+  if (counters.source_scheduler_invalid_active !== 0) {
+    missingSchema.push("unsafe source ingestion scheduler targets");
+  }
+  if ((counters.place_event_moderation_required ?? 0) < 1) missingSchema.push("required field-report moderation status");
+  if ((counters.publication_tables ?? 0) < 5) missingSchema.push("field-report publication tables");
+  if (
+    (counters.publication_delivery_columns ?? 0) < 5 ||
+    (counters.publication_delivery_indexes ?? 0) < 1
+  ) {
+    missingSchema.push("publication outbox delivery worker");
+  }
+  if (counters.publication_dead_letters !== 0) missingSchema.push("publication outbox dead letters");
 
   if (missingSchema.length > 0) {
+    const tailMigrationSchema = new Set([
+      "Cloudflare Images transformation budget ledger",
+      "per-IP photo read abuse ledger",
+      "idempotent photo storage-release ledger",
+      "server-bound anonymous session ledger",
+      "exact anonymous session issuance budget",
+      "private place addition request queue",
+      "global Workers and D1 cost guard",
+    ]);
+    const onlyTailMigrationsMissing = missingSchema.every((item) => tailMigrationSchema.has(item));
+
+    if (onlyTailMigrationsMissing && missingSchema.includes("Cloudflare Images transformation budget ledger")) {
+      return {
+        name: transformBudgetName,
+        status: "fail",
+        code: "D1_0020_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the Cloudflare Images transformation budget ledger.`,
+        missingSchema,
+      };
+    }
+
+    if (onlyTailMigrationsMissing && missingSchema.includes("per-IP photo read abuse ledger")) {
+      return {
+        name: readAbuseBudgetName,
+        status: "fail",
+        code: "D1_0021_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the per-IP photo read abuse ledger.`,
+        missingSchema,
+      };
+    }
+
+    if (onlyTailMigrationsMissing && missingSchema.includes("idempotent photo storage-release ledger")) {
+      return {
+        name: storageReleaseName,
+        status: "fail",
+        code: "D1_0022_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the idempotent photo storage-release ledger.`,
+        missingSchema,
+      };
+    }
+
+    if (onlyTailMigrationsMissing && missingSchema.includes("server-bound anonymous session ledger")) {
+      return {
+        name: anonymousSessionName,
+        status: "fail",
+        code: "D1_0023_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the server-bound anonymous session ledger.`,
+        missingSchema,
+      };
+    }
+
+    if (onlyTailMigrationsMissing && missingSchema.includes("exact anonymous session issuance budget")) {
+      return {
+        name: anonymousSessionBudgetName,
+        status: "fail",
+        code: "D1_0024_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the exact anonymous session issuance budget.`,
+        missingSchema,
+      };
+    }
+
+    if (onlyTailMigrationsMissing && missingSchema.includes("private place addition request queue")) {
+      return {
+        name: placeRequestName,
+        status: "fail",
+        code: "D1_0025_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the private place addition request queue.`,
+        missingSchema,
+      };
+    }
+
+    if (onlyTailMigrationsMissing && missingSchema.includes("global Workers and D1 cost guard")) {
+      return {
+        name: apiCostGuardName,
+        status: "fail",
+        code: "D1_0026_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the global Workers and D1 cost guard.`,
+        missingSchema,
+      };
+    }
+
     return {
       name,
       status: "fail",
@@ -287,6 +702,10 @@ export function classifyAuthBlockedRemoteCheck(name, subject) {
   };
 }
 
+function isWranglerAuthFailure(output) {
+  return /CLOUDFLARE_API_TOKEN|In a non-interactive environment.*wrangler|EPERM.*\.wrangler/i.test(output);
+}
+
 export function sanitizeWranglerOutput(value) {
   return String(value)
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
@@ -316,6 +735,60 @@ export function classifyDeploymentUrlState(env = process.env, targetEnvs = DEFAU
   }
 
   checks.push(...classifySeparatedDeploymentUrls(parsedUrls));
+  return checks;
+}
+
+export function classifyApiAllowedOriginsState(env = process.env, targetEnvs = DEFAULT_ENVS) {
+  const checks = [];
+
+  for (const envName of targetEnvs) {
+    const envVarName = API_ALLOWED_ORIGINS_ENV_BY_ENV[envName];
+    const pagesEnvVarName = DEPLOYMENT_URL_ENV_BY_ENV[envName]?.pages;
+    if (!envVarName || !pagesEnvVarName) {
+      continue;
+    }
+
+    const rawValue = env[envVarName];
+    if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
+      checks.push({
+        name: `api_allowed_origins.${envName}`,
+        status: "fail",
+        code: "API_ALLOWED_ORIGINS_REQUIRED",
+        message: `${envVarName} is required and must contain the exact ${envName} Pages origin.`,
+      });
+      continue;
+    }
+
+    const origins = rawValue.split(",").map((value) => value.trim()).filter(Boolean);
+    if (origins.length === 0 || origins.some((origin) => !isExactHttpsOrigin(origin))) {
+      checks.push({
+        name: `api_allowed_origins.${envName}`,
+        status: "fail",
+        code: "API_ALLOWED_ORIGINS_INVALID",
+        message: `${envVarName} must contain comma-separated exact HTTPS origins without wildcards, paths, queries, or fragments.`,
+      });
+      continue;
+    }
+
+    const pagesOrigin = safeHttpsOrigin(env[pagesEnvVarName]);
+    if (!pagesOrigin || !origins.includes(pagesOrigin)) {
+      checks.push({
+        name: `api_allowed_origins.${envName}`,
+        status: "fail",
+        code: "API_ALLOWED_ORIGINS_MISSING_PAGES_ORIGIN",
+        message: `${envVarName} must include the exact origin from ${pagesEnvVarName}.`,
+      });
+      continue;
+    }
+
+    checks.push({
+      name: `api_allowed_origins.${envName}`,
+      status: "pass",
+      message: `${envVarName} includes the exact ${envName} Pages origin.`,
+      originCount: origins.length,
+    });
+  }
+
   return checks;
 }
 
@@ -386,11 +859,35 @@ async function main() {
   }
 
   if (!flags.has("skip-r2")) {
-    checks.push(
-      cloudflareAuthBlocked
-        ? classifyAuthBlockedRemoteCheck("cloudflare.r2.enabled", "R2 bucket visibility check")
-        : classifyR2BucketListResult(await runCommand("npx", ["--yes", "wrangler", "r2", "bucket", "list"], timeoutMs), expectedBucketNames),
-    );
+    const r2BucketCheck = cloudflareAuthBlocked
+      ? classifyAuthBlockedRemoteCheck("cloudflare.r2.enabled", "R2 bucket visibility check")
+      : classifyR2BucketListResult(await runCommand("npx", ["--yes", "wrangler", "r2", "bucket", "list"], timeoutMs), expectedBucketNames);
+    checks.push(r2BucketCheck);
+
+    if (r2BucketCheck.status === "pass") {
+      for (const bucketName of expectedBucketNames) {
+        checks.push(
+          classifyR2DevUrlResult(
+            await runCommand(
+              "npx",
+              ["--yes", "wrangler", "r2", "bucket", "dev-url", "get", bucketName, "--config", configPath],
+              timeoutMs,
+            ),
+            bucketName,
+          ),
+        );
+        checks.push(
+          classifyR2CustomDomainListResult(
+            await runCommand(
+              "npx",
+              ["--yes", "wrangler", "r2", "bucket", "domain", "list", bucketName, "--config", configPath],
+              timeoutMs,
+            ),
+            bucketName,
+          ),
+        );
+      }
+    }
   }
 
   if (!flags.has("skip-worker-deployments")) {
@@ -419,6 +916,7 @@ async function main() {
 
   if (!flags.has("skip-deployment-urls")) {
     checks.push(...classifyDeploymentUrlState(process.env, targetEnvs));
+    checks.push(...classifyApiAllowedOriginsState(process.env, targetEnvs));
   }
 
   if (!flags.has("skip-d1")) {
@@ -611,6 +1109,28 @@ function isLocalhost(hostname) {
   return hostname === "localhost" || hostname === "0.0.0.0" || hostname === "::1" || /^127\./.test(hostname) || hostname.endsWith(".local");
 }
 
+function isExactHttpsOrigin(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function safeHttpsOrigin(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -689,7 +1209,7 @@ function readWorkerNamesFromConfig(config, configPath, kind, targetEnvs) {
 
 function parseD1Counters(output) {
   const counters = {};
-  const matcher = /\b(posts_table|questions_table|post_indexes|question_indexes|v2_tables|v2_flags|v2_settings|source_registry|trust_safety_tables|posts|questions)=(\d+)\b/g;
+  const matcher = /\b(posts_table|questions_table|post_indexes|question_indexes|v2_tables|v2_flags|v2_settings|source_registry|trust_safety_tables|live_signal_expiry_required|live_signals_missing_expiry|place_event_accuracy_required|place_event_accuracy_invalid|preference_tables|analytics_tables|photo_cleanup_tables|photo_cleanup_delivery_columns|photo_cleanup_delivery_indexes|photo_cleanup_dead_letters|photo_budget_tables|photo_budget_rows|photo_storage_release_tables|photo_storage_release_indexes|anonymous_session_tables|anonymous_session_indexes|anonymous_session_budget_tables|place_request_tables|place_request_indexes|place_request_triggers|api_cost_guard_tables|api_cost_guard_indexes|api_cost_guard_control_rows|api_cost_guard_warning_columns|photo_abuse_tables|photo_upload_control_rows|photo_read_tables|photo_read_budget_rows|photo_read_control_rows|photo_read_abuse_tables|photo_transform_budget_rows|source_scheduler_tables|source_scheduler_indexes|source_scheduler_targets|source_scheduler_enabled_targets|source_scheduler_invalid_active|place_event_moderation_required|publication_tables|publication_delivery_columns|publication_delivery_indexes|publication_dead_letters|posts|questions)=(\d+)\b/g;
   let match = matcher.exec(output);
   while (match) {
     counters[match[1]] = Number(match[2]);

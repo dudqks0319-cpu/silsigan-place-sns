@@ -10,6 +10,51 @@ export const featureFlagKeys = [
 
 export type FeatureFlagKey = (typeof featureFlagKeys)[number];
 
+/**
+ * Version recorded when a user confirms that each uploaded photo is their own
+ * work or that they otherwise have permission to publish it.
+ */
+export const PHOTO_RIGHTS_TERMS_VERSION = "photo-rights-2026-07-20-v1" as const;
+
+export const locationAccuracyBuckets = ["high", "medium", "low", "unknown"] as const;
+export type LocationAccuracyBucket = (typeof locationAccuracyBuckets)[number];
+
+/**
+ * A browser/native location is eligible for field verification only when the
+ * reported horizontal accuracy is at most this threshold. The raw accuracy
+ * value is request-scoped and must never be persisted or sent to analytics.
+ */
+export const LOCATION_VERIFICATION_MAX_ACCURACY_M = 100;
+
+export function locationAccuracyBucketForMeters(value: number | null | undefined): LocationAccuracyBucket {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return "unknown";
+  }
+
+  if (value <= 25) {
+    return "high";
+  }
+
+  if (value <= LOCATION_VERIFICATION_MAX_ACCURACY_M) {
+    return "medium";
+  }
+
+  return "low";
+}
+
+export function isLocationAccuracySufficient(value: number | null | undefined): boolean {
+  const bucket = locationAccuracyBucketForMeters(value);
+  return bucket === "high" || bucket === "medium";
+}
+
+export const FEATURE_GATED_API_FLAGS = {
+  posts: "SOCIAL_FEED_ENABLED",
+  questions: "QNA_ENABLED",
+  myQuestions: "QNA_ENABLED",
+  liveStreams: "LIVE_STREAMS_ENABLED",
+  ads: "ADS_ENABLED",
+} as const satisfies Record<"posts" | "questions" | "myQuestions" | "liveStreams" | "ads", FeatureFlagKey>;
+
 export const DEFAULT_FEATURE_FLAGS: Readonly<Record<FeatureFlagKey, false>> = {
   QNA_ENABLED: false,
   REWARDS_ENABLED: false,

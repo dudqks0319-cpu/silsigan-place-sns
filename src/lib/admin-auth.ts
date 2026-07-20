@@ -29,6 +29,59 @@ export function assertAdminRequest(request: Request) {
   }
 }
 
+export function assertAdminMutationOrigin(request: Request) {
+  const fetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
+  const originHeader = request.headers.get("origin");
+
+  if (fetchSite === "cross-site") {
+    throw new ApiError(403, "ADMIN_CROSS_ORIGIN_FORBIDDEN", "교차 출처 관리자 변경 요청을 허용하지 않습니다.");
+  }
+
+  if (!originHeader) {
+    return;
+  }
+
+  let origin: string;
+  try {
+    origin = new URL(originHeader).origin;
+  } catch {
+    throw new ApiError(403, "ADMIN_CROSS_ORIGIN_FORBIDDEN", "교차 출처 관리자 변경 요청을 허용하지 않습니다.");
+  }
+
+  const requestUrl = new URL(request.url);
+  const trustedOrigins = new Set([requestUrl.origin]);
+  const host = request.headers.get("host");
+  const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim();
+  for (const protocol of [forwardedProtocol, requestUrl.protocol]) {
+    const candidate = originFromProtocolAndHost(protocol, host);
+    if (candidate) {
+      trustedOrigins.add(candidate);
+    }
+  }
+
+  if (!trustedOrigins.has(origin)) {
+    throw new ApiError(403, "ADMIN_CROSS_ORIGIN_FORBIDDEN", "교차 출처 관리자 변경 요청을 허용하지 않습니다.");
+  }
+}
+
+function originFromProtocolAndHost(protocol: string | null | undefined, host: string | null) {
+  const normalizedProtocol = protocol?.replace(/:$/, "").toLowerCase();
+  const normalizedHost = host?.trim();
+  if (!normalizedHost || (normalizedProtocol !== "http" && normalizedProtocol !== "https")) {
+    return null;
+  }
+
+  try {
+    const candidate = new URL(`${normalizedProtocol}://${normalizedHost}`);
+    if (candidate.username || candidate.password || candidate.pathname !== "/" || candidate.search || candidate.hash) {
+      return null;
+    }
+    return candidate.origin;
+  } catch {
+    return null;
+  }
+}
+
 export function parseCookie(cookieHeader: string) {
   return Object.fromEntries(
     cookieHeader

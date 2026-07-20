@@ -3,6 +3,7 @@
 import { readFile } from "node:fs/promises";
 
 const REQUIRED_DURABLE_OBJECT_BINDINGS = ["PLACE_ROOM", "REGION_ROOM", "GLOBAL_ROOM"];
+const REQUIRED_RATE_LIMIT_BINDINGS = ["PUBLIC_API_RATE_LIMITER", "ADMIN_API_RATE_LIMITER", "HIGH_COST_API_RATE_LIMITER"];
 const DEFAULT_ENVS = ["staging", "production"];
 const DEPLOYMENT_URL_ENV_BY_ENV = {
   staging: {
@@ -58,6 +59,31 @@ function checkEnvironment(config, envName) {
   const actualEnvironment = envConfig.vars?.ENVIRONMENT;
   assert(actualEnvironment === (envName || "development"), `${envName}.vars.ENVIRONMENT`, `ENVIRONMENT must equal "${envName || "development"}".`);
   assertNoSecretVars(envConfig.vars ?? {}, envName);
+  if (envName === "staging" || envName === "production") {
+    assert(
+      envConfig.vars?.SILSIGAN_PHOTO_TURNSTILE_REQUIRED === "1",
+      `${envName}.vars.SILSIGAN_PHOTO_TURNSTILE_REQUIRED`,
+      "Photo upload Turnstile protection must fail closed in staging and production.",
+    );
+    const siteKey = envConfig.vars?.SILSIGAN_TURNSTILE_SITE_KEY;
+    assertNoPlaceholder(siteKey, `${envName}.vars.SILSIGAN_TURNSTILE_SITE_KEY`);
+    assert(
+      typeof siteKey === "string" && /^[a-zA-Z0-9_-]{3,32}$/.test(siteKey),
+      `${envName}.vars.SILSIGAN_TURNSTILE_SITE_KEY`,
+      "The public Turnstile site key must be deployment-shaped.",
+    );
+    assert(
+      envConfig.vars?.SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED === "1",
+      `${envName}.vars.SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED`,
+      "The global Workers and D1 cost guard must fail closed in staging and production.",
+    );
+    assertCostGuardNumber(envConfig.vars?.SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT, 100_000, `${envName}.vars.SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT`);
+    assertCostGuardNumber(envConfig.vars?.SILSIGAN_D1_DAILY_READ_LIMIT, 5_000_000, `${envName}.vars.SILSIGAN_D1_DAILY_READ_LIMIT`);
+    assertCostGuardNumber(envConfig.vars?.SILSIGAN_D1_DAILY_WRITE_LIMIT, 100_000, `${envName}.vars.SILSIGAN_D1_DAILY_WRITE_LIMIT`);
+    assertCostGuardPercent(envConfig.vars?.SILSIGAN_COST_GUARD_WARN_PERCENT, 60, `${envName}.vars.SILSIGAN_COST_GUARD_WARN_PERCENT`);
+    assertCostGuardPercent(envConfig.vars?.SILSIGAN_COST_GUARD_DEGRADE_PERCENT, 70, `${envName}.vars.SILSIGAN_COST_GUARD_DEGRADE_PERCENT`);
+    assertCostGuardPercent(envConfig.vars?.SILSIGAN_COST_GUARD_STOP_PERCENT, 80, `${envName}.vars.SILSIGAN_COST_GUARD_STOP_PERCENT`);
+  }
 
   const db = bindingBy(envConfig.d1_databases, "DB");
   assertRecord(db, `${envName}.d1.DB`, "D1 DB binding is missing.");
@@ -73,6 +99,18 @@ function checkEnvironment(config, envName) {
     return;
   }
   assertReadyIdentifier(cache.id, `${envName}.kv.CACHE.id`);
+
+  const costGuardState = bindingBy(envConfig.kv_namespaces, "COST_GUARD_STATE");
+  assertRecord(costGuardState, `${envName}.kv.COST_GUARD_STATE`, "Dedicated COST_GUARD_STATE KV binding is missing.");
+  if (isRecord(costGuardState)) {
+    assertReadyIdentifier(costGuardState.id, `${envName}.kv.COST_GUARD_STATE.id`);
+    assert(costGuardState.id !== cache.id, `${envName}.kv.COST_GUARD_STATE.separate`, "Cost guard state must not share the ranking CACHE namespace.");
+  }
+
+  for (const bindingName of REQUIRED_RATE_LIMIT_BINDINGS) {
+    const binding = rateLimitBy(envConfig.ratelimits, bindingName);
+    assertRecord(binding, `${envName}.ratelimit.${bindingName}`, `${bindingName} rate limit binding is missing.`);
+  }
 
   const photos = bindingBy(envConfig.r2_buckets, "PHOTOS");
   assertRecord(photos, `${envName}.r2.PHOTOS`, "PHOTOS R2 binding is missing.");
@@ -90,7 +128,7 @@ function checkEnvironment(config, envName) {
     assert(availableDurableBindings.has(bindingName), `${envName}.durable_objects.${bindingName}`, `${bindingName} Durable Object binding is missing.`);
   }
 
-  record(`${envName}.resource_bindings`, "pass", "Wrangler environment has required D1/KV/R2/Images/Durable Object binding entries.");
+  record(`${envName}.resource_bindings`, "pass", "Wrangler environment has required D1/KV/R2/Images/rate-limit/Durable Object binding entries.");
 }
 
 function checkDeploymentUrls(targetEnvs) {
@@ -128,6 +166,20 @@ function bindingBy(items, bindingName) {
   }
 
   return items.find((item) => item?.binding === bindingName) ?? null;
+}
+
+function rateLimitBy(items, bindingName) {
+  if (!Array.isArray(items)) return null;
+  return items.find((item) => item?.name === bindingName) ?? null;
+}
+
+function assertCostGuardNumber(value, ceiling, name) {
+  const parsed = Number(value);
+  assert(Number.isSafeInteger(parsed) && parsed > 0 && parsed <= ceiling, name, `${name} must be a positive integer no higher than ${ceiling}.`);
+}
+
+function assertCostGuardPercent(value, expected, name) {
+  assert(Number(value) === expected, name, `${name} must equal the compiled ${expected}% safety boundary.`);
 }
 
 function assertReadyIdentifier(value, name) {

@@ -241,7 +241,7 @@ export type ShareCard = {
   body: string;
   url: string;
   hashtags: string[];
-  variant: "avoid" | "good" | "parking_full" | "waiting" | "photo_spot";
+  variant: "neutral";
 };
 
 export function getCategorySafetyWarning(category: ReportCategory): string | null {
@@ -405,18 +405,6 @@ export function classifyHashtag(name: string): HashtagType {
   return "place";
 }
 
-export function judgementFromStatus(crowdLevel: CrowdLevel, parkingStatus: ParkingStatus): "가도 좋음" | "주의" | "지금은 비추" {
-  if (crowdLevel === "packed" || parkingStatus === "full") {
-    return "지금은 비추";
-  }
-
-  if (crowdLevel === "busy" || parkingStatus === "limited") {
-    return "주의";
-  }
-
-  return "가도 좋음";
-}
-
 export function recommendHashtags(input: {
   place: Pick<Place, "name" | "region">;
   crowdLevel: CrowdLevel;
@@ -453,8 +441,6 @@ export function uniqueHashtags(names: string[]): string[] {
 }
 
 export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" | "parkingStatus" | "lineStatus" | "weatherFeel" | "photoCount" | "createdAt" | "hashtagNames">, place: Pick<Place, "id" | "name">): ShareCard {
-  const judgement = judgementFromStatus(post.crowdLevel, post.parkingStatus);
-  const variant = shareCardVariant(post, judgement);
   const statusText = [
     crowdStatusLabel(post.crowdLevel),
     `주차 ${parkingStatusLabel(post.parkingStatus)}`,
@@ -462,23 +448,12 @@ export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" |
   ].join(" · ");
 
   return {
-    headline: `${place.name} ${judgement}`,
-    body: `${statusText}\n${minutesAgoLabel(post.createdAt)} 현장 인증 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
+    headline: `${place.name} 현장 제보`,
+    body: `현재 종합 판단은 장소 상세에서 확인하세요.\n${minutesAgoLabel(post.createdAt)} 사용자 제보\n제보 내용: ${statusText}\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
     url: `${defaultPublicSiteUrl}/place/${place.id}`,
     hashtags: post.hashtagNames.slice(0, 5),
-    variant,
+    variant: "neutral",
   };
-}
-
-function shareCardVariant(
-  post: Pick<StoredPost, "crowdLevel" | "parkingStatus" | "lineStatus" | "photoCount" | "weatherFeel">,
-  judgement: "가도 좋음" | "주의" | "지금은 비추",
-): ShareCard["variant"] {
-  if (post.parkingStatus === "full") return "parking_full";
-  if (post.lineStatus === "medium" || post.lineStatus === "long") return "waiting";
-  if (judgement === "지금은 비추") return "avoid";
-  if (post.photoCount > 0 && post.weatherFeel === "good") return "photo_spot";
-  return "good";
 }
 
 export function rankPostsForFeed<TPost extends Pick<StoredPost, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount" | "hiddenAt">>(postsToRank: TPost[]): TPost[] {

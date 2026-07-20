@@ -2,6 +2,7 @@
 
 import { Camera, Flag, Image as ImageIcon, Trash2 } from "lucide-react";
 import { type CSSProperties, useId, useRef, useState } from "react";
+import { PHOTO_RIGHTS_TERMS_VERSION } from "../../../packages/contracts/src/index.ts";
 import styles from "./SilsiganRedesign.module.css";
 import { EmptyState } from "./EmptyState";
 
@@ -20,12 +21,16 @@ export type PlacePhoto = {
 };
 
 export type PreparedPhotoUpload = {
-  base64: string;
+  blob: Blob;
   byteSize: number;
   height: number;
   mimeType: PhotoMimeType;
+  rightsAttested: true;
+  rightsPolicyVersion: typeof PHOTO_RIGHTS_TERMS_VERSION;
   width: number;
 };
+
+type ReencodedPhoto = Omit<PreparedPhotoUpload, "rightsAttested" | "rightsPolicyVersion">;
 
 export function PhotoUploader({
   onDeletePhoto,
@@ -34,6 +39,7 @@ export function PhotoUploader({
   onUpload,
   photos,
   safetyNotice,
+  uploadEnabled = true,
 }: {
   onDeletePhoto?: (photo: PlacePhoto) => Promise<void>;
   onPhotoClick?: (photo: PlacePhoto) => Promise<void>;
@@ -41,18 +47,82 @@ export function PhotoUploader({
   onUpload: (photo: PreparedPhotoUpload) => Promise<void>;
   photos: PlacePhoto[];
   safetyNotice?: string | null;
+  uploadEnabled?: boolean;
 }) {
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<"idle" | "processing" | "uploading" | "done" | "error">("idle");
-  const [message, setMessage] = useState("JPEG 또는 WebP 1장, 최대 3MB. iPhone HEIC는 사진 앱에서 JPEG로 저장한 뒤 올려주세요.");
-  const [clickingPhotoId, setClickingPhotoId] = useState<string | null>(null);
+  const [message, setMessage] = useState(
+    uploadEnabled
+      ? "JPEG 또는 WebP 1장, 최대 3MB. #실시간 앱은 iPhone HEIC를 JPEG로 자동 변환합니다. 웹에서는 JPEG로 저장한 뒤 올려주세요."
+      : "사진 업로드 서버에 연결되지 않았습니다. 확인한 상태는 사진 없이도 제보할 수 있습니다.",
+  );
+  const [viewingPhotoId, setViewingPhotoId] = useState<string | null>(null);
   const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const busy = status === "processing" || status === "uploading";
 
-  const selectPhoto = () => {
-    if (!busy) {
+  const uploadPhoto = async (file: File) => {
+    if (!rightsConfirmed) {
+      setStatus("error");
+      setMessage("직접 촬영했거나 게시 권한이 있는 사진인지 먼저 확인해 주세요.");
+      return;
+    }
+
+    setStatus("processing");
+    setMessage("사진을 안전한 크기로 다시 저장하는 중");
+
+    try {
+      const prepared = await preparePhotoForUpload(file);
+      setStatus("uploading");
+      setMessage("사진을 서버에 저장하는 중");
+      await onUpload({
+        ...prepared,
+        rightsAttested: true,
+        rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+      });
+      setStatus("done");
+      setMessage("사진이 등록됐습니다.");
+      setRightsConfirmed(false);
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "사진을 올리지 못했습니다.");
+    }
+  };
+
+  const selectPhoto = async () => {
+    if (busy || !uploadEnabled || !rightsConfirmed) {
+      return;
+    }
+
+    const nativeBridge = window.SilsiganNativeBridge;
+    if (!nativeBridge) {
       inputRef.current?.click();
+      return;
+    }
+
+    setStatus("processing");
+    setMessage("iPhone 사진을 JPEG로 안전하게 변환하는 중");
+    try {
+      const response = await nativeBridge.invoke({
+        requestId: nativePhotoRequestId(),
+        command: "selectPhoto",
+        payload: { purpose: "field_report", maxBytes: PHOTO_MAX_BYTES },
+      });
+      if (!response.ok) {
+        throw new Error(nativePhotoErrorMessage(response.error?.code));
+      }
+      const nativePhoto = parseNativePhoto(response.value);
+      const photoResponse = await fetch(nativePhoto.url);
+      if (!photoResponse.ok) {
+        throw new Error("선택한 사진을 읽지 못했습니다.");
+      }
+      const blob = await photoResponse.blob();
+      const file = new File([blob], "native-photo.jpg", { type: nativePhoto.mimeType });
+      await uploadPhoto(file);
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "사진을 불러오지 못했습니다.");
     }
   };
 
@@ -64,39 +134,26 @@ export function PhotoUploader({
       return;
     }
 
-    setStatus("processing");
-    setMessage("사진을 안전한 크기로 다시 저장하는 중");
-
-    try {
-      const prepared = await preparePhotoForUpload(file);
-      setStatus("uploading");
-      setMessage("사진을 서버에 저장하는 중");
-      await onUpload(prepared);
-      setStatus("done");
-      setMessage("사진이 등록됐습니다.");
-    } catch (error) {
-      setStatus("error");
-      setMessage(error instanceof Error ? error.message : "사진을 올리지 못했습니다.");
-    }
+    await uploadPhoto(file);
   };
 
-  const clickPhoto = async (photo: PlacePhoto) => {
-    if (!photo.workerPhotoId || !onPhotoClick || clickingPhotoId) {
+  const viewPhoto = async (photo: PlacePhoto) => {
+    if (!photo.workerPhotoId || !onPhotoClick || viewingPhotoId) {
       return;
     }
 
-    setClickingPhotoId(photo.id);
+    setViewingPhotoId(photo.id);
     setStatus("processing");
-    setMessage("사진 확인을 반영하는 중");
+    setMessage("사진 조회수를 반영하는 중");
     try {
       await onPhotoClick(photo);
       setStatus("done");
-      setMessage("사진 확인이 반영됐습니다.");
+      setMessage("사진 조회수가 반영됐습니다.");
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "사진 확인을 반영하지 못했습니다.");
+      setMessage(error instanceof Error ? error.message : "사진 조회수를 반영하지 못했습니다.");
     } finally {
-      setClickingPhotoId(null);
+      setViewingPhotoId(null);
     }
   };
 
@@ -128,16 +185,46 @@ export function PhotoUploader({
         className={styles.hiddenFileInput}
         type="file"
         accept="image/jpeg,image/webp"
+        disabled={!uploadEnabled || !rightsConfirmed}
         onChange={handleFileChange}
       />
-      <button className={styles.photoUploadButton} type="button" onClick={selectPhoto} disabled={busy} aria-describedby={`${inputId}-status`}>
+      <label className={styles.photoRightsConfirmation} aria-label="사진 게시 권한 확인">
+        <input
+          type="checkbox"
+          checked={rightsConfirmed}
+          disabled={busy || !uploadEnabled}
+          onChange={(event) => {
+            const checked = event.target.checked;
+            setRightsConfirmed(checked);
+            setMessage(
+              checked
+                ? "JPEG 또는 WebP 1장, 최대 3MB. 사진을 고르면 안전한 크기로 다시 저장합니다."
+                : "직접 촬영했거나 게시 권한이 있는 사진인지 먼저 확인해 주세요.",
+            );
+          }}
+        />
+        <span>제가 촬영했거나 이 사진을 게시할 권한이 있으며, 공개 전 안전 검수에 동의합니다.</span>
+      </label>
+      <button
+        className={styles.photoUploadButton}
+        type="button"
+        onClick={() => void selectPhoto()}
+        disabled={busy || !uploadEnabled || !rightsConfirmed}
+        aria-busy={busy}
+        aria-describedby={`${inputId}-status`}
+      >
         <Camera size={18} />
-        {busy ? "처리 중" : "사진 올리기"}
+        {!uploadEnabled ? "사진 업로드 불가" : busy ? "처리 중" : !rightsConfirmed ? "권한 확인 후 사진 올리기" : "사진 올리기"}
       </button>
-      <p id={`${inputId}-status`} className={`${styles.photoUploadStatus} ${status === "error" ? styles.photoUploadError : ""}`}>
+      <p id={`${inputId}-status`} className={`${styles.photoUploadStatus} ${status === "error" ? styles.photoUploadError : ""}`} aria-live="polite">
         {message}
       </p>
       {safetyNotice && <p className={styles.photoSafetyNotice}>{safetyNotice}</p>}
+      {photos.some((photo) => photo.workerPhotoId && onPhotoClick) && (
+        <p className={styles.photoSafetyNotice}>
+          사진 보기는 조회수만 기록하며 현재 상태 확인으로 처리되지 않습니다. 상태 확인은 제보 카드에서 할 수 있습니다.
+        </p>
+      )}
       {photos.length === 0 ? (
         <EmptyState title="새 사진을 기다리고 있어요" body="최근 사진이 올라오면 출발 전 분위기를 빠르게 확인할 수 있습니다." />
       ) : (
@@ -148,7 +235,12 @@ export function PhotoUploader({
             const tileContents = (
               <>
                 {previewStyle ? (
-                  <span className={styles.photoPreviewImage} style={previewStyle} aria-hidden />
+                  <span
+                    className={styles.photoPreviewImage}
+                    style={previewStyle}
+                    role="img"
+                    aria-label={photoAltText(photo)}
+                  />
                 ) : (
                   <ImageIcon size={18} aria-hidden />
                 )}
@@ -163,9 +255,9 @@ export function PhotoUploader({
                   <button
                     className={`${tileClassName} ${styles.photoTileButton}`}
                     type="button"
-                    onClick={() => void clickPhoto(photo)}
-                    disabled={clickingPhotoId === photo.id}
-                    aria-label={`${photo.label} 사진 확인`}
+                    onClick={() => void viewPhoto(photo)}
+                    disabled={viewingPhotoId === photo.id}
+                    aria-label={photoViewLabel(photo)}
                   >
                     {tileContents}
                   </button>
@@ -203,7 +295,50 @@ export function PhotoUploader({
   );
 }
 
-async function preparePhotoForUpload(file: File): Promise<PreparedPhotoUpload> {
+function nativePhotoRequestId(): string {
+  return `native_photo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function parseNativePhoto(value: unknown): { mimeType: "image/jpeg"; url: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("변환된 사진 응답이 올바르지 않습니다.");
+  }
+  const photo = value as Record<string, unknown>;
+  if (typeof photo.url !== "string" || !isAllowedNativePhotoUrl(photo.url) || photo.format !== "image/jpeg") {
+    throw new Error("iPhone 사진을 JPEG로 변환하지 못했습니다.");
+  }
+  return { mimeType: "image/jpeg", url: photo.url };
+}
+
+function isAllowedNativePhotoUrl(value: string): boolean {
+  if (value.length === 0 || value.length > 2_048) return false;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return false;
+    if (url.protocol === "blob:") return true;
+    if (url.protocol === "capacitor:") return url.hostname === "localhost";
+    return (url.protocol === "http:" || url.protocol === "https:") && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function nativePhotoErrorMessage(code: string | undefined): string {
+  if (code === "PHOTO_TOO_LARGE") return "변환한 사진이 3MB를 넘습니다. 다른 사진을 선택해 주세요.";
+  if (code === "PERMISSION_DENIED") return "사진 접근 권한이 필요합니다. 설정에서 사진 권한을 허용해 주세요.";
+  if (code === "PHOTO_FORMAT_UNSUPPORTED") return "iPhone 사진을 JPEG로 변환하지 못했습니다.";
+  return "사진을 불러오지 못했습니다. 다시 시도해 주세요.";
+}
+
+function photoAltText(photo: PlacePhoto): string {
+  return `${photo.label} 현장 사진. ${photo.meta}`;
+}
+
+function photoViewLabel(photo: PlacePhoto): string {
+  return `${photo.label} 사진 보기. ${photo.meta}`;
+}
+
+async function preparePhotoForUpload(file: File): Promise<ReencodedPhoto> {
   const sourceMimeType = photoMimeType(file.type);
   if (file.size > PHOTO_MAX_BYTES) {
     throw new Error("사진은 3MB 이하만 올릴 수 있습니다.");
@@ -227,7 +362,7 @@ async function preparePhotoForUpload(file: File): Promise<PreparedPhotoUpload> {
   }
 
   return {
-    base64: await blobToBase64(blob),
+    blob,
     byteSize: blob.size,
     height,
     mimeType,
@@ -286,18 +421,6 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: PhotoMimeType): Promi
       mimeType,
       0.86,
     );
-  });
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const value = typeof reader.result === "string" ? reader.result : "";
-      resolve(value.includes(",") ? value.slice(value.indexOf(",") + 1) : value);
-    };
-    reader.onerror = () => reject(new Error("사진 파일을 인코딩하지 못했습니다."));
-    reader.readAsDataURL(blob);
   });
 }
 

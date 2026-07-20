@@ -20,6 +20,9 @@
 | `SILSIGAN_STAGING_API_BASE_URL` | 배포 gate/smoke 전용 | staging Worker API 공개 URL | HTTPS, localhost 금지, production과 분리 |
 | `SILSIGAN_PRODUCTION_PAGES_URL` | 배포 gate 전용 | production Pages 공개 URL | HTTPS, staging과 분리 |
 | `SILSIGAN_PRODUCTION_API_BASE_URL` | 배포 gate 전용 | production Worker API 공개 URL | HTTPS, staging과 분리 |
+| `SILSIGAN_STAGING_API_ALLOWED_ORIGINS` | 배포 gate 전용 | staging Worker에 주입할 exact browser origin allowlist | `SILSIGAN_STAGING_PAGES_URL` origin 포함 |
+| `SILSIGAN_PRODUCTION_API_ALLOWED_ORIGINS` | 배포 gate 전용 | production Worker에 주입할 exact browser origin allowlist | `SILSIGAN_PRODUCTION_PAGES_URL` origin 포함 |
+| `SILSIGAN_API_ALLOWED_ORIGINS` | Worker environment var | 해당 Worker를 호출할 수 있는 Pages origin의 쉼표 구분 exact allowlist | staging/production별 설정, HTTPS origin만, `*` 금지 |
 | `CLOUDFLARE_D1_DATABASE_ID` | 서버/배포 전용 | D1 DB 식별자 | 브라우저 번들 금지 |
 | `CLOUDFLARE_R2_BUCKET` | 서버/배포 전용 | R2 bucket 이름 | staging/production 분리 |
 | `IMAGES` | Worker Images binding | R2 저장 전 서버 픽셀 재인코딩 | staging/production에서 binding smoke 필수 |
@@ -39,6 +42,7 @@ Cloudflare API 토큰과 관리자 토큰은 저장소, 로그, 브라우저 번
 - `workers/api/wrangler.jsonc`는 development, staging, production environment를 분리한다. Wrangler environment의 `vars`와 binding은 상속되지 않으므로 D1/R2/Images/KV/Durable Object binding을 environment마다 명시한다.
 - 기본 development Worker dry-run은 local config sanity check이다. root config의 D1/KV ID는 development 리소스를 만들기 전까지 placeholder로 남기며, release evidence는 concrete binding이 들어간 staging/production dry-run만 사용한다.
 - 모든 쓰기 API는 Worker 입력 검증, rate limit, 익명 식별자 소유권 검사를 거친다.
+- staging/production 브라우저 preflight와 쓰기 API는 `SILSIGAN_API_ALLOWED_ORIGINS`에 정확히 일치하는 origin만 허용한다. 각 environment에는 해당 Pages origin을 별도로 설정하고 `*`, path, query가 있는 값은 사용하지 않는다.
 - 관리자 API는 deny-by-default로 두고 role별 토큰과 감사 로그를 요구한다.
 - Next 관리자 화면은 `/api/admin/moderation/reports`, `/api/admin/places/coordinate-status`, `/api/admin/users/restrict`, `/api/admin/users/unrestrict` server route를 통해서만 Worker 운영 API를 호출하고, Worker 운영 토큰은 브라우저로 내려보내지 않는다.
 - 운영자 숨김/복구는 `moderator` 이상, 삭제는 `admin` 이상을 요구한다.
@@ -48,7 +52,7 @@ Cloudflare API 토큰과 관리자 토큰은 저장소, 로그, 브라우저 번
 ### 3.2 D1
 
 - 스키마 기준 파일은 `workers/api/src/db/schema.sql`이다.
-- 마이그레이션 기준 파일은 `workers/api/migrations/0001_initial.sql`이다.
+- 마이그레이션 기준 파일은 `workers/api/migrations/0001_initial.sql`이며, V2 staging 적용 순서는 `0004_v2_foundation.sql` → `0005_v2_signals.sql` → `0006_trust_safety_identity.sql` → `0007_enforce_live_signal_expiry.sql` → `0008_persistent_preferences.sql` → `0009_analytics_events.sql` → `0010_photo_cleanup_jobs.sql` → `0011_location_accuracy_buckets.sql` → `0012_field_verification_method.sql` → `0013_field_report_moderation.sql` → `0014_field_report_publications.sql`이다.
 - seed 기준 파일은 `workers/api/seeds/001_core_seed.sql`이다.
 - 운영 전 두 파일이 동일한 컬럼/인덱스 정책을 유지하는지 확인한다.
 - seed는 `ON CONFLICT` 기반이라 재실행해도 장소/랭킹 행이 중복되지 않는다. 현재 로컬 검증은 `pnpm test`의 `D1 core seed SQL is idempotent` 케이스가 담당한다.
@@ -68,17 +72,28 @@ Cloudflare API 토큰과 관리자 토큰은 저장소, 로그, 브라우저 번
 ### 3.4 R2 사진 저장소
 
 - 업로드 경로는 UUID 기반으로 생성하고 원본 파일명을 저장하지 않는다.
-- 브라우저 `PhotoUploader`는 JPEG/WebP 파일을 1280px 이하 캔버스 이미지로 재인코딩한 뒤 `imageBase64`와 실제 byte size/dimension을 Worker에 보낸다.
-- R2 binding이 있는 Worker는 `/api/photos/complete`에서 `imageBase64`를 받아 JPEG APP1/COM/metadata segment 또는 WebP EXIF/XMP chunk를 제거한 뒤, `IMAGES` binding이 있으면 서버 픽셀 재인코딩 결과만 R2에 저장한다.
+- 브라우저 `PhotoUploader`는 JPEG/WebP 파일을 1280px 이하 캔버스 이미지로 재인코딩한 뒤 `/api/photos/upload-ticket`을 발급받고, 실제 바이너리를 multipart `/api/photos/upload`로 Worker에 보낸다.
+- R2 binding이 있는 Worker는 multipart 파일에서 JPEG APP1/COM/metadata segment 또는 WebP EXIF/XMP chunk를 제거한 뒤, `IMAGES` binding이 있으면 서버 픽셀 재인코딩 결과만 R2에 저장한다.
+- `/api/photos/upload-url`과 `/api/photos/complete`는 이전 클라이언트 호환용 legacy 경로로만 유지한다. 새 클라이언트와 staging smoke는 binary 경로를 사용하고, 운영 전 legacy 요청 0건을 확인한 뒤 폐기 여부를 별도로 승인한다.
 - `workers/api/wrangler.jsonc`는 `PHOTOS` R2 binding과 `IMAGES` Images binding을 함께 선언한다.
+- staging/production은 `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET`, `PHOTO_UPLOAD_RATE_LIMITER`, `PHOTO_READ_RATE_LIMITER`, D1 `0016` guard를 모두 요구한다. bucket은 private으로 유지하고 파일은 Worker proxy로만 제공한다.
+- compiled 4 GiB storage, 16,000 writes, 5,000 Images transformations cap의 80%에서 자동 중단되며 `GET/PATCH /api/admin/photo-cost-guard`와 `COST_ALERT_WEBHOOK_URL`을 운영 중단/알림 경로로 사용한다. `0020_photo_transform_budget.sql`이 없으면 Images 호출 전에 실패 폐쇄한다.
 - Worker는 R2 저장 전 정화/재인코딩된 최종 이미지 바이트의 SHA-256 fingerprint를 계산하고, 삭제되지 않은 동일 fingerprint 사진이 D1에 있으면 `409 PHOTO_DUPLICATE`로 거부한다. fingerprint는 D1 중복 방지용이며 public API와 R2 metadata에 노출하지 않는다.
 - 공개 URL을 쓰더라도 DB의 `status`, `deleted_at`, `report_count` 정책과 함께 노출을 제어한다.
 - 운영자 사진 삭제는 R2 object key를 삭제한 뒤 D1에서 `deleted_at`과 `hidden_at`을 기록한다.
 - 사진 중복/도용 기준은 `pnpm test`의 `D1 photo complete rejects duplicate sanitized image content before a second R2 write`로 검증한다.
 - GPS EXIF 샘플 사진의 metadata 제거는 `pnpm test`의 `photo complete strips GPS EXIF sample before writing to R2`로 검증한다.
 - 서버 픽셀 재인코딩은 `pnpm test`의 `photo complete reencodes pixels with Cloudflare Images binding before writing to R2`로 검증한다.
-- 브라우저 업로드 smoke는 Playwright 모바일 viewport에서 `PhotoUploader` 파일 선택, Worker `/api/photos/upload-url` 201, `/api/photos/complete` 201, 상세 시트 `사진4장` 표시로 검증한다.
-- Cloudflare staging에서는 실제 `IMAGES` binding으로 `/api/photos/complete` smoke를 한 번 더 확인한 뒤 대량 사용자 사진 수집을 연다.
+- 브라우저 업로드 smoke는 모바일 viewport에서 `PhotoUploader` 파일 선택, Worker `/api/photos/upload-ticket` 201, multipart `/api/photos/upload` 201, 상세 시트 사진 표시로 검증한다.
+- Cloudflare staging에서는 실제 `R2`와 `IMAGES` binding으로 binary upload-ticket/upload smoke를 확인한 뒤 대량 사용자 사진 수집을 연다. legacy 경로는 별도 접근 로그로 폐기 조건을 확인한다.
+
+### 3.4a Workers/D1 전역 비용 보호
+
+- `0026_global_api_cost_guard.sql`은 보수적 route weight와 Cloudflare 관측치를 함께 저장하고 60% 1회 경고, 70% 비필수 기능 제한, 80% 중단을 적용한다.
+- 전국 핵심 조회는 제한 상태에서 D1 쓰기가 없는 snapshot으로 전환한다. 쓰기 예약은 인증 뒤에만 수행해 무자격 공격자가 D1 admission 원장을 소진하지 못하게 한다.
+- staging/production은 ranking `CACHE`와 분리된 `COST_GUARD_STATE` KV, `ADMIN_API_RATE_LIMITER`, `HIGH_COST_API_RATE_LIMITER`, `SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED=1`을 요구한다.
+- `GET/PATCH /api/admin/api-cost-guard`와 `POST /api/admin/api-cost-guard/reconciliations`으로 즉시 중단·관측치 기록·재개를 수행한다. 재개는 15분 이내 Cloudflare 대조와 모든 지표 70% 미만을 요구한다.
+- Worker에 도달한 요청은 코드가 거부하기 전에 이미 Workers 사용량에 집계되므로, WAF/rate-limit 규칙과 정적 asset의 Worker 우회 라우팅을 별도로 배포·검증한다.
 
 ### 3.5 Durable Objects
 
@@ -92,11 +107,11 @@ Cloudflare API 토큰과 관리자 토큰은 저장소, 로그, 브라우저 번
 3. `pnpm cf:typegen`으로 `.env.example` 기반 Cloudflare env type을 생성해 로컬 개인 `.env.local` 키 유입을 피한다.
 4. `pnpm cf:build`로 OpenNext Cloudflare frontend bundle을 생성하고 `.open-next/worker.js`, `.open-next/assets`를 확인한다.
 5. `pnpm cf:web:dry-run`, `pnpm cf:web:dry-run:staging`, `pnpm cf:web:dry-run:production`으로 frontend Worker/Assets bundle을 검증한다.
-6. D1 staging/production DB는 생성 및 `workers/api/migrations/0001_initial.sql`, `workers/api/seeds/001_core_seed.sql` 적용이 완료된 상태에서 시작한다. 재검증은 원격 D1 count query로 `verified_places=5`, `rankings=6`을 확인한다.
-7. Cloudflare Dashboard에서 R2를 활성화한 뒤 `silsigan-photos-staging`, `silsigan-photos-production` bucket을 만들고 CORS/공개 URL/캐시 무효화 정책을 확인한다.
-8. Worker secret을 staging과 production에 분리 등록한다. production은 role별 JSON 형태의 `ADMIN_TOKENS`를 우선 사용하고, 신고 알림은 `MODERATION_ALERT_WEBHOOK_URL`과 선택값 `MODERATION_ALERT_WEBHOOK_TOKEN`을 별도 secret으로 등록한다.
-9. staging Worker를 배포하고 `SILSIGAN_STAGING_API_BASE_URL`을 실제 HTTPS 배포 URL로 export한다.
-10. Cloudflare Pages staging frontend를 배포하고 `SILSIGAN_STAGING_PAGES_URL`을 실제 HTTPS 배포 URL로 export한 뒤 `pnpm cf:preflight`를 통과시킨다.
+6. D1 staging DB의 Time Travel 복구 북마크를 먼저 기록하고 `0001`-`0003` legacy chain과 `0004`-`0017` V2 chain을 순서대로 적용한다. 각 단계의 schema/row 증거를 저장하고, 재검증은 원격 D1 count query와 expiry/accuracy/preference/analytics/photo-cleanup/photo-storage/photo-abuse/photo-read/upload-read-control/moderation/publication evidence로 확인한다. production은 staging sign-off 뒤 별도 승인으로만 적용한다.
+7. 계정 소유자가 Cloudflare R2 결제/약관 활성화를 완료한 뒤 private `silsigan-photos-staging`만 만들고 Worker proxy를 검증한다. `silsigan-photos-production` 생성은 staging sign-off와 별도 production 승인 뒤에만 진행한다.
+8. Worker secret을 staging과 production에 분리 등록한다. `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET`은 32자 이상 랜덤값, `COST_ALERT_WEBHOOK_URL`/선택 token은 비용 중단 알림, `MODERATION_ALERT_WEBHOOK_URL`/선택 token은 신고 알림에 사용한다. production은 role별 JSON `ADMIN_TOKENS`를 우선 사용한다.
+9. staging Worker를 배포하고 `SILSIGAN_STAGING_API_BASE_URL`을 실제 HTTPS 배포 URL로 export한다. `SILSIGAN_STAGING_API_ALLOWED_ORIGINS`에는 staging Pages의 exact origin을 기록하고, 같은 값을 staging Worker의 `SILSIGAN_API_ALLOWED_ORIGINS`에 주입한다.
+10. Cloudflare Pages staging frontend를 배포하고 `SILSIGAN_STAGING_PAGES_URL`을 실제 HTTPS 배포 URL로 export한 뒤 `pnpm cf:preflight`를 통과시킨다. production도 별도 `SILSIGAN_PRODUCTION_API_ALLOWED_ORIGINS` 값을 production Worker에만 주입한다.
 11. Web preview에서 Worker staging API를 연결해 장소/랭킹/댓글/사진/좋아요/신고/admin action smoke를 확인한다.
 12. Production 배포 전 `docs/security-gate.md`의 residual risk를 다시 판정한다.
 
@@ -117,8 +132,10 @@ pnpm cf:dry-run:staging
 pnpm cf:dry-run:production
 export SILSIGAN_STAGING_PAGES_URL=https://<staging-pages>
 export SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker>
+export SILSIGAN_STAGING_API_ALLOWED_ORIGINS=https://<staging-pages>
 export SILSIGAN_PRODUCTION_PAGES_URL=https://<production-pages>
 export SILSIGAN_PRODUCTION_API_BASE_URL=https://<production-worker>
+export SILSIGAN_PRODUCTION_API_ALLOWED_ORIGINS=https://<production-pages>
 pnpm cf:preflight
 SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> pnpm smoke:staging
 SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker> SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging
@@ -160,3 +177,5 @@ wrangler d1 execute DB --env production --remote --command "SELECT (SELECT COUNT
 - D1/R2 직접 접근 또는 타인 데이터 접근 확인.
 - Cloudflare API 토큰 또는 관리자 토큰 브라우저 노출 확인.
 - 신고/삭제 큐 장애로 민감 사진을 숨길 수 없는 상태.
+
+`pnpm cf:rollback:drill -- --env=staging --kind=web`은 계획만 출력하고, `--check`도 `wrangler deployments list --json`만 실행한다. 하네스는 실제 `rollback`을 실행하지 않으며 `--yes`를 출력하지 않는다. Worker 롤백은 D1, R2, KV, Durable Objects, migration, secret을 되돌리지 않으므로 실제 훈련 전 각각의 호환성을 별도로 확인한다. 승인·롤백·검증·현재 버전 복구 절차는 `docs/cloudflare-worker-rollback-runbook.md`를 따른다.

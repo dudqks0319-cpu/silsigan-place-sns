@@ -25,6 +25,9 @@ import {
   createNationalCctvAdapter,
   type NationalCctvResponse,
 } from "../workers/api/src/public-data/national-cctv-adapter.ts";
+import {
+  createSeoulRealtimeAdapter,
+} from "../workers/api/src/public-data/seoul-realtime-adapter.ts";
 
 class MemoryPublicDataCache implements PublicDataCache {
   readonly entries = new Map<string, string>();
@@ -287,6 +290,65 @@ test("national CCTV keeps metadata and blocks playback without leaking stream fi
   assert.equal(camera ? adapter.getObservedAt(camera) : undefined, null);
 });
 
+test("Seoul realtime adapter normalizes estimated crowd data with bounded expiry", async () => {
+  const serviceKey = "seoul-fixture-key-never-cache";
+  const now = new Date("2026-07-14T04:05:00.000Z");
+  const adapter = createSeoulRealtimeAdapter({
+    serviceKey,
+    ttlSeconds: 600,
+    now: () => now,
+    endpointUrl: "https://seoul-fixture.example:8443",
+  });
+  let requestedUrl = "";
+  const gateway = new PublicDataGateway({
+    now: () => now,
+    fetcher: async (input) => {
+      requestedUrl = String(input);
+      return Response.json(seoulRealtimeFixture());
+    },
+  });
+
+  const result = await gateway.execute(adapter, {
+    placeId: "seoul-yeouido",
+    areaName: "여의도 한강공원",
+    areaCode: "POI001",
+  }, { freshTtlSeconds: 300, staleTtlSeconds: 600 });
+  const signal = result.items[0];
+
+  assert.equal(signal?.dimension, "crowd");
+  assert.equal(signal?.valueCode, "busy");
+  assert.equal(signal?.valueNumber, 1200);
+  assert.equal(signal?.unit, "명");
+  assert.equal(signal?.sourceType, "official_live");
+  assert.equal(signal?.isEstimated, true);
+  assert.equal(signal?.observedAt, "2026-07-14T04:00:00.000Z");
+  assert.equal(signal?.fetchedAt, "2026-07-14T04:05:00.000Z");
+  assert.equal(signal?.expiresAt, "2026-07-14T04:10:00.000Z");
+  assert.equal(signal?.areaCode, "POI001");
+  assert.equal(new URL(requestedUrl).pathname.includes(encodeURIComponent(serviceKey)), true);
+  assert.equal(requestedUrl.includes("seoul-fixture-key-never-cache"), true);
+  assert.equal(result.attribution, "서울특별시");
+});
+
+test("Seoul realtime adapter rejects unknown congestion labels and malformed response data", async () => {
+  const adapter = createSeoulRealtimeAdapter({
+    serviceKey: "seoul-fixture-key",
+    ttlSeconds: 600,
+    endpointUrl: "https://seoul-fixture.example",
+  });
+  const gateway = new PublicDataGateway({
+    fetcher: async () => Response.json(seoulRealtimeFixture("알 수 없음")),
+  });
+
+  await assert.rejects(
+    gateway.execute(adapter, {
+      placeId: "seoul-yeouido",
+      areaName: "여의도 한강공원",
+    }, { freshTtlSeconds: 60, staleTtlSeconds: 600, maxAttempts: 1 }),
+    (error: unknown) => error instanceof PublicDataGatewayError && error.code === "SOURCE_INVALID_RESPONSE",
+  );
+});
+
 test("new adapters reject malformed provider shapes through the redacted gateway error", async () => {
   const adapter = createNationalTrafficAdapter({ serviceKey: "fixture-key", ttlSeconds: 600 });
   const gateway = new PublicDataGateway({
@@ -439,6 +501,23 @@ function cctvFixture(): NationalCctvResponse {
         coordx: "129.1188",
         coordy: "35.1533",
         cctvurl: "https://provider-secret.example/live/camera.m3u8",
+      }],
+    },
+  };
+}
+
+function seoulRealtimeFixture(congestionLevel = "약간 붐빔"): Record<string, unknown> {
+  return {
+    "SeoulRtd.citydata": {
+      RESULT: { CODE: "INFO-000", MESSAGE: "정상 처리되었습니다." },
+      AREA_NM: "여의도 한강공원",
+      AREA_CD: "POI001",
+      LIVE_PPLTN_STTS: [{
+        AREA_CONGEST_LVL: congestionLevel,
+        AREA_CONGEST_MSG: "실시간 인구 추정값입니다.",
+        AREA_PPLTN_MIN: "1000",
+        AREA_PPLTN_MAX: "1200",
+        PPLTN_TIME: "2026-07-14 13:00",
       }],
     },
   };

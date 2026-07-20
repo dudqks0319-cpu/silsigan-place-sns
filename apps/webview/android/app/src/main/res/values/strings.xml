@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">#실시간</string>
+    <string name="title_activity_main">#실시간</string>
+    <string name="package_name">kr.silsigan.mobile</string>
+    <string name="custom_url_scheme">kr.silsigan.mobile</string>
+</resources>

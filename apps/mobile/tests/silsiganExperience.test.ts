@@ -9,8 +9,9 @@ import {
 } from "../src/silsiganExperience.ts";
 
 test("service scope is nationwide instead of a regional beta", () => {
-  assert.equal(serviceScope.label, "전국 실시간");
-  assert.equal(serviceScope.shortCopy.includes("울산"), false);
+  assert.equal(serviceScope.label, "전국 검색 베타");
+  assert.match(serviceScope.shortCopy, /전국에서 장소를 검색하고 제보/);
+  assert.match(serviceScope.shortCopy, /최신 제보가 있는 장소만 현재 상태/);
   assert.equal(serviceScope.regions.length >= 8, true);
 });
 

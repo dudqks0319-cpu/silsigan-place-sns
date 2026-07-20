@@ -8,9 +8,65 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
-  "vars": {
-    "ENVIRONMENT": "development"
+  "triggers": {
+    "crons": []
   },
+  "vars": {
+    "ENVIRONMENT": "development",
+    "SILSIGAN_ANON_SESSION_REQUIRED": "0",
+    "SILSIGAN_ANON_SESSION_DAILY_LIMIT": "5000",
+    "SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED": "1",
+    "SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED": "0",
+    "SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT": "100000",
+    "SILSIGAN_D1_DAILY_READ_LIMIT": "5000000",
+    "SILSIGAN_D1_DAILY_WRITE_LIMIT": "100000",
+    "SILSIGAN_COST_GUARD_WARN_PERCENT": "60",
+    "SILSIGAN_COST_GUARD_DEGRADE_PERCENT": "70",
+    "SILSIGAN_COST_GUARD_STOP_PERCENT": "80",
+    "SILSIGAN_SOURCE_INGESTION_SCHEDULED": "0",
+    "SILSIGAN_PHOTO_TURNSTILE_REQUIRED": "0",
+    "SILSIGAN_PHOTO_STORAGE_MAX_BYTES": "4294967296",
+    "SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT": "16000",
+    "SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT": "5000",
+    "SILSIGAN_PHOTO_MONTHLY_READ_LIMIT": "1000000",
+    "SILSIGAN_PHOTO_DAILY_READ_LIMIT": "20000",
+    "SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT": "1000",
+    "SILSIGAN_PHOTO_DAILY_UPLOAD_LIMIT": "20",
+    "SILSIGAN_PHOTO_DAILY_BYTES_LIMIT": "62914560",
+    "SILSIGAN_PHOTO_TICKET_TTL_SECONDS": "300"
+  },
+  "ratelimits": [
+    {
+      "name": "PUBLIC_API_RATE_LIMITER",
+      "namespace_id": "10001",
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "ANONYMOUS_SESSION_RATE_LIMITER",
+      "namespace_id": "13001",
+      "simple": { "limit": 3, "period": 60 }
+    },
+    {
+      "name": "ADMIN_API_RATE_LIMITER",
+      "namespace_id": "14001",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "HIGH_COST_API_RATE_LIMITER",
+      "namespace_id": "15001",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "PHOTO_UPLOAD_RATE_LIMITER",
+      "namespace_id": "11001",
+      "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      "name": "PHOTO_READ_RATE_LIMITER",
+      "namespace_id": "12001",
+      "simple": { "limit": 120, "period": 60 }
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -53,15 +109,72 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_classes": ["PlaceRoom", "RegionRoom", "GlobalRoom"]
+      "new_sqlite_classes": ["PlaceRoom", "RegionRoom", "GlobalRoom"]
     }
   ],
   "env": {
     "staging": {
       "name": "silsigan-api-staging",
-      "vars": {
-        "ENVIRONMENT": "staging"
+      "triggers": {
+        "crons": ["*/5 * * * *"]
       },
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "SILSIGAN_ANON_SESSION_REQUIRED": "1",
+        "SILSIGAN_ANON_SESSION_DAILY_LIMIT": "5000",
+        "SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED": "1",
+        "SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED": "1",
+        "SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT": "100000",
+        "SILSIGAN_D1_DAILY_READ_LIMIT": "5000000",
+        "SILSIGAN_D1_DAILY_WRITE_LIMIT": "100000",
+        "SILSIGAN_COST_GUARD_WARN_PERCENT": "60",
+        "SILSIGAN_COST_GUARD_DEGRADE_PERCENT": "70",
+        "SILSIGAN_COST_GUARD_STOP_PERCENT": "80",
+        "SILSIGAN_SOURCE_INGESTION_SCHEDULED": "1",
+        "SILSIGAN_API_ALLOWED_ORIGINS": "https://silsigan-web-staging.dudqks0319.workers.dev",
+        "SILSIGAN_PHOTO_TURNSTILE_REQUIRED": "1",
+        "SILSIGAN_PHOTO_STORAGE_MAX_BYTES": "4294967296",
+        "SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT": "16000",
+        "SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT": "5000",
+        "SILSIGAN_PHOTO_MONTHLY_READ_LIMIT": "1000000",
+        "SILSIGAN_PHOTO_DAILY_READ_LIMIT": "20000",
+        "SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT": "1000",
+        "SILSIGAN_PHOTO_DAILY_UPLOAD_LIMIT": "20",
+        "SILSIGAN_PHOTO_DAILY_BYTES_LIMIT": "62914560",
+        "SILSIGAN_PHOTO_TICKET_TTL_SECONDS": "300"
+      },
+      "ratelimits": [
+        {
+          "name": "PUBLIC_API_RATE_LIMITER",
+          "namespace_id": "10002",
+          "simple": { "limit": 120, "period": 60 }
+        },
+        {
+          "name": "ANONYMOUS_SESSION_RATE_LIMITER",
+          "namespace_id": "13002",
+          "simple": { "limit": 3, "period": 60 }
+        },
+        {
+          "name": "ADMIN_API_RATE_LIMITER",
+          "namespace_id": "14002",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "HIGH_COST_API_RATE_LIMITER",
+          "namespace_id": "15002",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "PHOTO_UPLOAD_RATE_LIMITER",
+          "namespace_id": "11002",
+          "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "PHOTO_READ_RATE_LIMITER",
+          "namespace_id": "12002",
+          "simple": { "limit": 120, "period": 60 }
+        }
+      ],
       "d1_databases": [
         {
           "binding": "DB",
@@ -104,9 +217,66 @@
     },
     "production": {
       "name": "silsigan-api-production",
-      "vars": {
-        "ENVIRONMENT": "production"
+      "triggers": {
+        "crons": ["*/5 * * * *"]
       },
+      "vars": {
+        "ENVIRONMENT": "production",
+        "SILSIGAN_ANON_SESSION_REQUIRED": "1",
+        "SILSIGAN_ANON_SESSION_DAILY_LIMIT": "5000",
+        "SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED": "1",
+        "SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED": "1",
+        "SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT": "100000",
+        "SILSIGAN_D1_DAILY_READ_LIMIT": "5000000",
+        "SILSIGAN_D1_DAILY_WRITE_LIMIT": "100000",
+        "SILSIGAN_COST_GUARD_WARN_PERCENT": "60",
+        "SILSIGAN_COST_GUARD_DEGRADE_PERCENT": "70",
+        "SILSIGAN_COST_GUARD_STOP_PERCENT": "80",
+        "SILSIGAN_SOURCE_INGESTION_SCHEDULED": "0",
+        "SILSIGAN_API_ALLOWED_ORIGINS": "https://silsigan-web-production.dudqks0319.workers.dev",
+        "SILSIGAN_PHOTO_TURNSTILE_REQUIRED": "1",
+        "SILSIGAN_PHOTO_STORAGE_MAX_BYTES": "4294967296",
+        "SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT": "16000",
+        "SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT": "5000",
+        "SILSIGAN_PHOTO_MONTHLY_READ_LIMIT": "1000000",
+        "SILSIGAN_PHOTO_DAILY_READ_LIMIT": "20000",
+        "SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT": "1000",
+        "SILSIGAN_PHOTO_DAILY_UPLOAD_LIMIT": "20",
+        "SILSIGAN_PHOTO_DAILY_BYTES_LIMIT": "62914560",
+        "SILSIGAN_PHOTO_TICKET_TTL_SECONDS": "300"
+      },
+      "ratelimits": [
+        {
+          "name": "PUBLIC_API_RATE_LIMITER",
+          "namespace_id": "10003",
+          "simple": { "limit": 120, "period": 60 }
+        },
+        {
+          "name": "ANONYMOUS_SESSION_RATE_LIMITER",
+          "namespace_id": "13003",
+          "simple": { "limit": 3, "period": 60 }
+        },
+        {
+          "name": "ADMIN_API_RATE_LIMITER",
+          "namespace_id": "14003",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "HIGH_COST_API_RATE_LIMITER",
+          "namespace_id": "15003",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "PHOTO_UPLOAD_RATE_LIMITER",
+          "namespace_id": "11003",
+          "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "PHOTO_READ_RATE_LIMITER",
+          "namespace_id": "12003",
+          "simple": { "limit": 120, "period": 60 }
+        }
+      ],
       "d1_databases": [
         {
           "binding": "DB",

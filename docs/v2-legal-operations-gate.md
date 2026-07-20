@@ -1,6 +1,6 @@
 # #실시간 V2 법무 및 운영 게이트
 
-Updated: 2026-07-10
+Updated: 2026-07-20
 State: `blocked-external`
 
 이 문서는 법률 자문이나 승인을 대신하지 않는다. 로컬 구현이 끝난 항목과 실제 담당자의 검토·서명·콘솔 증거가 필요한 항목을 분리하고, 증거가 없는 기능은 활성화하지 않는 기준을 고정한다.
@@ -12,8 +12,8 @@ State: `blocked-external`
 | 개인정보·위치정보·계정삭제 | legal-safety | external TestFlight review 전 | 담당자 이름과 서명일 미기록 |
 | UGC 신고·차단·삭제·온콜 | trust-safety lead | staging mutation smoke 전 | runbook 준비, 실제 담당자·webhook secret 미설정 |
 | 공공데이터 약관·표시 문구 | data-operations + legal-safety | source별 enable 전 | 코드 gate 준비, source별 외부 승인 미완료 |
-| NAVER Web Maps origin·key 제한 | release-operator | staging browser smoke 전 | 콘솔 증거 미확인 |
-| iOS/Android 권한·스토어 고지 | mobile-release + legal-safety | internal testing 전 | WebView 계약 준비, native·store 증거 미완료 |
+| NAVER Web Maps domain·key·한도 제한 | release-operator | staging browser smoke 전 | 공유 `workers.dev` 사용 금지 게이트와 운영 패킷 준비, 소유 custom domain·콘솔 로그인 증거 미완료 |
+| iOS/Android 권한·스토어 고지 | mobile-release + legal-safety | internal testing 전 | PrivacyInfo·백업 차단·스토어 초안 로컬 준비, archive·console·실기기 증거 미완료 |
 | 광고 정책·동의·추적 | product + legal-safety | M6 검증 후 M8 활성화 전 | `ADS_ENABLED=false`, SDK 미설치 |
 
 ## Legal Review
@@ -23,6 +23,7 @@ State: `blocked-external`
 - 개인정보 처리방침과 실제 D1/R2/KV/Workers log 처리의 일치.
 - 위치 권한 목적, raw coordinate 비저장, 거리·정확도 구간 저장, 권한 거부 시 일반 제보 전환.
 - 사진 원본 미보관, metadata 제거, 재인코딩, 공개 전 검수, 작성자·운영자 삭제.
+- 매 사진의 촬영·게시 권한 확인 문구, `photo-rights-2026-07-20-v1` 버전 기록, 철회·삭제 경계와 실제 권리 분쟁 처리 절차.
 - 익명 기본 사용, 선택적 회원 전환, 계정 복구·탈퇴·삭제, 연령·동의 정책.
 - 신고·차단·자동 숨김·이의제기·운영 감사와 UGC 대응 SLA.
 - 공공데이터·지도·외부 이미지·CCTV·YouTube의 상업 이용, attribution, cache, embed, 재배포 조건.
@@ -32,6 +33,10 @@ State: `blocked-external`
 ## Source Activation
 
 각 source는 별도 검토 행을 가져야 하며 묶음 승인하지 않는다. 필수 증거는 공식 약관 URL, 검토일, 검토자, commercial use 상태, attribution 문구, agreement 여부, 허용 지역, TTL, health, credential owner다.
+
+2026-07-19 공식 제공 페이지 조사와 제품별 허용·금지·표시 문구 초안은 `docs/source-rights-research-2026-07-19.md`에 기록했다. 이는 조사 증거이며 named legal-safety 승인이나 provider 운영 승인이 아니다.
+
+NAVER Maps는 공공데이터 source와 분리해 `docs/naver-maps-release-operator-packet.md`를 따른다. 공식 콘솔이 대표 도메인을 등록하는 구조이므로 `workers.dev`, `pages.dev`, `vercel.app` 같은 공유 호스팅 도메인은 Client ID 제한 증거로 인정하지 않는다. 소유 custom domain, 대표 계정 여부, Dynamic Map 선택, 이용 한도, 70% 시작 임계치, 실제 통보 대상, 정상 origin 성공·잘못된 origin 실패가 모두 필요하다.
 
 - `tour_api`: 정적 장소 메타데이터만 허용하며 이미지 권리가 확인될 때까지 `image_use_allowed=0`.
 - `national_parking`: 시설·요금 정적 데이터이며 실시간 빈자리로 해석하지 않는다.
@@ -46,6 +51,7 @@ State: `blocked-external`
 - `MODERATION_ALERT_WEBHOOK_URL`은 staging에서 redacted payload와 실패 재시도를 검증한다.
 - 병원·관공서 민감정보 12h, 일반 개인정보 24h, 허위·스팸 72h SLA를 연습한다.
 - hide, restore, delete, restrict, unblock, account deletion의 성공·거부·감사 로그 증거를 남긴다.
+- 사진 파일 입력은 현재 권리 확인 전 비활성화하고, Worker는 현재 버전 확인이 없는 티켓을 `PHOTO_RIGHTS_ATTESTATION_REQUIRED`로 선차단한다. 이 로컬 확인은 저작권 소유 증명이 아니므로 도용 신고와 실제 담당자 검토를 생략하지 않는다.
 - 원본 좌표, 원본 IP, 원본 파일명, token, 신고 note 원문이 응답·webhook·tail log에 없는지 확인한다.
 
 ## Ads Gate
@@ -61,8 +67,8 @@ State: `blocked-external`
 | --- | --- | --- | --- | --- | --- |
 | 개인정보·위치·계정삭제 | pending | pending | 2026-07-10 draft | final public URLs required | blocked |
 | UGC 운영·온콜 | pending | pending | 2026-07-10 draft | staging queue drill required | blocked |
-| 공공데이터 source rights | pending | pending | source별 기록 필요 | admin source audit required | blocked |
-| iOS/Android store disclosure | pending | pending | native build별 기록 필요 | real-device QA required | blocked |
+| 공공데이터 source rights | research prepared | pending | `docs/source-rights-research-2026-07-19.md` | named reviewer + admin source audit required | blocked |
+| iOS/Android store disclosure | pending | pending | `docs/store-privacy-disclosure-draft.md` | archive privacy report + console answers + real-device QA required | blocked |
 | 광고 M6/M8 | pending | pending | not activated | `ADS_ENABLED=false` | blocked |
 
 ## Stop Conditions
@@ -74,5 +80,5 @@ State: `blocked-external`
 - raw coordinate, 원본 사진, 원본 IP, secret, 원본 파일명이 저장·로그·응답에 노출된다.
 - 신고 큐 담당자나 `MODERATION_ALERT_WEBHOOK_URL` 운영 증거가 없다.
 - privacy/support 최종 HTTPS URL 또는 store disclosure가 준비되지 않았다.
-- NAVER origin 제한, D1 V2 migration, R2, staging smoke, 실기기 QA가 완료되지 않았다.
+- NAVER 소유 custom domain·대표 도메인 제한·이용 한도·알림, D1 V2 migration, R2, staging smoke, 실기기 QA가 완료되지 않았다.
 - 광고의 경우 M6 제품 승인과 M8 법무·스토어 승인이 모두 기록되지 않았다.

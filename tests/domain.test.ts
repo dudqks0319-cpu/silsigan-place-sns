@@ -8,7 +8,6 @@ const {
   creditEventForQuestion,
   creditEventsForReport,
   evaluateRegionActivation,
-  judgementFromStatus,
   getCategorySafetyWarning,
   getQuestionCost,
   getReportExpiry,
@@ -17,24 +16,139 @@ const {
   shouldHideForFlags,
   verifiedRadiusFromDistance,
 } = await import(new URL("../src/lib/domain.ts", import.meta.url).href);
+const { isLocationAccuracySufficient, locationAccuracyBucketForMeters } = await import(
+  new URL("../packages/contracts/src/index.ts", import.meta.url).href,
+);
 
-const { createPost, createReport, flagPost, listPlaces, listPostModerationQueue, listPosts, listQuestions, listReports, listRegionActivationDashboard, moderatePost } = await import(new URL("../src/lib/mock-store.ts", import.meta.url).href);
-const { isAdminTokenValid } = await import(new URL("../src/lib/admin-auth.ts", import.meta.url).href);
-const { assertRateLimit, clearRateLimitBucketsForTests } = await import(new URL("../src/lib/rate-limit.ts", import.meta.url).href);
+const { createPost, createQuestion, createReport, flagPost, listPlaces, listPostModerationQueue, listPosts, listQuestions, listReports, listRegionActivationDashboard, moderatePost } = await import(new URL("../src/lib/mock-store.ts", import.meta.url).href);
+const { assertAdminMutationOrigin, isAdminTokenValid } = await import(new URL("../src/lib/admin-auth.ts", import.meta.url).href);
+const {
+  assertRateLimit,
+  clearRateLimitBucketsForTests,
+  rateLimitDiagnosticsForTests,
+  rateLimitKey,
+} = await import(new URL("../src/lib/rate-limit.ts", import.meta.url).href);
 const { getStore } = await import(new URL("../src/lib/store.ts", import.meta.url).href);
 const { redactAnalyticsProperties, trackEvent } = await import(new URL("../src/lib/analytics.ts", import.meta.url).href);
 const { buildScopedApiPath, clampApiLimit, normalizeRegionScope } = await import(new URL("../src/lib/api-scope.ts", import.meta.url).href);
 const { workerPlaceToAppPlace } = await import(new URL("../src/lib/cloudflare-place-adapter.ts", import.meta.url).href);
 const { findSharedPost } = await import(new URL("../src/lib/shared-post.ts", import.meta.url).href);
-const { createReportSchema, moderatePostSchema } = await import(new URL("../src/lib/validators.ts", import.meta.url).href);
-const { listWorkerModerationReports, moderateWorkerReport, workerAdminApiConfigured } = await import(new URL("../src/lib/worker-admin-api.ts", import.meta.url).href);
+const { createQuestionSchema, createReportSchema, moderatePostSchema } = await import(new URL("../src/lib/validators.ts", import.meta.url).href);
+const { formatDistanceMeters, haversineDistanceMeters } = await import(new URL("../src/lib/geo.ts", import.meta.url).href);
+const { parseVerificationGeometry, pointInVerificationGeometry, verifyFieldLocation } = await import(
+  new URL("../workers/api/src/location-verification.ts", import.meta.url).href,
+);
 const {
+  getWorkerBetaKpis,
+  getWorkerApiCostGuard,
+  getWorkerPhotoCostGuard,
+  listWorkerFieldReports,
+  listWorkerModerationReports,
+  moderateWorkerFieldReport,
+  moderateWorkerReport,
+  reconcileWorkerApiCostGuard,
+  updateWorkerApiCostGuard,
+  updateWorkerPhotoCostGuard,
+  workerAdminApiConfigured,
+} = await import(new URL("../src/lib/worker-admin-api.ts", import.meta.url).href);
+const {
+  handleAdminBetaKpisGet,
+  handleAdminFieldReportsGet,
+  handleAdminFieldReportsPost,
+  handleAdminPhotoCostGuardGet,
+  handleAdminPhotoCostGuardPatch,
   handleAdminWorkerCoordinateStatusPost,
   handleAdminWorkerReportsGet,
   handleAdminWorkerReportsPost,
   handleAdminWorkerUserRestrictPost,
   handleAdminWorkerUserUnrestrictPost,
 } = await import(new URL("../src/lib/worker-admin-route.ts", import.meta.url).href);
+
+test("location distance uses Haversine meters and privacy-safe display units", () => {
+  const origin = { latitude: 35.1796, longitude: 129.0756 };
+  const samePoint = haversineDistanceMeters(origin, origin);
+  const oneKilometerNorth = haversineDistanceMeters(origin, {
+    latitude: origin.latitude + 0.009,
+    longitude: origin.longitude,
+  });
+
+  assert.equal(samePoint, 0);
+  assert.ok(oneKilometerNorth > 950 && oneKilometerNorth < 1_050);
+  assert.equal(formatDistanceMeters(250), "250m");
+  assert.equal(formatDistanceMeters(1_200), "1.2km");
+  assert.equal(formatDistanceMeters(12_000), "12km");
+});
+
+test("polygon verification accepts boundaries, rejects holes, and supports multipolygons", () => {
+  const geometry = parseVerificationGeometry({
+    type: "Polygon",
+    coordinates: [
+      [
+        [129.0, 35.0],
+        [129.01, 35.0],
+        [129.01, 35.01],
+        [129.0, 35.01],
+        [129.0, 35.0],
+      ],
+      [
+        [129.003, 35.003],
+        [129.007, 35.003],
+        [129.007, 35.007],
+        [129.003, 35.007],
+        [129.003, 35.003],
+      ],
+    ],
+  });
+  assert.ok(geometry);
+  assert.equal(pointInVerificationGeometry({ latitude: 35.001, longitude: 129.001 }, geometry), true);
+  assert.equal(pointInVerificationGeometry({ latitude: 35.0, longitude: 129.005 }, geometry), true);
+  assert.equal(pointInVerificationGeometry({ latitude: 35.005, longitude: 129.005 }, geometry), false);
+  assert.equal(pointInVerificationGeometry({ latitude: 35.02, longitude: 129.005 }, geometry), false);
+
+  const multipolygon = parseVerificationGeometry({
+    type: "MultiPolygon",
+    coordinates: [
+      [
+        [
+          [129.1, 35.1],
+          [129.11, 35.1],
+          [129.11, 35.11],
+          [129.1, 35.11],
+          [129.1, 35.1],
+        ],
+      ],
+    ],
+  });
+  assert.ok(multipolygon);
+  assert.equal(pointInVerificationGeometry({ latitude: 35.105, longitude: 129.105 }, multipolygon), true);
+});
+
+test("field location verification is server-owned and fails closed for low accuracy or missing geometry", () => {
+  const context = {
+    placeKind: "AREA" as const,
+    center: { latitude: 35.0, longitude: 129.0 },
+    geometry: parseVerificationGeometry({
+      type: "Polygon",
+      coordinates: [
+        [
+          [128.99, 34.99],
+          [129.01, 34.99],
+          [129.01, 35.01],
+          [128.99, 35.01],
+          [128.99, 34.99],
+        ],
+      ],
+    }),
+    verificationRadiusM: null,
+  };
+  assert.equal(verifyFieldLocation({ latitude: 35, longitude: 129 }, 18, context).verificationMethod, "polygon");
+  assert.equal(verifyFieldLocation({ latitude: 35, longitude: 129 }, 250, context).verificationMethod, "none");
+  assert.equal(verifyFieldLocation({ latitude: 35.02, longitude: 129 }, 18, context).reason, "outside_polygon");
+  assert.equal(
+    verifyFieldLocation({ latitude: 35, longitude: 129 }, 18, { ...context, geometry: null }).reason,
+    "geometry_not_configured",
+  );
+});
 
 test("reports expire three hours after creation", () => {
   const createdAt = new Date("2026-05-08T00:00:00.000Z");
@@ -52,6 +166,21 @@ test("question credits follow MVP cost rules", () => {
     type: "ask_photo_request",
     amount: -2,
   });
+});
+
+test("question creation never accepts a client-owned credit balance", () => {
+  const parsed = createQuestionSchema.parse({
+    placeId: "busan-gwangalli",
+    questionType: "crowd",
+    body: "지금 사람이 많은가요?",
+    availableCredits: 999,
+  });
+
+  assert.equal(Object.hasOwn(parsed, "availableCredits"), false);
+  assert.throws(
+    () => createQuestion(parsed),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "CREDIT_LEDGER_REQUIRED",
+  );
 });
 
 test("credit balance supports signup, reports, answers, questions, and false-report penalty", () => {
@@ -105,6 +234,16 @@ test("distance outside 300m cannot produce a persisted verification radius", () 
   assert.equal(verifiedRadiusFromDistance(1_000), null);
 });
 
+test("location accuracy is reduced to coarse buckets and low accuracy cannot verify", () => {
+  assert.equal(locationAccuracyBucketForMeters(18), "high");
+  assert.equal(locationAccuracyBucketForMeters(75), "medium");
+  assert.equal(locationAccuracyBucketForMeters(250), "low");
+  assert.equal(locationAccuracyBucketForMeters(undefined), "unknown");
+  assert.equal(isLocationAccuracySufficient(100), true);
+  assert.equal(isLocationAccuracySufficient(100.01), false);
+  assert.equal(isLocationAccuracySufficient(undefined), false);
+});
+
 test("report creation returns a coarse radius and does not persist client coordinates", () => {
   const result = createReport({
     placeId: "ulsan-taehwagang",
@@ -117,6 +256,7 @@ test("report creation returns a coarse radius and does not persist client coordi
     clientLocation: {
       latitude: 35.5486,
       longitude: 129.3005,
+      accuracyM: 18,
     },
   });
 
@@ -135,6 +275,22 @@ test("status-only reports can be created without location permission", () => {
     parkingStatus: "limited",
     weatherFeel: "good",
     comment: "사진 없이 웨이팅만 제보합니다.",
+  });
+
+  assert.equal(result.report.verifiedRadiusM, null);
+  assert.deepEqual(result.credits, []);
+});
+
+test("low accuracy report remains available but never receives a verification credit", () => {
+  const result = createReport({
+    placeId: "busan-gwangalli",
+    category: "tourism",
+    crowdLevel: "busy",
+    clientLocation: {
+      latitude: 35.1532,
+      longitude: 129.1186,
+      accuracyM: 250,
+    },
   });
 
   assert.equal(result.report.verifiedRadiusM, null);
@@ -173,6 +329,7 @@ test("hashtag recommendation is specific and capped at five", () => {
       category: "tourism",
       latitude: 35.1532,
       longitude: 129.1186,
+      accuracyM: 18,
       region: "busan",
       regionId: "busan",
       launchStage: "active",
@@ -259,15 +416,17 @@ test("feed posts generate share cards and privacy reports can hide posts", () =>
     clientLocation: {
       latitude: 35.1532,
       longitude: 129.1186,
+      accuracyM: 18,
     },
   });
 
   assert.equal(created.post.hashtagNames.length, 5);
   assert.equal(created.post.verifiedRadiusM, 50);
   assert.equal(created.post.locationVerified, true);
-  assert.match(created.post.shareCard.headline, /지금은 비추/);
+  assert.equal(created.post.shareCard.headline, "광안리해수욕장 현장 제보");
+  assert.match(created.post.shareCard.body, /제보 내용: 사람 매우 많음/);
+  assert.equal(created.post.shareCard.variant, "neutral");
   assert.equal(created.post.shareCard.url, "https://silsigan.pages.dev/place/busan-gwangalli");
-  assert.equal(judgementFromStatus("packed", "full"), "지금은 비추");
 
   const flagResult = flagPost({
     postId: created.post.id,
@@ -313,6 +472,7 @@ test("posts more than 300m from the place are created without verification", () 
     clientLocation: {
       latitude: 35.18,
       longitude: 129.16,
+      accuracyM: 18,
     },
   });
 
@@ -380,7 +540,17 @@ test("shared post lookup reads from Worker API when configured", async () => {
       body: "Worker API에서 내려온 공유 본문",
       url: "https://silsigan.pages.dev/place/worker",
       hashtags: ["worker", "share"],
-      variant: "good",
+      variant: "neutral",
+    },
+    status: {
+      dataMode: "live",
+      status: "insufficient",
+      currentSignals: [],
+      independentSourceCount: 0,
+      confidenceScore: 0,
+      reasonCodes: ["no_current_evidence"],
+      observedAt: null,
+      computedAt: "2026-07-10T00:00:00.000Z",
     },
   };
   const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -388,7 +558,7 @@ test("shared post lookup reads from Worker API when configured", async () => {
     requests.push(request);
     return Response.json({
       success: true,
-      data: [workerPost],
+      data: workerPost,
     });
   };
 
@@ -398,7 +568,7 @@ test("shared post lookup reads from Worker API when configured", async () => {
   });
 
   assert.equal(post?.shareCard.headline, "Worker 공유 카드");
-  assert.equal(requests[0]?.url, "https://worker.example.test/api/posts?limit=200");
+  assert.equal(requests[0]?.url, "https://worker.example.test/api/share/posts/worker_share_post");
   assert.equal(requests[0]?.headers.get("accept"), "application/json");
 });
 
@@ -518,6 +688,48 @@ test("rate limit blocks excess requests within a window", () => {
   assert.doesNotThrow(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }));
   assert.doesNotThrow(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }));
   assert.throws(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }), /요청이 너무 많습니다/);
+});
+
+test("rate limit identity cannot be rotated with user-agent or forwarded-header spoofing", () => {
+  const first = new Request("https://silsigan.example/api/external/naver/local-search", {
+    headers: {
+      "cf-connecting-ip": "203.0.113.42",
+      "user-agent": "attacker-agent-a",
+      "x-forwarded-for": "198.51.100.1",
+      "x-real-ip": "198.51.100.2",
+    },
+  });
+  const second = new Request("https://silsigan.example/api/external/naver/local-search", {
+    headers: {
+      "cf-connecting-ip": "203.0.113.42",
+      "user-agent": "attacker-agent-b",
+      "x-forwarded-for": "192.0.2.9",
+      "x-real-ip": "192.0.2.10",
+    },
+  });
+
+  assert.equal(rateLimitKey(first, "naver-local-search"), rateLimitKey(second, "naver-local-search"));
+  assert.match(rateLimitKey(first, "naver-local-search"), /^naver-local-search:cf:/);
+});
+
+test("rate limit storage fails closed instead of growing without a bound", () => {
+  clearRateLimitBucketsForTests();
+  const { capacity } = rateLimitDiagnosticsForTests();
+
+  try {
+    for (let index = 0; index < capacity; index += 1) {
+      assert.doesNotThrow(() => assertRateLimit({ key: `capacity:${index}`, limit: 1, windowMs: 60_000 }));
+    }
+
+    assert.equal(rateLimitDiagnosticsForTests().size, capacity);
+    assert.throws(
+      () => assertRateLimit({ key: "capacity:overflow", limit: 1, windowMs: 60_000 }),
+      /요청 보호 한도에 도달했습니다/,
+    );
+    assert.equal(rateLimitDiagnosticsForTests().size, capacity);
+  } finally {
+    clearRateLimitBucketsForTests();
+  }
 });
 
 test("admin token is deny-by-default when configured", () => {
@@ -663,8 +875,611 @@ test("worker admin moderation helper posts report actions through server token",
   });
 });
 
+test("worker admin field report helper keeps moderation payload privacy-safe", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    requests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({
+      success: true,
+      data: [
+        {
+          id: "field_report_12345678",
+          placeId: "busan-gwangalli",
+          placeName: "광안리해수욕장",
+          category: "tourism",
+          crowdLevel: "busy",
+          lineStatus: null,
+          parkingStatus: "limited",
+          verifiedRadiusM: 150,
+          verificationMethod: "radius",
+          accuracyBucket: "high",
+          moderationStatus: "pending",
+          createdAt: "2026-07-14T00:00:00.000Z",
+          expiresAt: "2026-07-14T00:30:00.000Z",
+          anonymousUserId: "anon_raw_reporter",
+          clientLocation: { latitude: 35.1532, longitude: 129.1186 },
+          note: "private reporter note",
+        },
+      ],
+    });
+  };
+
+  const reports = await listWorkerFieldReports(
+    { status: "pending", limit: 99 },
+    {
+      fetcher,
+      env: {
+        SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+        SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+      },
+    },
+  );
+
+  assert.deepEqual(reports, [
+    {
+      id: "field_report_12345678",
+      placeId: "busan-gwangalli",
+      placeName: "광안리해수욕장",
+      category: "tourism",
+      crowdLevel: "busy",
+      lineStatus: null,
+      parkingStatus: "limited",
+      verifiedRadiusM: 150,
+      verificationMethod: "radius",
+      accuracyBucket: "high",
+      moderationStatus: "pending",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      expiresAt: "2026-07-14T00:30:00.000Z",
+    },
+  ]);
+  assert.equal(requests[0]?.url, "https://worker.example.test/api/admin/field-reports?limit=50&status=pending");
+  assert.equal(requests[0]?.headers.get("x-silsigan-admin-token"), "worker-admin-token");
+  assert.equal(JSON.stringify(reports).includes("anon_raw_reporter"), false);
+  assert.equal(JSON.stringify(reports).includes("35.1532"), false);
+  assert.equal(JSON.stringify(reports).includes("private reporter note"), false);
+});
+
+test("worker admin field report helper posts only an allowed moderation transition", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    requests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({
+      success: true,
+      data: {
+        id: "field_report_12345678",
+        placeId: "busan-gwangalli",
+        placeName: "광안리해수욕장",
+        category: "tourism",
+        crowdLevel: "busy",
+        lineStatus: null,
+        parkingStatus: "limited",
+        verifiedRadiusM: 150,
+        verificationMethod: "radius",
+        accuracyBucket: "high",
+        moderationStatus: "approved",
+        createdAt: "2026-07-14T00:00:00.000Z",
+        expiresAt: "2026-07-14T00:30:00.000Z",
+      },
+    });
+  };
+
+  const report = await moderateWorkerFieldReport(
+    { reportId: "field_report_12345678", status: "approved", reason: "운영자 승인" },
+    {
+      fetcher,
+      env: {
+        SILSIGAN_STAGING_API_BASE_URL: "https://staging-worker.example.test",
+        SILSIGAN_STAGING_ADMIN_TOKEN: "staging-admin-token",
+      },
+    },
+  );
+
+  assert.equal(report.moderationStatus, "approved");
+  assert.equal(requests[0]?.url, "https://staging-worker.example.test/api/admin/field-reports/field_report_12345678/action");
+  assert.equal(requests[0]?.method, "POST");
+  assert.equal(requests[0]?.headers.get("x-silsigan-admin-token"), "staging-admin-token");
+  assert.deepEqual(await requests[0]?.json(), { status: "approved", reason: "운영자 승인" });
+});
+
 test("worker admin moderation helper is deny-by-default without server token", () => {
   assert.equal(workerAdminApiConfigured({ SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test" }), false);
+});
+
+test("worker beta KPI helper exposes aggregate-only metrics and strips unexpected Worker fields", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    requests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({
+      success: true,
+      data: {
+        windowDays: 7,
+        generatedAt: "2026-07-19T10:00:00.000Z",
+        privacy: "aggregate-only",
+        audience: { activeUsers: 120, appOpens: 180, actorIdentityKeys: ["must-not-leak"] },
+        reportFunnel: { started: 40, submitted: 30, conversionPercent: 75, medianCompletionSeconds: 11 },
+        mapReliability: { succeeded: 99, failed: 1, successPercent: 99 },
+        moderation: {
+          submitted: 20,
+          pending: 2,
+          approved: 15,
+          rejected: 2,
+          hidden: 1,
+          approvalPercent: 83.33,
+          reviewedWithin24HoursPercent: 94.44,
+        },
+        retention: {
+          d1: { cohortUsers: 50, retainedUsers: 20, percent: 40 },
+          d7: { cohortUsers: 30, retainedUsers: 9, percent: 30 },
+        },
+        freshCoverage: {
+          eligiblePlaces: 30,
+          coveredPlaces: 18,
+          percent: 60,
+          tierA: { eligiblePlaces: 12, coveredPlaces: 9, percent: 75 },
+          tierB: { eligiblePlaces: 18, coveredPlaces: 9, percent: 50 },
+        },
+        runtimeReliability: { appOpenUsers: 120, errorUsers: 1, errorFreePercent: 99.17 },
+        debug: { rawActors: ["must-not-leak"] },
+      },
+    });
+  };
+
+  const metrics = await getWorkerBetaKpis(7, {
+    fetcher,
+    env: {
+      SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+      SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+    },
+  });
+
+  assert.equal(metrics.reportFunnel.medianCompletionSeconds, 11);
+  assert.equal(metrics.retention.d7.percent, 30);
+  assert.equal(metrics.freshCoverage.coveredPlaces, 18);
+  assert.deepEqual(metrics.freshCoverage.tierA, { eligiblePlaces: 12, coveredPlaces: 9, percent: 75 });
+  assert.deepEqual(metrics.freshCoverage.tierB, { eligiblePlaces: 18, coveredPlaces: 9, percent: 50 });
+  assert.equal(JSON.stringify(metrics).includes("must-not-leak"), false);
+  assert.equal(requests[0]?.url, "https://worker.example.test/api/admin/beta-kpis?days=7");
+  assert.equal(requests[0]?.headers.get("x-silsigan-admin-token"), "worker-admin-token");
+});
+
+test("admin beta KPI route authenticates before proxying", async () => {
+  const previousAdminToken = process.env["SILSIGAN_ADMIN_TOKEN"];
+  const previousWorkerBaseUrl = process.env["SILSIGAN_WORKER_API_BASE_URL"];
+  const previousWorkerToken = process.env["SILSIGAN_WORKER_ADMIN_TOKEN"];
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+
+  process.env["SILSIGAN_ADMIN_TOKEN"] = "next-admin-token";
+  process.env["SILSIGAN_WORKER_API_BASE_URL"] = "https://worker.example.test";
+  process.env["SILSIGAN_WORKER_ADMIN_TOKEN"] = "worker-admin-token";
+  globalThis.fetch = async (): Promise<Response> => {
+    fetchCalls += 1;
+    return Response.json({
+      success: true,
+      data: {
+        windowDays: 7,
+        generatedAt: "2026-07-19T10:00:00.000Z",
+        privacy: "aggregate-only",
+        audience: { activeUsers: 0, appOpens: 0 },
+        reportFunnel: { started: 0, submitted: 0, conversionPercent: null, medianCompletionSeconds: null },
+        mapReliability: { succeeded: 0, failed: 0, successPercent: null },
+        moderation: { submitted: 0, pending: 0, approved: 0, rejected: 0, hidden: 0, approvalPercent: null, reviewedWithin24HoursPercent: null },
+        retention: { d1: { cohortUsers: 0, retainedUsers: 0, percent: null }, d7: { cohortUsers: 0, retainedUsers: 0, percent: null } },
+        freshCoverage: {
+          eligiblePlaces: 0,
+          coveredPlaces: 0,
+          percent: null,
+          tierA: { eligiblePlaces: 0, coveredPlaces: 0, percent: null },
+          tierB: { eligiblePlaces: 0, coveredPlaces: 0, percent: null },
+        },
+        runtimeReliability: { appOpenUsers: 0, errorUsers: 0, errorFreePercent: null },
+      },
+    });
+  };
+
+  try {
+    await assert.rejects(
+      () => handleAdminBetaKpisGet(new Request("http://localhost/api/admin/beta-kpis?days=7")),
+      /관리자 인증이 필요합니다/,
+    );
+    assert.equal(fetchCalls, 0);
+
+    const metrics = await handleAdminBetaKpisGet(
+      new Request("http://localhost/api/admin/beta-kpis?days=7", {
+        headers: { cookie: "silsigan_admin=next-admin-token" },
+      }),
+    );
+    assert.equal(metrics.windowDays, 7);
+    assert.equal(fetchCalls, 1);
+  } finally {
+    restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
+    restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);
+    restoreEnv("SILSIGAN_WORKER_ADMIN_TOKEN", previousWorkerToken);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("worker photo cost guard helper returns a minimal summary and sends only the allowed control fields", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    return Response.json({
+      success: true,
+      data: {
+        uploadsEnabled: request.method === "PATCH" ? false : true,
+        readsEnabled: request.method === "PATCH" ? false : true,
+        reason: request.method === "PATCH" ? "운영자 긴급 중단" : null,
+        activeBytes: 1_073_741_824,
+        storageMaxBytes: 4_294_967_296,
+        storageStopBytes: 3_435_973_836,
+        storagePercent: 25,
+        storageStopPercent: 31.25,
+        periodUtc: "2026-07",
+        writesInPeriod: 4_000,
+        monthlyWriteLimit: 16_000,
+        monthlyWriteStopLimit: 12_800,
+        writePercent: 25,
+        writeStopPercent: 31.25,
+        transformPeriodUtc: "2026-07",
+        transformsInPeriod: 1_000,
+        monthlyTransformLimit: 5_000,
+        monthlyTransformStopLimit: 4_000,
+        transformPercent: 20,
+        transformStopPercent: 25,
+        readPeriodUtc: "2026-07",
+        readsInPeriod: 250_000,
+        monthlyReadLimit: 1_000_000,
+        monthlyReadStopLimit: 800_000,
+        readPercent: 25,
+        readStopPercent: 31.25,
+        dayUtc: "2026-07-19",
+        readsInDay: 1_000,
+        dailyReadLimit: 20_000,
+        dailyReadStopLimit: 16_000,
+        dailyReadPercent: 5,
+        dailyReadStopPercent: 6.25,
+        updatedBy: "raw-worker-admin-subject",
+        updatedAt: "2026-07-19T03:00:00.000Z",
+        debug: { token: "must-not-leak" },
+      },
+    });
+  };
+  const options = {
+    fetcher,
+    env: {
+      SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+      SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+    },
+  };
+
+  const status = await getWorkerPhotoCostGuard(options);
+  const stopped = await updateWorkerPhotoCostGuard(
+    { uploadsEnabled: false, readsEnabled: false, reason: "운영자 긴급 중단", ignored: "must-not-forward" } as never,
+    options,
+  );
+
+  assert.equal(status.uploadsEnabled, true);
+  assert.equal(stopped.uploadsEnabled, false);
+  assert.equal(JSON.stringify(status).includes("raw-worker-admin-subject"), false);
+  assert.equal(JSON.stringify(status).includes("must-not-leak"), false);
+  assert.deepEqual(Object.keys(status).sort(), [
+    "activeBytes",
+    "dailyReadLimit",
+    "dailyReadPercent",
+    "dailyReadStopLimit",
+    "dailyReadStopPercent",
+    "dayUtc",
+    "monthlyReadLimit",
+    "monthlyReadStopLimit",
+    "monthlyTransformLimit",
+    "monthlyTransformStopLimit",
+    "monthlyWriteLimit",
+    "monthlyWriteStopLimit",
+    "periodUtc",
+    "readPercent",
+    "readPeriodUtc",
+    "readStopPercent",
+    "readsEnabled",
+    "readsInDay",
+    "readsInPeriod",
+    "reason",
+    "storageMaxBytes",
+    "storagePercent",
+    "storageStopBytes",
+    "storageStopPercent",
+    "transformPercent",
+    "transformPeriodUtc",
+    "transformStopPercent",
+    "transformsInPeriod",
+    "updatedAt",
+    "uploadsEnabled",
+    "writePercent",
+    "writeStopPercent",
+    "writesInPeriod",
+  ]);
+  assert.deepEqual(
+    requests.map((request) => [request.method, request.url, request.headers.get("x-silsigan-admin-token")]),
+    [
+      ["GET", "https://worker.example.test/api/admin/photo-cost-guard", "worker-admin-token"],
+      ["PATCH", "https://worker.example.test/api/admin/photo-cost-guard", "worker-admin-token"],
+    ],
+  );
+  assert.deepEqual(await requests[1]?.json(), {
+    uploadsEnabled: false,
+    readsEnabled: false,
+    reconciliationAcknowledged: false,
+    reason: "운영자 긴급 중단",
+  });
+});
+
+test("worker global API guard helper validates meters and forwards only audited control fields", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    return Response.json({
+      success: true,
+      data: {
+        control: {
+          mode: request.method === "PATCH" ? "stopped" : "running",
+          reason: request.method === "PATCH" ? "운영자 긴급 중단" : "initial-enabled",
+          generation: request.method === "PATCH" ? 2 : 1,
+          automaticMetric: request.method === "PATCH" ? "manual" : null,
+          updatedBy: "next-admin",
+          updatedAt: "2026-07-20T00:00:00.000Z",
+        },
+        dayUtc: "2026-07-20",
+        usage: { workersRequests: 10, d1RowsRead: 1000, d1RowsWritten: 100 },
+        limits: {
+          workersRequests: 100000,
+          d1RowsRead: 5000000,
+          d1RowsWritten: 100000,
+          warnPercent: 60,
+          degradePercent: 70,
+          stopPercent: 80,
+        },
+        meters: { workersPercent: 0.01, d1ReadPercent: 0.02, d1WritePercent: 0.1 },
+        reconciliationFresh: request.method === "POST",
+        debug: { token: "must-not-leak" },
+      },
+    });
+  };
+  const options = {
+    fetcher,
+    env: {
+      SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+      SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+    },
+  };
+
+  const status = await getWorkerApiCostGuard(options);
+  await updateWorkerApiCostGuard({ mode: "stopped", reason: "운영자 긴급 중단", expectedGeneration: 1 }, options);
+  await reconcileWorkerApiCostGuard({
+    observedWorkersRequests: 10,
+    observedD1RowsRead: 1000,
+    observedD1RowsWritten: 100,
+    note: "Cloudflare 대시보드 대조",
+  }, options);
+
+  assert.equal(status.control.mode, "running");
+  assert.equal(JSON.stringify(status).includes("must-not-leak"), false);
+  assert.deepEqual(requests.map((request) => [request.method, new URL(request.url).pathname]), [
+    ["GET", "/api/admin/api-cost-guard"],
+    ["PATCH", "/api/admin/api-cost-guard"],
+    ["POST", "/api/admin/api-cost-guard/reconciliations"],
+  ]);
+  assert.deepEqual(await requests[1]?.json(), {
+    mode: "stopped",
+    reason: "운영자 긴급 중단",
+    expectedGeneration: 1,
+  });
+  const reconciliationBody = await requests[2]?.json() as Record<string, unknown>;
+  assert.deepEqual(
+    Object.keys(reconciliationBody).sort(),
+    ["note", "observedAt", "observedD1RowsRead", "observedD1RowsWritten", "observedWorkersRequests", "source"].sort(),
+  );
+});
+
+test("admin photo cost guard route authenticates before proxying and validates emergency actions", async () => {
+  const previousAdminToken = process.env["SILSIGAN_ADMIN_TOKEN"];
+  const previousWorkerBaseUrl = process.env["SILSIGAN_WORKER_API_BASE_URL"];
+  const previousWorkerToken = process.env["SILSIGAN_WORKER_ADMIN_TOKEN"];
+  const originalFetch = globalThis.fetch;
+  const requests: Request[] = [];
+
+  clearRateLimitBucketsForTests();
+  process.env["SILSIGAN_ADMIN_TOKEN"] = "next-admin-token";
+  process.env["SILSIGAN_WORKER_API_BASE_URL"] = "https://worker.example.test";
+  process.env["SILSIGAN_WORKER_ADMIN_TOKEN"] = "worker-admin-token";
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    return Response.json({
+      success: true,
+      data: {
+        uploadsEnabled: request.method !== "PATCH",
+        readsEnabled: request.method !== "PATCH",
+        reason: request.method === "PATCH" ? "운영자 긴급 중단" : null,
+        activeBytes: 1024,
+        storageMaxBytes: 4096,
+        storageStopBytes: 3276,
+        storagePercent: 25,
+        storageStopPercent: 31.26,
+        periodUtc: "2026-07",
+        writesInPeriod: 10,
+        monthlyWriteLimit: 100,
+        monthlyWriteStopLimit: 80,
+        writePercent: 10,
+        writeStopPercent: 12.5,
+        transformPeriodUtc: "2026-07",
+        transformsInPeriod: 10,
+        monthlyTransformLimit: 5_000,
+        monthlyTransformStopLimit: 4_000,
+        transformPercent: 0.2,
+        transformStopPercent: 0.25,
+        readPeriodUtc: "2026-07",
+        readsInPeriod: 25,
+        monthlyReadLimit: 1000,
+        monthlyReadStopLimit: 800,
+        readPercent: 2.5,
+        readStopPercent: 3.13,
+        dayUtc: "2026-07-19",
+        readsInDay: 5,
+        dailyReadLimit: 20_000,
+        dailyReadStopLimit: 16_000,
+        dailyReadPercent: 0.03,
+        dailyReadStopPercent: 0.03,
+        updatedBy: "raw-worker-subject",
+        updatedAt: "2026-07-19T03:00:00.000Z",
+      },
+    });
+  };
+
+  try {
+    await assert.rejects(
+      () => handleAdminPhotoCostGuardGet(new Request("http://localhost/api/admin/photo-cost-guard")),
+      /관리자 인증이 필요합니다/,
+    );
+    await assert.rejects(
+      () =>
+        handleAdminPhotoCostGuardPatch(
+          new Request("http://localhost/api/admin/photo-cost-guard", {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ uploadsEnabled: false, reason: "운영자 긴급 중단" }),
+          }),
+        ),
+      /관리자 인증이 필요합니다/,
+    );
+    assert.equal(requests.length, 0);
+
+    await assert.rejects(
+      () =>
+        handleAdminPhotoCostGuardPatch(
+          new Request("http://localhost/api/admin/photo-cost-guard", {
+            method: "PATCH",
+            headers: {
+              cookie: "silsigan_admin=next-admin-token",
+              "content-type": "application/json",
+              origin: "https://attacker.example",
+              "sec-fetch-site": "cross-site",
+            },
+            body: JSON.stringify({ uploadsEnabled: true, readsEnabled: true, reason: "공격자 재개 시도" }),
+          }),
+        ),
+      /교차 출처 관리자 변경 요청을 허용하지 않습니다/,
+    );
+    assert.equal(requests.length, 0);
+
+    assert.doesNotThrow(() =>
+      assertAdminMutationOrigin(
+        new Request("http://localhost:3000/api/admin/photo-cost-guard", {
+          method: "PATCH",
+          headers: {
+            host: "127.0.0.1:4567",
+            origin: "http://127.0.0.1:4567",
+            "sec-fetch-site": "same-origin",
+          },
+        }),
+      ),
+    );
+    assert.throws(
+      () =>
+        assertAdminMutationOrigin(
+          new Request("http://localhost:3000/api/admin/photo-cost-guard", {
+            method: "PATCH",
+            headers: {
+              host: "127.0.0.1:4567",
+              origin: "https://attacker.example",
+              "sec-fetch-site": "same-origin",
+            },
+          }),
+        ),
+      /교차 출처 관리자 변경 요청을 허용하지 않습니다/,
+    );
+
+    const authHeaders = {
+      "x-silsigan-admin-token": "next-admin-token",
+      "content-type": "application/json",
+      origin: "http://localhost",
+      "sec-fetch-site": "same-origin",
+    };
+    await assert.rejects(
+      () =>
+        handleAdminPhotoCostGuardPatch(
+          new Request("http://localhost/api/admin/photo-cost-guard", {
+            method: "PATCH",
+            headers: authHeaders,
+            body: JSON.stringify({ uploadsEnabled: "false", reason: "짧음" }),
+          }),
+        ),
+      /업로드 제어 상태가 올바르지 않습니다/,
+    );
+    await assert.rejects(
+      () =>
+        handleAdminPhotoCostGuardPatch(
+          new Request("http://localhost/api/admin/photo-cost-guard", {
+            method: "PATCH",
+            headers: authHeaders,
+            body: JSON.stringify({ uploadsEnabled: false, readsEnabled: "false", reason: "운영자 긴급 중단" }),
+          }),
+        ),
+      /조회 제어 상태가 올바르지 않습니다/,
+    );
+    await assert.rejects(
+      () =>
+        handleAdminPhotoCostGuardPatch(
+          new Request("http://localhost/api/admin/photo-cost-guard", {
+            method: "PATCH",
+            headers: authHeaders,
+            body: JSON.stringify({ uploadsEnabled: false, readsEnabled: false, reason: "짧음" }),
+          }),
+        ),
+      /중단 또는 재개 사유를 5자 이상 입력해 주세요/,
+    );
+    await assert.rejects(
+      () =>
+        handleAdminPhotoCostGuardPatch(
+          new Request("http://localhost/api/admin/photo-cost-guard", {
+            method: "PATCH",
+            headers: authHeaders,
+            body: JSON.stringify({ uploadsEnabled: true, readsEnabled: true, reason: "운영 대조 없이 재개" }),
+          }),
+        ),
+      /Cloudflare 사용량과 D1 원장 대조 확인이 필요합니다/,
+    );
+    assert.equal(requests.length, 0);
+
+    const status = await handleAdminPhotoCostGuardGet(
+      new Request("http://localhost/api/admin/photo-cost-guard", { headers: authHeaders }),
+    );
+    const stopped = await handleAdminPhotoCostGuardPatch(
+      new Request("http://localhost/api/admin/photo-cost-guard", {
+        method: "PATCH",
+        headers: authHeaders,
+        body: JSON.stringify({ uploadsEnabled: false, readsEnabled: false, reason: "운영자 긴급 중단", ignored: "must-not-forward" }),
+      }),
+    );
+
+    assert.equal(status.uploadsEnabled, true);
+    assert.equal(status.readsEnabled, true);
+    assert.equal(stopped.uploadsEnabled, false);
+    assert.equal(stopped.readsEnabled, false);
+    assert.equal(JSON.stringify(status).includes("raw-worker-subject"), false);
+    assert.deepEqual(await requests[1]?.json(), {
+      uploadsEnabled: false,
+      readsEnabled: false,
+      reconciliationAcknowledged: false,
+      reason: "운영자 긴급 중단",
+    });
+  } finally {
+    restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
+    restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);
+    restoreEnv("SILSIGAN_WORKER_ADMIN_TOKEN", previousWorkerToken);
+    globalThis.fetch = originalFetch;
+    clearRateLimitBucketsForTests();
+  }
 });
 
 test("admin worker reports route requires Next admin auth before proxying", async () => {
@@ -693,6 +1508,97 @@ test("admin worker reports route requires Next admin auth before proxying", asyn
     restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);
     restoreEnv("SILSIGAN_WORKER_ADMIN_TOKEN", previousWorkerToken);
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("browser-facing worker admin mutations reject cross-origin cookie requests before proxying", async () => {
+  const previousAdminToken = process.env["SILSIGAN_ADMIN_TOKEN"];
+  const previousWorkerBaseUrl = process.env["SILSIGAN_WORKER_API_BASE_URL"];
+  const previousWorkerToken = process.env["SILSIGAN_WORKER_ADMIN_TOKEN"];
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+
+  clearRateLimitBucketsForTests();
+  process.env["SILSIGAN_ADMIN_TOKEN"] = "next-admin-token";
+  process.env["SILSIGAN_WORKER_API_BASE_URL"] = "https://worker.example.test";
+  process.env["SILSIGAN_WORKER_ADMIN_TOKEN"] = "worker-admin-token";
+  globalThis.fetch = async (): Promise<Response> => {
+    fetchCalls += 1;
+    return Response.json({ success: true, data: {} });
+  };
+
+  const mutationCases: Array<{
+    handler: (request: Request) => Promise<unknown>;
+    url: string;
+    body: Record<string, unknown>;
+  }> = [
+    {
+      handler: handleAdminWorkerReportsPost,
+      url: "http://localhost/api/admin/moderation/reports",
+      body: { reportId: "report_worker_route", status: "accepted", reason: "운영자 승인" },
+    },
+    {
+      handler: handleAdminFieldReportsPost,
+      url: "http://localhost/api/admin/field-reports",
+      body: { reportId: "field_report_12345678", status: "approved", reason: "운영자 승인" },
+    },
+    {
+      handler: handleAdminWorkerCoordinateStatusPost,
+      url: "http://localhost/api/admin/places/coordinate-status",
+      body: {
+        placeId: "jeju-coordinate-review",
+        coordinateStatus: "verified",
+        latitude: 33.4996,
+        longitude: 126.5312,
+        source: "coordinate QA",
+        reason: "좌표 검증 완료",
+      },
+    },
+    {
+      handler: handleAdminWorkerUserRestrictPost,
+      url: "http://localhost/api/admin/users/restrict",
+      body: {
+        anonymousUserId: "anon_1234567890abcdef1234567890abcdef1234567890abcdef",
+        reason: "반복 스팸",
+      },
+    },
+    {
+      handler: handleAdminWorkerUserUnrestrictPost,
+      url: "http://localhost/api/admin/users/unrestrict",
+      body: {
+        anonymousUserId: "anon_1234567890abcdef1234567890abcdef1234567890abcdef",
+        reason: "테스트 제한 해제",
+      },
+    },
+  ];
+
+  try {
+    for (const mutation of mutationCases) {
+      await assert.rejects(
+        () =>
+          mutation.handler(
+            new Request(mutation.url, {
+              method: "POST",
+              headers: {
+                cookie: "silsigan_admin=next-admin-token",
+                "content-type": "application/json",
+                origin: "https://attacker.example",
+                "sec-fetch-site": "cross-site",
+              },
+              body: JSON.stringify(mutation.body),
+            }),
+          ),
+        /교차 출처 관리자 변경 요청을 허용하지 않습니다/,
+      );
+    }
+
+    assert.equal(fetchCalls, 0);
+  } finally {
+    restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
+    restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);
+    restoreEnv("SILSIGAN_WORKER_ADMIN_TOKEN", previousWorkerToken);
+    globalThis.fetch = originalFetch;
+    clearRateLimitBucketsForTests();
   }
 });
 
@@ -777,6 +1683,74 @@ test("admin worker reports route proxies with server token and returns minimal r
       status: "accepted",
       reason: "운영자 승인",
     });
+  } finally {
+    restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
+    restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);
+    restoreEnv("SILSIGAN_WORKER_ADMIN_TOKEN", previousWorkerToken);
+    globalThis.fetch = originalFetch;
+    clearRateLimitBucketsForTests();
+  }
+});
+
+test("admin field report route requires Next auth and proxies moderation safely", async () => {
+  const previousAdminToken = process.env["SILSIGAN_ADMIN_TOKEN"];
+  const previousWorkerBaseUrl = process.env["SILSIGAN_WORKER_API_BASE_URL"];
+  const previousWorkerToken = process.env["SILSIGAN_WORKER_ADMIN_TOKEN"];
+  const originalFetch = globalThis.fetch;
+  const requests: Request[] = [];
+
+  clearRateLimitBucketsForTests();
+  process.env["SILSIGAN_ADMIN_TOKEN"] = "next-admin-token";
+  process.env["SILSIGAN_WORKER_API_BASE_URL"] = "https://worker.example.test";
+  process.env["SILSIGAN_WORKER_ADMIN_TOKEN"] = "worker-admin-token";
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    const fieldReport = {
+      id: "field_report_12345678",
+      placeId: "busan-gwangalli",
+      placeName: "광안리해수욕장",
+      category: "tourism",
+      crowdLevel: "busy",
+      lineStatus: null,
+      parkingStatus: "limited",
+      verifiedRadiusM: 150,
+      verificationMethod: "radius",
+      accuracyBucket: "high",
+      moderationStatus: request.method === "POST" ? "approved" : "pending",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      expiresAt: "2026-07-14T00:30:00.000Z",
+      anonymousUserId: "anon_route_reporter",
+      clientLocation: { latitude: 35.1532, longitude: 129.1186 },
+    };
+    return Response.json({ success: true, data: request.method === "POST" ? fieldReport : [fieldReport] });
+  };
+
+  try {
+    await assert.rejects(
+      () => handleAdminFieldReportsGet(new Request("http://localhost/api/admin/field-reports?status=pending")),
+      /관리자 인증이 필요합니다/,
+    );
+
+    const authHeaders = { "x-silsigan-admin-token": "next-admin-token" };
+    const listPayload = await handleAdminFieldReportsGet(
+      new Request("http://localhost/api/admin/field-reports?status=pending&limit=99", { headers: authHeaders }),
+    );
+    const actionPayload = await handleAdminFieldReportsPost(
+      new Request("http://localhost/api/admin/field-reports", {
+        method: "POST",
+        headers: { ...authHeaders, "content-type": "application/json" },
+        body: JSON.stringify({ reportId: "field_report_12345678", status: "approved", reason: "운영자 승인" }),
+      }),
+    );
+
+    assert.equal(JSON.stringify(listPayload).includes("anon_route_reporter"), false);
+    assert.equal(JSON.stringify(listPayload).includes("35.1532"), false);
+    assert.equal(JSON.stringify(actionPayload).includes("clientLocation"), false);
+    assert.equal(requests[0]?.url, "https://worker.example.test/api/admin/field-reports?limit=50&status=pending");
+    assert.equal(requests[0]?.headers.get("x-silsigan-admin-token"), "worker-admin-token");
+    assert.equal(requests[1]?.url, "https://worker.example.test/api/admin/field-reports/field_report_12345678/action");
+    assert.deepEqual(await requests[1]?.json(), { status: "approved", reason: "운영자 승인" });
   } finally {
     restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
     restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);

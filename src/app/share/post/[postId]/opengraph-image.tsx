@@ -16,11 +16,7 @@ type OpenGraphImageProps = {
 };
 
 const variantGradients: Record<string, string> = {
-  avoid: "linear-gradient(135deg, #ef4444, #f97316)",
-  good: "linear-gradient(135deg, #16a34a, #22c55e)",
-  parking_full: "linear-gradient(135deg, #ea580c, #dc2626)",
-  waiting: "linear-gradient(135deg, #7c3aed, #f97316)",
-  photo_spot: "linear-gradient(135deg, #0f766e, #38bdf8)",
+  neutral: "linear-gradient(135deg, #2563eb, #64748b)",
 };
 
 export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
@@ -47,8 +43,8 @@ export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", color: "#16a34a", fontSize: 34, fontWeight: 900 }}>#실시간</div>
-          <div style={{ display: "flex", padding: "14px 22px", borderRadius: 999, background: "#dcfce7", color: "#15803d", fontSize: 28, fontWeight: 800 }}>
+          <div style={{ display: "flex", color: "#2563eb", fontSize: 34, fontWeight: 900 }}>#실시간</div>
+          <div style={{ display: "flex", padding: "14px 22px", borderRadius: 999, background: "#dbeafe", color: "#1d4ed8", fontSize: 28, fontWeight: 800 }}>
             {post.locationVerified ? "현장 인증" : "상태 제보"}
           </div>
         </div>
@@ -61,7 +57,7 @@ export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
             justifyContent: "flex-end",
             flex: 1,
             marginTop: 28,
-            background: variantGradients[post.shareCard.variant] ?? variantGradients.good,
+            background: variantGradients[post.shareCard.variant] ?? variantGradients.neutral,
             color: "#ffffff",
           }}
         >
@@ -69,9 +65,9 @@ export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
           <div style={{ display: "flex", marginTop: 28, fontSize: 72, lineHeight: 1.05, fontWeight: 900 }}>{post.shareCard.headline}</div>
           <div style={{ display: "flex", marginTop: 24, fontSize: 32, lineHeight: 1.35, fontWeight: 800, whiteSpace: "pre-wrap" }}>{post.shareCard.body}</div>
         </div>
-        <div style={{ display: "flex", gap: 16, marginTop: 28, fontSize: 26, color: "#15803d", fontWeight: 800 }}>
+        <div style={{ display: "flex", gap: 16, marginTop: 28, fontSize: 26, color: "#1d4ed8", fontWeight: 800 }}>
           {post.shareCard.hashtags.slice(0, 4).map((tag) => (
-            <div key={tag} style={{ display: "flex", padding: "12px 18px", borderRadius: 999, background: "#ecfdf3" }}>#{tag}</div>
+            <div key={tag} style={{ display: "flex", padding: "12px 18px", borderRadius: 999, background: "#eff6ff" }}>#{tag}</div>
           ))}
         </div>
       </div>

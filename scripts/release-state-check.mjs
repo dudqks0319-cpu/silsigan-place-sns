@@ -11,11 +11,13 @@ const DEFAULT_RELEASE_STATUS_PATH = "RELEASE_STATUS.md";
 const DEFAULT_UGC_MODERATION_RUNBOOK_PATH = "docs/ugc-moderation-runbook.md";
 const DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH = "docs/cloudflare-cost-usage-runbook.md";
 const DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH = "docs/testflight-review-notes.md";
+const DEFAULT_STORE_PRIVACY_DISCLOSURE_PATH = "docs/store-privacy-disclosure-draft.md";
 const DEFAULT_REAL_DEVICE_QA_LEDGER_PATH = "docs/real-device-qa.md";
 const DEFAULT_V2_DECISION_REGISTER_PATH = "docs/v2-decision-register.md";
 const DEFAULT_V2_LEGAL_OPERATIONS_GATE_PATH = "docs/v2-legal-operations-gate.md";
 const DEFAULT_PRIVACY_PAGE_PATH = "src/app/privacy/page.tsx";
 const DEFAULT_SUPPORT_PAGE_PATH = "src/app/support/page.tsx";
+const DEFAULT_PUBLIC_ENV_PATH = ".env.example";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
@@ -35,6 +37,8 @@ const REQUIRED_RELEASE_LEDGER_FIELDS = [
   "blockers",
   "next_action",
 ];
+const REQUIRED_RELEASE_BLOCKER_FIELDS = ["id", "severity", "status", "owner", "evidence", "due"];
+const ALLOWED_RELEASE_BLOCKER_STATUSES = new Set(["open", "closed"]);
 const REQUIRED_RELEASE_STATUS_SECTIONS = ["# Release Status", "## 한 줄 상태", "## 현재 후보", "## 막힌 항목", "## 다음 행동"];
 const REQUIRED_UGC_MODERATION_RUNBOOK_SECTIONS = [
   "# #실시간 UGC moderation runbook",
@@ -87,6 +91,13 @@ const REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_TOKENS = [
   "storage",
   "budget",
   "TestFlight",
+  "COST_GUARD_STATE",
+  "/api/admin/api-cost-guard",
+  "60%",
+  "70%",
+  "80%",
+  "reconciliation",
+  "WAF",
 ];
 const REQUIRED_TESTFLIGHT_REVIEW_NOTES_SECTIONS = [
   "# #실시간 TestFlight review notes",
@@ -114,6 +125,36 @@ const REQUIRED_TESTFLIGHT_REVIEW_NOTES_TOKENS = [
   "report",
   "hide",
   "delete",
+];
+const REQUIRED_STORE_PRIVACY_DISCLOSURE_SECTIONS = [
+  "# #실시간 App Privacy and Data Safety draft",
+  "## Status And Scope",
+  "## Data Inventory",
+  "## Apple App Privacy",
+  "## Google Play Data Safety",
+  "## Native Enforcement",
+  "## Console Checklist",
+  "## Stop Conditions",
+];
+const REQUIRED_STORE_PRIVACY_DISCLOSURE_TOKENS = [
+  "PrivacyInfo.xcprivacy",
+  "NSPrivacyTracking=false",
+  "App Store Connect",
+  "Google Play Console",
+  "precise location",
+  "photos or videos",
+  "other user content",
+  "search history",
+  "User ID",
+  "Device ID",
+  "product interaction",
+  "other diagnostic data",
+  "allowBackup=false",
+  "dataExtractionRules",
+  "tracking",
+  "legal-safety",
+  "real-device",
+  "draft",
 ];
 const REQUIRED_REAL_DEVICE_QA_LEDGER_SECTIONS = [
   "# #실시간 real-device QA ledger",
@@ -220,6 +261,10 @@ const REQUIRED_ENV_URLS = {
   SILSIGAN_PRODUCTION_PAGES_URL: "production.pages",
   SILSIGAN_PRODUCTION_API_BASE_URL: "production.worker_api",
 };
+const PUBLIC_RELEASE_URL_ENV_NAMES = new Set([
+  ...Object.keys(REQUIRED_POLICY_SUPPORT_URLS),
+  ...Object.keys(REQUIRED_ENV_URLS),
+]);
 const LEGACY_RUNTIME_URL_FILES = [
   ".env",
   ".env.local",
@@ -246,6 +291,7 @@ const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATU
 const ugcModerationRunbookPath = options.get("ugc-moderation-runbook") ?? options.get("ugc-runbook") ?? DEFAULT_UGC_MODERATION_RUNBOOK_PATH;
 const cloudflareCostUsageRunbookPath = options.get("cloudflare-cost-usage-runbook") ?? options.get("cost-usage-runbook") ?? DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH;
 const testFlightReviewNotesPath = options.get("testflight-review-notes") ?? options.get("review-notes") ?? DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH;
+const storePrivacyDisclosurePath = options.get("store-privacy-disclosure") ?? options.get("store-privacy") ?? DEFAULT_STORE_PRIVACY_DISCLOSURE_PATH;
 const realDeviceQaLedgerPath = options.get("real-device-qa") ?? options.get("real-device-qa-ledger") ?? DEFAULT_REAL_DEVICE_QA_LEDGER_PATH;
 const v2DecisionRegisterPath = options.get("v2-decision-register") ?? DEFAULT_V2_DECISION_REGISTER_PATH;
 const v2LegalOperationsGatePath = options.get("v2-legal-operations-gate") ?? DEFAULT_V2_LEGAL_OPERATIONS_GATE_PATH;
@@ -254,12 +300,15 @@ const supportPagePath = options.get("support-page") ?? DEFAULT_SUPPORT_PAGE_PATH
 const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
+const publicEnvPath = options.get("public-env-file") ?? DEFAULT_PUBLIC_ENV_PATH;
+const publicReleaseUrlDefaults = await readPublicReleaseUrlDefaults(publicEnvPath);
 
 await checkLedger(ledgerPath);
 await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath);
 await checkUgcModerationRunbook(ugcModerationRunbookPath);
 await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
 await checkTestFlightReviewNotes(testFlightReviewNotesPath);
+await checkStorePrivacyDisclosure(storePrivacyDisclosurePath);
 await checkRealDeviceQaLedger(realDeviceQaLedgerPath);
 await checkV2DecisionRegister(v2DecisionRegisterPath);
 await checkV2LegalOperationsGate(v2LegalOperationsGatePath);
@@ -286,11 +335,14 @@ const summary = {
   ugcModerationRunbookPath,
   cloudflareCostUsageRunbookPath,
   testFlightReviewNotesPath,
+  storePrivacyDisclosurePath,
   realDeviceQaLedgerPath,
   v2DecisionRegisterPath,
   v2LegalOperationsGatePath,
   privacyPagePath,
   supportPagePath,
+  publicEnvPath,
+  publicEnvUrlNames: [...publicReleaseUrlDefaults.keys()],
   policySupportUrlEnvNames: Object.keys(REQUIRED_POLICY_SUPPORT_URLS),
   checks,
   blockers: summarizeReleaseBlockers(blockers),
@@ -355,6 +407,15 @@ async function checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, so
         ? "pass"
         : "fail",
       "release-ledger.yaml must point to docs/current-release-state.md as the detailed source of truth.",
+    );
+    const parsedBlockers = parseReleaseBlockers(releaseLedger);
+    record(
+      "release_harness.ledger.blocker_schema",
+      parsedBlockers.errors.length === 0 ? "pass" : "fail",
+      parsedBlockers.errors.length === 0
+        ? "Every release blocker has the required fail-closed schema and a supported status."
+        : "Every release blocker must define id, severity, status, owner, evidence, and due with a supported status.",
+      { errors: parsedBlockers.errors },
     );
     const openBlockerIds = extractOpenReleaseBlockerIds(releaseLedger);
     record(
@@ -546,6 +607,36 @@ async function checkTestFlightReviewNotes(path) {
   recordNoSecretLikePatterns("testflight_review_notes.doc.redaction", notes, path);
 }
 
+async function checkStorePrivacyDisclosure(path) {
+  let disclosure = "";
+  try {
+    disclosure = await readFile(path, "utf8");
+    record("store_privacy_disclosure.doc", "pass", "App Privacy and Data Safety disclosure draft is present.");
+  } catch (error) {
+    record("store_privacy_disclosure.doc", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_STORE_PRIVACY_DISCLOSURE_SECTIONS) {
+    record(
+      `store_privacy_disclosure.doc.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      disclosure.includes(section) ? "pass" : "fail",
+      `Store privacy disclosure draft must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_STORE_PRIVACY_DISCLOSURE_TOKENS.filter((token) => !disclosure.includes(token));
+  record(
+    "store_privacy_disclosure.doc.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "Store privacy disclosure draft covers platform forms, data inventory, native enforcement, owner review, and stop conditions."
+      : "Store privacy disclosure draft is missing required platform or data-handling tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("store_privacy_disclosure.doc.redaction", disclosure, path);
+}
+
 async function checkRealDeviceQaLedger(path) {
   let ledger = "";
   try {
@@ -617,7 +708,7 @@ function checkPolicySupportUrls() {
   const parsedUrls = new Map();
 
   for (const [envVarName, checkName] of Object.entries(REQUIRED_POLICY_SUPPORT_URLS)) {
-    const parsed = parseRequiredHttpsUrl(process.env[envVarName], envVarName, `policy_url.${checkName}`);
+    const parsed = parseRequiredHttpsUrl(releaseUrlValue(envVarName), envVarName, `policy_url.${checkName}`);
     if (parsed) {
       parsedUrls.set(checkName, parsed.href);
     }
@@ -703,19 +794,17 @@ function summarizeReleaseBlockers(failedChecks) {
 }
 
 function extractOpenReleaseBlockerIds(releaseLedger) {
-  return extractOpenReleaseBlockerBlocks(releaseLedger).map((blocker, index) => {
-    const idMatch = blocker.match(/^\s*(?:-\s*)?id:\s*"?([^"\n]+)"?\s*$/m);
-    return idMatch?.[1] ?? `open-blocker-${index + 1}`;
-  });
+  return parseReleaseBlockers(releaseLedger).blockers
+    .filter((blocker) => blocker.status === "open")
+    .map((blocker, index) => blocker.id || `open-blocker-${index + 1}`);
 }
 
 function extractOpenReleaseBlockerEvidenceTokens(releaseLedger) {
   const evidenceTokens = new Set();
   const evidenceTokenPattern = /deployment_url\.\*|docs\/current-release-state\.md|[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+/g;
 
-  for (const blocker of extractOpenReleaseBlockerBlocks(releaseLedger)) {
-    const evidenceMatch = blocker.match(/^\s*evidence:\s*"?([^"\n]+)"?\s*$/m);
-    const evidence = evidenceMatch?.[1] ?? "";
+  for (const blocker of parseReleaseBlockers(releaseLedger).blockers.filter((candidate) => candidate.status === "open")) {
+    const evidence = blocker.evidence ?? "";
     for (const token of evidence.match(evidenceTokenPattern) ?? []) {
       evidenceTokens.add(token);
     }
@@ -724,18 +813,155 @@ function extractOpenReleaseBlockerEvidenceTokens(releaseLedger) {
   return [...evidenceTokens];
 }
 
-function extractOpenReleaseBlockerBlocks(releaseLedger) {
-  const blockersMatch = releaseLedger.match(/\nblockers:\n(?<body>[\s\S]*?)(?=\n[A-Za-z_]+:\n|\s*$)/);
-  const blockersBody = blockersMatch?.groups?.body ?? "";
-  if (!blockersBody.trim() || /^\s*\[\]\s*$/m.test(blockersBody)) {
-    return [];
+function parseReleaseBlockers(releaseLedger) {
+  const lines = releaseLedger.split(/\r?\n/);
+  const blockersLineIndex = lines.findIndex((line) => /^blockers\s*:/.test(line));
+  if (blockersLineIndex === -1) {
+    return { blockers: [], errors: ["blockers must be a top-level field."] };
   }
 
-  return blockersBody
-    .split(/\n\s*-\s+/)
-    .map((blocker) => blocker.trim())
-    .filter(Boolean)
-    .filter((blocker) => /^\s*status:\s*"?open"?\s*$/m.test(blocker));
+  const declaration = lines[blockersLineIndex].trim();
+  if (/^blockers\s*:\s*\[\]\s*(?:#.*)?$/.test(declaration)) {
+    return { blockers: [], errors: [] };
+  }
+  if (!/^blockers\s*:\s*(?:#.*)?$/.test(declaration)) {
+    return { blockers: [], errors: ["blockers must be [] or an indented list of mappings."] };
+  }
+
+  const blockers = [];
+  const errors = [];
+  let current = null;
+  let sawListContent = false;
+
+  const finishCurrent = () => {
+    if (current) {
+      blockers.push(current);
+      current = null;
+    }
+  };
+
+  for (let index = blockersLineIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (trimmed && !line.startsWith(" ") && !line.startsWith("\t")) {
+      break;
+    }
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    sawListContent = true;
+    if (line.includes("\t")) {
+      errors.push(`blockers line ${index + 1} must use spaces, not tabs.`);
+      continue;
+    }
+
+    const itemMatch = line.match(/^  -\s+([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/);
+    const fieldMatch = line.match(/^    ([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/);
+    if (itemMatch) {
+      finishCurrent();
+      current = {};
+      assignReleaseBlockerField(current, itemMatch[1], itemMatch[2], blockers.length, index + 1, errors);
+      continue;
+    }
+    if (fieldMatch && current) {
+      assignReleaseBlockerField(current, fieldMatch[1], fieldMatch[2], blockers.length, index + 1, errors);
+      continue;
+    }
+
+    errors.push(`blockers line ${index + 1} must be a flat list mapping indented by two spaces.`);
+  }
+  finishCurrent();
+
+  if (!sawListContent) {
+    errors.push("blockers must be [] or contain at least one list item.");
+  }
+
+  const seenIds = new Set();
+  blockers.forEach((blocker, index) => {
+    for (const field of REQUIRED_RELEASE_BLOCKER_FIELDS) {
+      if (typeof blocker[field] !== "string" || blocker[field].trim().length === 0) {
+        errors.push(`blockers[${index}].${field} is required.`);
+      }
+    }
+    if (blocker.status && !ALLOWED_RELEASE_BLOCKER_STATUSES.has(blocker.status)) {
+      errors.push(`blockers[${index}].status must be one of "open" or "closed".`);
+    }
+    if (blocker.id) {
+      if (seenIds.has(blocker.id)) {
+        errors.push(`blockers[${index}].id must be unique.`);
+      }
+      seenIds.add(blocker.id);
+    }
+  });
+
+  return { blockers, errors: [...new Set(errors)] };
+}
+
+function assignReleaseBlockerField(blocker, field, rawValue, blockerIndex, lineNumber, errors) {
+  if (Object.hasOwn(blocker, field)) {
+    errors.push(`blockers[${blockerIndex}].${field} must not be repeated.`);
+    return;
+  }
+
+  const parsed = parseReleaseLedgerScalar(rawValue);
+  if (!parsed.ok) {
+    errors.push(`blockers line ${lineNumber} field ${field} must be a single-line scalar.`);
+    return;
+  }
+  blocker[field] = parsed.value;
+}
+
+function parseReleaseLedgerScalar(rawValue) {
+  const value = stripReleaseLedgerInlineComment(rawValue).trim();
+  if (!value || /^[\[{>|]/.test(value)) {
+    return { ok: false, value: "" };
+  }
+
+  if (value.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(value);
+      return typeof parsed === "string" ? { ok: true, value: parsed } : { ok: false, value: "" };
+    } catch {
+      return { ok: false, value: "" };
+    }
+  }
+
+  if (value.startsWith("'")) {
+    if (!value.endsWith("'") || value.length < 2) {
+      return { ok: false, value: "" };
+    }
+    return { ok: true, value: value.slice(1, -1).replaceAll("''", "'") };
+  }
+
+  if (value.includes('"') || value.includes("'")) {
+    return { ok: false, value: "" };
+  }
+  return { ok: true, value };
+}
+
+function stripReleaseLedgerInlineComment(rawValue) {
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < rawValue.length; index += 1) {
+    const character = rawValue[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === '"' && character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = quote === character ? null : quote ?? character;
+      continue;
+    }
+    if (character === "#" && quote === null && (index === 0 || /\s/.test(rawValue[index - 1]))) {
+      return rawValue.slice(0, index);
+    }
+  }
+  return rawValue;
 }
 
 function extractMarkdownSection(markdown, heading) {
@@ -847,6 +1073,7 @@ async function checkOpenNextAdapter() {
       "cf:web:dry-run": "wrangler deploy --dry-run --env=\"\" --config wrangler.jsonc",
       "cf:web:dry-run:staging": "wrangler deploy --dry-run --env staging --config wrangler.jsonc",
       "cf:web:dry-run:production": "wrangler deploy --dry-run --env production --config wrangler.jsonc",
+      "cf:rollback:drill": "node scripts/cloudflare-rollback-drill.mjs",
     };
 
     for (const [scriptName, expectedCommand] of Object.entries(requiredScripts)) {
@@ -955,7 +1182,7 @@ function checkDeploymentUrls() {
   const parsedUrls = new Map();
 
   for (const [envVarName, checkName] of Object.entries(REQUIRED_ENV_URLS)) {
-    const parsed = parseDeploymentUrl(process.env[envVarName], envVarName, checkName);
+    const parsed = parseDeploymentUrl(releaseUrlValue(envVarName), envVarName, checkName);
     if (parsed) {
       parsedUrls.set(checkName, parsed.href);
     }
@@ -967,6 +1194,58 @@ function checkDeploymentUrls() {
 
 function parseDeploymentUrl(value, envVarName, checkName) {
   return parseRequiredHttpsUrl(value, envVarName, `deployment_url.${checkName}`, { messageSubject: "deployment-shaped" });
+}
+
+function releaseUrlValue(envVarName) {
+  if (Object.prototype.hasOwnProperty.call(process.env, envVarName)) {
+    return process.env[envVarName];
+  }
+
+  return publicReleaseUrlDefaults.get(envVarName);
+}
+
+async function readPublicReleaseUrlDefaults(path) {
+  let content;
+  try {
+    content = await readFile(path, "utf8");
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      record("public_release_env.file", "warn", `Public release URL defaults could not be read: ${publicErrorMessage(error)}`);
+    }
+    return new Map();
+  }
+
+  const values = new Map();
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const envVarName = line.slice(0, separatorIndex).trim();
+    if (!PUBLIC_RELEASE_URL_ENV_NAMES.has(envVarName)) {
+      continue;
+    }
+
+    values.set(envVarName, stripOptionalEnvQuotes(line.slice(separatorIndex + 1).trim()));
+  }
+
+  return values;
+}
+
+function stripOptionalEnvQuotes(value) {
+  if (value.length < 2) {
+    return value;
+  }
+
+  const first = value[0];
+  const last = value.at(-1);
+  return (first === '"' && last === '"') || (first === "'" && last === "'") ? value.slice(1, -1) : value;
 }
 
 function parseRequiredHttpsUrl(value, envVarName, checkName, options = {}) {

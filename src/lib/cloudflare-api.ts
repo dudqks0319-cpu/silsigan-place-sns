@@ -1,4 +1,52 @@
-import type { FeatureFlagKey, LiveSignalDimension } from "../../packages/contracts/src/index.ts";
+import {
+  DEFAULT_FEATURE_FLAGS,
+  PHOTO_RIGHTS_TERMS_VERSION,
+  featureFlagKeys,
+  liveSignalDimensions,
+  type FeatureFlagKey,
+  type HashtagSummary,
+  type ListHashtagParams,
+  type LiveSignalDimension,
+} from "../../packages/contracts/src/index.ts";
+
+type UnknownRecord = Record<string, unknown>;
+
+function isUnknownRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeDimensionSettings(value: unknown): CloudflareRuntimeConfig["dimensionSettings"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((candidate) => {
+    if (!isUnknownRecord(candidate)) {
+      return [];
+    }
+
+    const { settingKey, dimension, defaultTtlSeconds, currentEligible } = candidate;
+    const validDimension = dimension === null
+      || (typeof dimension === "string" && liveSignalDimensions.includes(dimension as LiveSignalDimension));
+    if (
+      typeof settingKey !== "string"
+      || settingKey.trim().length === 0
+      || !validDimension
+      || !Number.isInteger(defaultTtlSeconds)
+      || (defaultTtlSeconds as number) <= 0
+      || typeof currentEligible !== "boolean"
+    ) {
+      return [];
+    }
+
+    return [{
+      settingKey: settingKey.trim(),
+      dimension: dimension as LiveSignalDimension | null,
+      defaultTtlSeconds: defaultTtlSeconds as number,
+      currentEligible,
+    }];
+  });
+}
 
 export type CloudflareApiSuccess<TData> = {
   success: true;
@@ -116,7 +164,48 @@ export type CloudflareRuntimeConfig = {
     defaultTtlSeconds: number;
     currentEligible: boolean;
   }>;
+  photoUploadProtection: {
+    turnstileRequired: boolean;
+    turnstileSiteKey: string | null;
+  };
 };
+
+export const FAIL_CLOSED_PHOTO_UPLOAD_PROTECTION: CloudflareRuntimeConfig["photoUploadProtection"] = {
+  turnstileRequired: true,
+  turnstileSiteKey: null,
+};
+
+export function normalizeCloudflareRuntimeConfig(value: unknown): CloudflareRuntimeConfig {
+  if (!isUnknownRecord(value) || value.contractVersion !== 2 || (value.dataMode !== "live" && value.dataMode !== "demo")) {
+    throw new Error("실시간 API 설정 응답이 올바르지 않습니다.");
+  }
+
+  const rawFlags = isUnknownRecord(value.featureFlags) ? value.featureFlags : {};
+  const featureFlags = Object.fromEntries(
+    featureFlagKeys.map((key) => [key, rawFlags[key] === true]),
+  ) as Record<FeatureFlagKey, boolean>;
+  const rawProtection = isUnknownRecord(value.photoUploadProtection) ? value.photoUploadProtection : null;
+  const hasValidProtection = rawProtection !== null
+    && typeof rawProtection.turnstileRequired === "boolean"
+    && Object.hasOwn(rawProtection, "turnstileSiteKey")
+    && (rawProtection.turnstileSiteKey === null || typeof rawProtection.turnstileSiteKey === "string");
+  const photoUploadProtection = hasValidProtection
+    ? {
+        turnstileRequired: rawProtection.turnstileRequired as boolean,
+        turnstileSiteKey: typeof rawProtection.turnstileSiteKey === "string"
+          ? rawProtection.turnstileSiteKey.trim() || null
+          : null,
+      }
+    : { ...FAIL_CLOSED_PHOTO_UPLOAD_PROTECTION };
+
+  return {
+    contractVersion: 2,
+    dataMode: value.dataMode,
+    featureFlags: { ...DEFAULT_FEATURE_FLAGS, ...featureFlags },
+    dimensionSettings: normalizeDimensionSettings(value.dimensionSettings),
+    photoUploadProtection,
+  };
+}
 
 export type CloudflarePlaceStatus = {
   contractVersion: 2;
@@ -137,7 +226,7 @@ export type CloudflarePlaceStatus = {
     attributionText?: string;
     observedAt: string;
     fetchedAt: string;
-    expiresAt?: string;
+    expiresAt: string;
     confidenceScore: number;
     isEstimated: boolean;
     isExpired: false;
@@ -151,15 +240,26 @@ export type CloudflarePlaceStatus = {
   computedAt: string;
 };
 
-export type CompletePhotoInput = {
-  uploadId: string;
+export type UploadPhotoInput = {
   placeId: string;
   byteSize: number;
   mimeType: "image/webp" | "image/jpeg";
   width: number;
   height: number;
   clientReencoded: true;
-  imageBase64?: string;
+  rightsAttested: true;
+  rightsPolicyVersion: typeof PHOTO_RIGHTS_TERMS_VERSION;
+  blob: Blob;
+};
+
+export type PhotoUploadTicket = {
+  uploadId: string;
+  method: "POST";
+  uploadUrl: "/api/photos/upload";
+  storageKey: string;
+  ticket: string | null;
+  expiresAt: string | null;
+  rightsPolicyVersion: typeof PHOTO_RIGHTS_TERMS_VERSION;
 };
 
 export type ListRankingParams = {
@@ -176,12 +276,13 @@ export type CloudflareApiClient = {
   getPlaceStatus: (placeId: string) => Promise<CloudflareApiSuccess<CloudflarePlaceStatus>>;
   listPlaces: (params?: { limit?: number; bbox?: string; lat?: number; lng?: number; radius?: number; regionId?: string; categoryId?: string }) => Promise<CloudflareApiSuccess<CloudflarePlace[]>>;
   listRankings: (params?: ListRankingParams) => Promise<CloudflareApiSuccess<CloudflareRanking[]>>;
+  listHashtags: (params?: ListHashtagParams) => Promise<CloudflareApiSuccess<HashtagSummary[]>>;
   listComments: (params?: { placeId?: string; limit?: number }) => Promise<CloudflareApiSuccess<CloudflareComment[]>>;
   createComment: (input: { placeId: string; body: string }) => Promise<CloudflareApiSuccess<CloudflareComment>>;
   likePlace: (placeId: string) => Promise<CloudflareApiSuccess<{ placeId: string; likeCount: number; created: boolean }>>;
   unlikePlace: (placeId: string) => Promise<CloudflareApiSuccess<{ placeId: string; likeCount: number; deleted: boolean }>>;
   likeComment: (commentId: string) => Promise<CloudflareApiSuccess<{ commentId: string; likeCount: number; created: boolean }>>;
-  completePhoto: (input: CompletePhotoInput) => Promise<CloudflareApiSuccess<{ photo: CloudflarePhoto; storageKey: string }>>;
+  uploadPhoto: (input: UploadPhotoInput) => Promise<CloudflareApiSuccess<{ photo: CloudflarePhoto; storageKey: string }>>;
   clickPhoto: (photoId: string) => Promise<CloudflareApiSuccess<{ photoId: string; clickCount: number; created: boolean }>>;
   createReport: (input: Pick<CloudflareReport, "targetType" | "targetId" | "reason"> & { note?: string }) => Promise<CloudflareApiSuccess<CloudflareReport>>;
   getRealtimeRoom: (scope: CloudflareRealtimeRoom["scope"], roomId?: string) => Promise<CloudflareApiSuccess<CloudflareRealtimeRoom>>;
@@ -193,7 +294,7 @@ export function createCloudflareApiClient(options: CloudflareApiClientOptions): 
 
   async function request<TData>(path: string, init: RequestInit = {}): Promise<CloudflareApiSuccess<TData>> {
     const headers = new Headers(init.headers);
-    if (!headers.has("content-type") && init.body) {
+    if (!headers.has("content-type") && typeof init.body === "string") {
       headers.set("content-type", "application/json");
     }
 
@@ -235,6 +336,9 @@ export function createCloudflareApiClient(options: CloudflareApiClientOptions): 
     listRankings(params = {}) {
       return request(`/api/rankings${query(params)}`);
     },
+    listHashtags(params = {}) {
+      return request(`/api/hashtags${query(params)}`);
+    },
     listComments(params = {}) {
       return request(`/api/comments${query(params)}`);
     },
@@ -259,10 +363,45 @@ export function createCloudflareApiClient(options: CloudflareApiClientOptions): 
         method: "POST",
       });
     },
-    completePhoto(input) {
-      return request("/api/photos/complete", {
+    async uploadPhoto(input) {
+      const ticket = await request<PhotoUploadTicket>("/api/photos/upload-ticket", {
         method: "POST",
-        body: JSON.stringify(input),
+        body: JSON.stringify({
+          placeId: input.placeId,
+          mimeType: input.mimeType,
+          byteSize: input.byteSize,
+          width: input.width,
+          height: input.height,
+          rightsAttested: input.rightsAttested,
+          rightsPolicyVersion: input.rightsPolicyVersion,
+        }),
+      });
+
+      if (
+        ticket.data.method !== "POST"
+        || ticket.data.uploadUrl !== "/api/photos/upload"
+        || ticket.data.rightsPolicyVersion !== input.rightsPolicyVersion
+      ) {
+        throw new CloudflareApiError(502, "PHOTO_UPLOAD_CONTRACT_INVALID", "사진 업로드 계약을 확인할 수 없습니다.");
+      }
+
+      const formData = new FormData();
+      formData.set("uploadId", ticket.data.uploadId);
+      if (ticket.data.ticket && ticket.data.expiresAt) {
+        formData.set("ticket", ticket.data.ticket);
+        formData.set("ticketExpiresAt", ticket.data.expiresAt);
+      }
+      formData.set("placeId", input.placeId);
+      formData.set("byteSize", String(input.byteSize));
+      formData.set("mimeType", input.mimeType);
+      formData.set("width", String(input.width));
+      formData.set("height", String(input.height));
+      formData.set("clientReencoded", "true");
+      formData.set("file", input.blob, `upload.${input.mimeType === "image/jpeg" ? "jpg" : "webp"}`);
+
+      return request("/api/photos/upload", {
+        method: "POST",
+        body: formData,
       });
     },
     clickPhoto(photoId) {
@@ -296,7 +435,7 @@ export class CloudflareApiError extends Error {
   }
 }
 
-function query(params: Record<string, string | number | undefined>): string {
+function query(params: Record<string, string | number | boolean | undefined>): string {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined) {

@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   classifyR2BucketListResult,
+  classifyR2CustomDomainListResult,
+  classifyR2DevUrlResult,
   sanitizeWranglerOutput,
 } from "./cloudflare-external-state-check.mjs";
 
@@ -158,15 +160,44 @@ async function main() {
       break;
     }
 
-    if (!plan.apply || listResult.missingBuckets.length === 0) {
-      continue;
+    if (plan.apply && listResult.missingBuckets.length > 0) {
+      for (const missingBucketName of listResult.missingBuckets) {
+        const createStep = target.steps.find((step) => step.name === "r2.bucket.create" && step.bucketName === missingBucketName);
+        const createResult = await runStep(target.envName, createStep, plan.timeoutMs);
+        results.push(createResult);
+        if (createResult.status === "fail") {
+          break;
+        }
+      }
+
+      if (results.at(-1)?.status === "fail") {
+        break;
+      }
+
+      const verifyResult = await runListStep(target, listStep, plan.timeoutMs, false, "r2.buckets.verify");
+      results.push(verifyResult);
+      if (verifyResult.status === "fail") {
+        break;
+      }
     }
 
-    for (const missingBucketName of listResult.missingBuckets) {
-      const createStep = target.steps.find((step) => step.name === "r2.bucket.create" && step.bucketName === missingBucketName);
-      const createResult = await runStep(target.envName, createStep, plan.timeoutMs);
-      results.push(createResult);
-      if (createResult.status === "fail") {
+    for (const bucketName of target.bucketNames) {
+      const devUrlStep = target.steps.find((step) => step.name === "r2.bucket.dev-url.get" && step.bucketName === bucketName);
+      const customDomainStep = target.steps.find((step) => step.name === "r2.bucket.domain.list" && step.bucketName === bucketName);
+      const devUrlResult = await runPrivacyStep(target.envName, devUrlStep, plan.timeoutMs, classifyR2DevUrlResult);
+      results.push(devUrlResult);
+      if (devUrlResult.status === "fail") {
+        break;
+      }
+
+      const customDomainResult = await runPrivacyStep(
+        target.envName,
+        customDomainStep,
+        plan.timeoutMs,
+        classifyR2CustomDomainListResult,
+      );
+      results.push(customDomainResult);
+      if (customDomainResult.status === "fail") {
         break;
       }
     }
@@ -174,8 +205,6 @@ async function main() {
     if (results.at(-1)?.status === "fail") {
       break;
     }
-
-    results.push(await runListStep(target, listStep, plan.timeoutMs, false, "r2.buckets.verify"));
   }
 
   const ok = results.length > 0 && results.every((result) => result.status === "pass");
@@ -202,6 +231,20 @@ function buildTargetSteps(target, configPath, apply) {
       command: "npx",
       args: ["--yes", "wrangler", "r2", "bucket", "create", bucket.bucketName, "--env", target.envName, "--config", configPath],
       applyOnly: true,
+    });
+    steps.push({
+      name: "r2.bucket.dev-url.get",
+      bucketName: bucket.bucketName,
+      binding: bucket.binding,
+      command: "npx",
+      args: ["--yes", "wrangler", "r2", "bucket", "dev-url", "get", bucket.bucketName, "--env", target.envName, "--config", configPath],
+    });
+    steps.push({
+      name: "r2.bucket.domain.list",
+      bucketName: bucket.bucketName,
+      binding: bucket.binding,
+      command: "npx",
+      args: ["--yes", "wrangler", "r2", "bucket", "domain", "list", bucket.bucketName, "--env", target.envName, "--config", configPath],
     });
   }
 
@@ -234,6 +277,31 @@ async function runStep(envName, targetStep, timeoutMs) {
     ...(commandResult.exitCode === 0
       ? { outputTail: sanitizeWranglerOutput(tail(commandResult.stdout, 1_500)) }
       : { errorTail: sanitizeWranglerOutput(tail(`${commandResult.stdout}\n${commandResult.stderr}`, 2_000)) }),
+  };
+}
+
+async function runPrivacyStep(envName, targetStep, timeoutMs, classify) {
+  const startedAt = Date.now();
+  if (!targetStep) {
+    return {
+      name: `${envName}.r2.bucket.privacy.plan`,
+      status: "fail",
+      durationMs: Date.now() - startedAt,
+      check: {
+        status: "fail",
+        code: "R2_PRIVACY_PLAN_REQUIRED",
+        message: "R2 privacy verification step is missing from the release plan.",
+      },
+    };
+  }
+
+  const commandResult = await runCommand(targetStep.command, targetStep.args, timeoutMs);
+  const check = classify(commandResult, targetStep.bucketName);
+  return {
+    name: `${envName}.${targetStep.name}.${targetStep.bucketName}`,
+    status: check.status,
+    durationMs: Date.now() - startedAt,
+    check,
   };
 }
 
@@ -353,6 +421,8 @@ function printHelp() {
 Plans, checks, or explicitly creates Cloudflare R2 release buckets:
   wrangler r2 bucket list --env <env>
   wrangler r2 bucket create <bucket> --env <env>       only with --apply and only for missing buckets
+  wrangler r2 bucket dev-url get <bucket>               must prove r2.dev access is disabled
+  wrangler r2 bucket domain list <bucket>               must prove no direct public custom domain exists
 
 Options:
   --env=staging|production     Required target environment. --apply allows exactly one env.

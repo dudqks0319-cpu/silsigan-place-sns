@@ -1,7 +1,7 @@
 # #실시간 real-device QA ledger
 
-Updated: 2026-06-27
-Status: blocked until Cloudflare staging URLs and R2 are ready.
+Updated: 2026-07-20
+Status: last clean simulator launch and local browser account-deletion E2E passed; current Android build recheck passes, while the 2026-07-20 iOS recheck is environment-blocked by CoreSimulator memory allocation. Live API/R2, signed builds, and real devices remain blocked.
 
 ## Scope
 
@@ -11,20 +11,26 @@ This ledger records the device evidence required before TestFlight internal test
 
 | Item | Current state |
 | --- | --- |
-| Staging Pages URL | missing |
-| Staging Worker API URL | missing |
-| R2 staging bucket visibility | blocked by `R2_NOT_ENABLED` |
-| Staging D1 `0002` | applied and verified |
-| Production D1 `0002` | applied and verified |
+| Staging Pages URL | `https://silsigan-web-staging.dudqks0319.workers.dev`; visible nationwide fallback-data UI confirmed |
+| Staging Worker API URL | missing; `silsigan-api-staging` is not deployed |
+| R2 staging bucket visibility | blocked; account check returns `R2_NOT_ENABLED` until the user completes payment/terms checkout and final activation |
+| Staging D1 through `0026` | verified through `0025`; only `0026_global_api_cost_guard.sql` remains pending |
+| Production D1 through `0026` | current read-only classifier returns `D1_0006_NOT_APPLIED`; production apply requires separate approval after clean staging evidence |
+| Capacitor native skeleton | local iOS/Android projects, permissions, and `SilsiganShell.openSettings` adapter present |
+| Native static checks | `swiftc -parse`, plist/XML validation, WebView check, and mobile shell verify pass |
+| Native build prerequisites | Homebrew OpenJDK 21/Android SDK compile successfully; iOS project/package resolution and plist validation pass. The last clean unsigned iOS Simulator Debug build is from 2026-07-19; the 2026-07-20 rerun cannot initialize CoreSimulatorService (`Cannot allocate memory`) before asset compilation. |
 | TestFlight build | not selected |
-| Android internal/debug build | not selected |
+| iOS Simulator evidence | actual staging URL injected; the last clean iPhone 17 / iOS 26.2 Debug build, install, and launch pass is `artifacts/ios-simulator/staging-home.png`. A 2026-07-20 service-only restart did not recover CoreSimulator device-set allocation, so no newer simulator result is claimed. |
+| Android internal/debug build | actual staging URL injected; 2026-07-20 local debug APK regenerated with JDK 21, while no emulator/real device is attached and release signing, installation, and real-device run remain pending |
+| Android local build evidence | 2026-07-20 `:app:lintDebug` and `:app:assembleDebug` pass with packaged backup/device-transfer rules and app-scoped FileProvider; SHA-256 remains `7439ae76464221f4dd26ae1ef7c4b5753b92ea52d49811b8d12244e53c4ae90f` |
+| Local account-deletion evidence | 390x844 mock-only browser E2E passed: exact phrase gate, permanent deletion request, zero owned content, new anonymous session, and old proof rejected with 403; screenshot `artifacts/cloudflare-pages-smoke-account-deletion-final/pages-smoke-account-deletion-1784495121454.png` |
 
 ## iPhone QA Matrix
 
 | Flow | Required evidence | Result |
 | --- | --- | --- |
-| App launch | Build number, device model, iOS version, first screen screenshot | blocked-staging |
-| Naver map display | Map or fallback map visible, marker hit-test works | blocked-staging |
+| App launch | Build number, device model, iOS version, first screen screenshot | simulator-pass; real-device pending |
+| Naver map display | Map or fallback map visible, marker hit-test works | simulator-render-pass; live API/real-device pending |
 | Location allow | Permission prompt, current-location marker, no raw coordinate display | blocked-staging |
 | Location deny | Region selection remains usable | blocked-staging |
 | Place detail | Place marker/ranking item opens detail sheet | blocked-staging |
@@ -35,6 +41,7 @@ This ledger records the device evidence required before TestFlight internal test
 | Like/unlike | Count/state changes and duplicate action is bounded | blocked-staging |
 | Ranking refresh | Nationwide/region/map-bounds TOP 10 updates or cache evidence is recorded | blocked-staging |
 | Report/moderation | User report succeeds, admin hide/delete affects public UI | blocked-staging |
+| Account/data deletion | Exact confirmation, owned-data purge, new session, old-proof rejection | local-browser-pass; staging/native pending |
 | Privacy redaction | No raw coordinate, original filename, token, or anonymous id visible in UI/log sample | blocked-staging |
 | Crash check | No crash during the full script | blocked-staging |
 
@@ -53,6 +60,7 @@ This ledger records the device evidence required before TestFlight internal test
 | Like/unlike | Count/state changes and duplicate action is bounded | blocked-staging |
 | Ranking refresh | Nationwide/region/map-bounds TOP 10 updates or cache evidence is recorded | blocked-staging |
 | Report/moderation | User report succeeds, admin hide/delete affects public UI | blocked-staging |
+| Account/data deletion | Exact confirmation, owned-data purge, new session, old-proof rejection | local-browser-pass; staging/native pending |
 | Crash check | No crash during the full script | blocked-staging |
 
 ## Evidence Naming

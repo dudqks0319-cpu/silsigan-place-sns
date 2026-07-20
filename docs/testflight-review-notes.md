@@ -1,11 +1,11 @@
 # #실시간 TestFlight review notes
 
-Updated: 2026-06-26
+Updated: 2026-07-20
 Scope: Cloudflare-backed TestFlight MVP evidence. This is not an App Store production submission packet.
 
 ## Beta App Description
 
-#실시간 is a TestFlight beta for checking nearby and nationwide place activity on a map. Test users can open a place, read or write comments, upload a field photo, like a place, view TOP 10 rankings, and report unsafe or inappropriate UGC. The current beta runs against Cloudflare staging so the team can prove Workers, D1, R2, Durable Objects, moderation, and real-device behavior before production submission.
+#실시간 is a TestFlight beta for checking recent field photos and their observation times before visiting a place. Nationwide search and reporting are available, while the map is a supporting discovery surface. Test users can open a place, read or write comments, upload a field photo, like a place, view evidence-based TOP 10 rankings, and report unsafe or inappropriate UGC. The current beta runs against Cloudflare staging so the team can prove Workers, D1, R2, Durable Objects, moderation, and real-device behavior before production submission.
 
 ## Reviewer Instructions
 
@@ -19,7 +19,7 @@ Primary review path:
 4. Submit a report for a place, comment, or photo.
 5. Confirm an operator can hide or delete reported UGC and that hidden content no longer appears in the user surface.
 
-Production App Store submission remains blocked until staging smoke, real-device QA, privacy/support URLs, and UGC operation evidence are complete.
+Production App Store submission remains blocked until staging mutation smoke, R2/D1/Turnstile evidence, real-device QA, named privacy/legal review, and UGC operation evidence are complete.
 
 ## Permissions
 
@@ -41,9 +41,11 @@ Required evidence before broader TestFlight expansion:
 
 ## Privacy And Support URLs
 
-The final privacy policy URL and support URL are still release blockers until `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` are real HTTPS pages that match the implemented data handling. Do not submit external TestFlight review notes with placeholder URLs.
+The final privacy policy URL and support URL are selected as `https://silsigan-web-production.dudqks0319.workers.dev/privacy` and `https://silsigan-web-production.dudqks0319.workers.dev/support`. Both returned HTTP 200 `text/html` on 2026-07-19 and are recorded in `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL`. Do not replace them with placeholders; named legal review and store-console entry are still required.
 
 The privacy policy must describe anonymous IDs, coarse location behavior, photo processing, UGC reports, moderation actions, retention, and deletion or restriction behavior. The support URL must give testers a path to report bugs, unsafe content, privacy concerns, and account/data deletion questions.
+
+The code-matched App Privacy and Google Play Data Safety inventory is maintained in `docs/store-privacy-disclosure-draft.md`. It is a release-gated draft; App Store Connect/Google Play Console entry, final archive privacy report, named legal review, and real-device verification are still required.
 
 ## Staging Evidence
 

@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { PHOTO_RIGHTS_TERMS_VERSION } from "../packages/contracts/src/index.ts";
 import { createCloudflareApiClient } from "../src/lib/cloudflare-api.ts";
 import * as worker from "../workers/api/src/index.ts";
 import * as policies from "../workers/api/src/policies.ts";
 
 const execFileAsync = promisify(execFile);
+const scriptPath = (relativePath: string) => fileURLToPath(new URL(relativePath, import.meta.url));
 const pagesSmoke = await import(new URL("../scripts/cloudflare-pages-smoke.mjs", import.meta.url).href);
 const pagesLocalReportSmoke = await import(new URL("../scripts/cloudflare-pages-local-report-smoke.mjs", import.meta.url).href);
 const releaseGate = await import(new URL("../scripts/cloudflare-release-gate.mjs", import.meta.url).href);
@@ -76,9 +79,81 @@ type PhotoCompleteData = {
   photo: {
     id: string;
     clickCount: number;
+    mimeType: "image/jpeg" | "image/webp";
+    byteSize: number;
     status: "pending" | "ready" | "rejected";
   };
   storageKey: string;
+};
+
+type PhotoUploadTicketData = {
+  uploadId: string;
+  ticket: string;
+  expiresAt: string;
+};
+
+type PhotoCostGuardData = {
+  uploadsEnabled: boolean;
+  readsEnabled: boolean;
+  reason: string | null;
+  activeBytes: number;
+  storageStopBytes: number;
+  writesInPeriod: number;
+  monthlyWriteStopLimit: number;
+  transformPeriodUtc: string;
+  transformsInPeriod: number;
+  monthlyTransformStopLimit: number;
+  readsInPeriod: number;
+  monthlyReadStopLimit: number;
+  dayUtc: string;
+  readsInDay: number;
+  dailyReadStopLimit: number;
+};
+
+type BetaKpiData = {
+  windowDays: 7 | 30;
+  generatedAt: string;
+  privacy: "aggregate-only";
+  audience: {
+    activeUsers: number;
+    appOpens: number;
+  };
+  reportFunnel: {
+    started: number;
+    submitted: number;
+    conversionPercent: number | null;
+    medianCompletionSeconds: number | null;
+  };
+  mapReliability: {
+    succeeded: number;
+    failed: number;
+    successPercent: number | null;
+  };
+  moderation: {
+    submitted: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+    hidden: number;
+    approvalPercent: number | null;
+    reviewedWithin24HoursPercent: number | null;
+  };
+  retention: {
+    d1: { cohortUsers: number; retainedUsers: number; percent: number | null };
+    d7: { cohortUsers: number; retainedUsers: number; percent: number | null };
+  };
+  freshCoverage: {
+    eligiblePlaces: number;
+    coveredPlaces: number;
+    percent: number | null;
+    tierA: { eligiblePlaces: number; coveredPlaces: number; percent: number | null };
+    tierB: { eligiblePlaces: number; coveredPlaces: number; percent: number | null };
+  };
+  runtimeReliability: {
+    appOpenUsers: number;
+    errorUsers: number;
+    errorFreePercent: number | null;
+  };
 };
 
 type FieldReportData = {
@@ -93,6 +168,9 @@ type FieldReportData = {
     localConditions: string[];
     observations: Array<{ dimension: string; valueCode: string; expiresAt: string }>;
     verifiedRadiusM: number | null;
+    verificationMethod: "none" | "radius" | "polygon";
+    accuracyBucket: "high" | "medium" | "low" | "unknown";
+    moderationStatus: "pending" | "approved" | "rejected" | "hidden";
     createdAt: string;
     expiresAt: string;
   };
@@ -111,8 +189,7 @@ type FeedPost = {
   helpfulCount: number;
   hashtagNames: string[];
   hashtags: Array<{ name: string; tagType: string; postCount: number }>;
-  shareCard: { headline: string; body: string; hashtags: string[] };
-  judgement: "가도 좋음" | "주의" | "지금은 비추";
+  shareCard: { headline: string; body: string; hashtags: string[]; url: string };
   safetyWarning: string | null;
   hiddenAt: string | null;
 };
@@ -140,6 +217,37 @@ type ModerationAlertPayload = {
   createdAt: string;
 };
 
+type PhotoCostAlertPayload = {
+  type: "cost.photo-uploads.stopped" | "cost.photo-reads.stopped";
+  reason: string;
+  environment: string;
+  stopPercent: number;
+  activeBytes: number | null;
+  storageStopBytes: number | null;
+  writesInPeriod: number | null;
+  monthlyWriteStopLimit: number | null;
+  transformsInPeriod: number | null;
+  monthlyTransformStopLimit: number | null;
+  readsInPeriod: number | null;
+  monthlyReadStopLimit: number | null;
+  readsInDay: number | null;
+  dailyReadStopLimit: number | null;
+  guardPath: string;
+  createdAt: string;
+};
+
+type ApiCostGuardAlertPayload = {
+  type: "cost.api-guard.warning" | "cost.api-guard.changed";
+  mode: "running" | "degraded" | "stopped";
+  reason: string;
+  metric: "workers_requests" | "d1_rows_read" | "d1_rows_written" | "manual" | null;
+  thresholdPercent: number;
+  generation: number;
+  environment: string;
+  guardPath: string;
+  createdAt: string;
+};
+
 type ReleaseGateStep = {
   name: string;
   args: string[];
@@ -159,13 +267,150 @@ type D1TestPlaceRow = {
   coordinateStatus: "verified" | "TODO_COORDINATE_VERIFY" | "rejected";
 };
 
+function classifyD1MigrationFixture(
+  result: { exitCode: number; stdout: string; stderr: string },
+  envName: string,
+) {
+  let stdout =
+    result.stdout.includes("photo_read_control_rows=1\n") && !result.stdout.includes("photo_transform_budget_rows=")
+      ? result.stdout.replace("photo_read_control_rows=1\n", "photo_read_control_rows=1\nphoto_transform_budget_rows=1\n")
+      : result.stdout;
+  if (stdout.includes("photo_transform_budget_rows=1\n") && !stdout.includes("photo_read_abuse_tables=")) {
+    stdout = stdout.replace("photo_transform_budget_rows=1\n", "photo_transform_budget_rows=1\nphoto_read_abuse_tables=1\n");
+  }
+  if (stdout.includes("photo_read_abuse_tables=1\n") && !stdout.includes("photo_storage_release_tables=")) {
+    stdout = stdout.replace(
+      "photo_read_abuse_tables=1\n",
+      "photo_read_abuse_tables=1\nphoto_storage_release_tables=1\nphoto_storage_release_indexes=1\n",
+    );
+  }
+  if (stdout.includes("photo_storage_release_indexes=1\n") && !stdout.includes("anonymous_session_tables=")) {
+    stdout = stdout.replace(
+      "photo_storage_release_indexes=1\n",
+      "photo_storage_release_indexes=1\nanonymous_session_tables=1\nanonymous_session_indexes=1\n",
+    );
+  }
+  if (stdout.includes("anonymous_session_indexes=1\n") && !stdout.includes("anonymous_session_budget_tables=")) {
+    stdout = stdout.replace(
+      "anonymous_session_indexes=1\n",
+      "anonymous_session_indexes=1\nanonymous_session_budget_tables=1\n",
+    );
+  }
+  if (stdout.includes("anonymous_session_budget_tables=1\n") && !stdout.includes("place_request_tables=")) {
+    stdout = stdout.replace(
+      "anonymous_session_budget_tables=1\n",
+      "anonymous_session_budget_tables=1\nplace_request_tables=2\nplace_request_indexes=2\nplace_request_triggers=1\n",
+    );
+  }
+  if (stdout.includes("place_request_triggers=1\n") && !stdout.includes("api_cost_guard_tables=")) {
+    stdout = stdout.replace(
+      "place_request_triggers=1\n",
+      "place_request_triggers=1\napi_cost_guard_tables=3\napi_cost_guard_indexes=1\napi_cost_guard_control_rows=1\napi_cost_guard_warning_columns=2\n",
+    );
+  }
+  if (stdout.includes("api_cost_guard_control_rows=1\n") && !stdout.includes("api_cost_guard_warning_columns=")) {
+    stdout = stdout.replace(
+      "api_cost_guard_control_rows=1\n",
+      "api_cost_guard_control_rows=1\napi_cost_guard_warning_columns=2\n",
+    );
+  }
+  return externalState.classifyD1MigrationResult({ ...result, stdout }, envName);
+}
+
 const testAdminTokens = JSON.stringify({
   operator: "test-operator-token",
   moderator: "test-moderator-token",
   admin: "test-admin-token",
 });
+const testPhotoUploadSecret = "test-photo-upload-secret-at-least-32-characters";
+const testTurnstileSecret = "t".repeat(32);
+const testPhotoClientIp = "198.51.100.10";
 const tinyJpegBase64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
+
+test("Cloudflare API environments pin browser writes to their deployed web origins", () => {
+  const config = JSON.parse(readFileSync(scriptPath("../workers/api/wrangler.jsonc"), "utf8")) as {
+    vars?: Record<string, string>;
+    ratelimits?: Array<{ name?: string; namespace_id?: string; simple?: { limit?: number; period?: number } }>;
+    env?: Record<
+      string,
+      {
+        vars?: Record<string, string>;
+        ratelimits?: Array<{ name?: string; namespace_id?: string; simple?: { limit?: number; period?: number } }>;
+      }
+    >;
+  };
+  const stagingOrigin = config.env?.staging?.vars?.SILSIGAN_API_ALLOWED_ORIGINS;
+  const productionOrigin = config.env?.production?.vars?.SILSIGAN_API_ALLOWED_ORIGINS;
+  const environments = [config, config.env?.staging, config.env?.production];
+  const publicLimiterNamespaces = environments.map(
+    (environment) => environment?.ratelimits?.find((binding) => binding.name === "PUBLIC_API_RATE_LIMITER")?.namespace_id,
+  );
+  const anonymousSessionLimiterNamespaces = environments.map(
+    (environment) => environment?.ratelimits?.find((binding) => binding.name === "ANONYMOUS_SESSION_RATE_LIMITER")?.namespace_id,
+  );
+
+  assert.equal(stagingOrigin, "https://silsigan-web-staging.dudqks0319.workers.dev");
+  assert.equal(productionOrigin, "https://silsigan-web-production.dudqks0319.workers.dev");
+  assert.notEqual(stagingOrigin, productionOrigin);
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED === "1"), true);
+  assert.equal(config.vars?.SILSIGAN_ANON_SESSION_REQUIRED, "0");
+  assert.equal(config.env?.staging?.vars?.SILSIGAN_ANON_SESSION_REQUIRED, "1");
+  assert.equal(config.env?.production?.vars?.SILSIGAN_ANON_SESSION_REQUIRED, "1");
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_ANON_SESSION_DAILY_LIMIT === "5000"), true);
+  assert.equal(config.vars?.SILSIGAN_PHOTO_TURNSTILE_REQUIRED, "0");
+  assert.equal(config.env?.staging?.vars?.SILSIGAN_PHOTO_TURNSTILE_REQUIRED, "1");
+  assert.equal(config.env?.production?.vars?.SILSIGAN_PHOTO_TURNSTILE_REQUIRED, "1");
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT === "5000"), true);
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT === "1000"), true);
+  assert.equal(
+    environments.every((environment) => {
+      const binding = environment?.ratelimits?.find((candidate) => candidate.name === "PUBLIC_API_RATE_LIMITER");
+      return binding?.simple?.limit === 120 && binding.simple.period === 60;
+    }),
+    true,
+  );
+  assert.equal(new Set(publicLimiterNamespaces).size, 3);
+  assert.equal(publicLimiterNamespaces.every(Boolean), true);
+  assert.equal(
+    environments.every((environment) => {
+      const binding = environment?.ratelimits?.find((candidate) => candidate.name === "ANONYMOUS_SESSION_RATE_LIMITER");
+      return binding?.simple?.limit === 3 && binding.simple.period === 60;
+    }),
+    true,
+  );
+  assert.equal(new Set(anonymousSessionLimiterNamespaces).size, 3);
+  assert.equal(anonymousSessionLimiterNamespaces.every(Boolean), true);
+});
+
+test("Cloudflare background Cron runs in staging and production while source ingestion remains staging-only", () => {
+  const config = JSON.parse(readFileSync(scriptPath("../workers/api/wrangler.jsonc"), "utf8")) as {
+    triggers?: { crons?: string[] };
+    vars?: Record<string, string>;
+    env?: Record<string, { triggers?: { crons?: string[] }; vars?: Record<string, string> }>;
+  };
+
+  assert.deepEqual(config.triggers?.crons, []);
+  assert.deepEqual(config.env?.staging?.triggers?.crons, ["*/5 * * * *"]);
+  assert.deepEqual(config.env?.production?.triggers?.crons, ["*/5 * * * *"]);
+  assert.equal(config.vars?.SILSIGAN_SOURCE_INGESTION_SCHEDULED, "0");
+  assert.equal(config.env?.staging?.vars?.SILSIGAN_SOURCE_INGESTION_SCHEDULED, "1");
+  assert.equal(config.env?.production?.vars?.SILSIGAN_SOURCE_INGESTION_SCHEDULED, "0");
+});
+
+test("Cloudflare realtime rooms use the SQLite Durable Object backend required by free accounts", () => {
+  const config = JSON.parse(readFileSync(scriptPath("../workers/api/wrangler.jsonc"), "utf8")) as {
+    migrations?: Array<{ tag?: string; new_classes?: string[]; new_sqlite_classes?: string[] }>;
+  };
+
+  assert.equal(config.migrations?.some((migration) => (migration.new_classes?.length ?? 0) > 0), false);
+  assert.deepEqual(config.migrations, [
+    {
+      tag: "v1",
+      new_sqlite_classes: ["PlaceRoom", "RegionRoom", "GlobalRoom"],
+    },
+  ]);
+});
 
 test("Cloudflare resource preflight accepts concrete staging and production bindings", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-ready-"));
@@ -173,7 +418,7 @@ test("Cloudflare resource preflight accepts concrete staging and production bind
     const configPath = join(tempDir, "wrangler.jsonc");
     writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
 
-    const output = execFileSync(process.execPath, [new URL("../scripts/cloudflare-resource-preflight.mjs", import.meta.url).pathname, "--config", configPath], {
+    const output = execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-resource-preflight.mjs"), "--config", configPath], {
       encoding: "utf8",
       env: createReadyPreflightProcessEnv(),
     });
@@ -193,7 +438,7 @@ test("Cloudflare resource preflight rejects placeholder staging resource ids", (
     writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "TODO_STAGING_D1_DATABASE_ID", stagingKvId: "TODO_STAGING_KV_NAMESPACE_ID" })), "utf8");
 
     try {
-      execFileSync(process.execPath, [new URL("../scripts/cloudflare-resource-preflight.mjs", import.meta.url).pathname, "--config", configPath, "--env", "staging"], {
+      execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-resource-preflight.mjs"), "--config", configPath, "--env", "staging"], {
         encoding: "utf8",
         env: createReadyPreflightProcessEnv(),
         stdio: "pipe",
@@ -209,6 +454,30 @@ test("Cloudflare resource preflight rejects placeholder staging resource ids", (
   }
 });
 
+test("Cloudflare resource preflight blocks staging without a public Turnstile site key", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-turnstile-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    const config = createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" });
+    config.env.staging.vars.SILSIGAN_TURNSTILE_SITE_KEY = "";
+    writeFileSync(configPath, JSON.stringify(config), "utf8");
+
+    try {
+      execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-resource-preflight.mjs"), "--config", configPath, "--env", "staging"], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("preflight should reject a missing Turnstile site key");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      assert.match(stdout, /staging\.vars\.SILSIGAN_TURNSTILE_SITE_KEY/);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("Cloudflare resource preflight rejects missing or unsafe deployment URLs", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-url-"));
   try {
@@ -216,7 +485,7 @@ test("Cloudflare resource preflight rejects missing or unsafe deployment URLs", 
     writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
 
     try {
-      execFileSync(process.execPath, [new URL("../scripts/cloudflare-resource-preflight.mjs", import.meta.url).pathname, "--config", configPath, "--env", "staging"], {
+      execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-resource-preflight.mjs"), "--config", configPath, "--env", "staging"], {
         encoding: "utf8",
         env: createReadyPreflightProcessEnv({
           SILSIGAN_STAGING_PAGES_URL: "http://user:pass@localhost:3000?token=leak#debug",
@@ -248,7 +517,7 @@ test("Cloudflare resource preflight rejects identical staging and production dep
     writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
 
     try {
-      execFileSync(process.execPath, [new URL("../scripts/cloudflare-resource-preflight.mjs", import.meta.url).pathname, "--config", configPath], {
+      execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-resource-preflight.mjs"), "--config", configPath], {
         encoding: "utf8",
         env: createReadyPreflightProcessEnv({
           SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan-staging.pages.dev",
@@ -346,7 +615,7 @@ test("release state check separates ready fixtures from external release blocker
       "utf8",
     );
 
-    const releaseStateScript = new URL("../scripts/release-state-check.mjs", import.meta.url).pathname;
+    const releaseStateScript = scriptPath("../scripts/release-state-check.mjs");
     const readyOutput = execFileSync(process.execPath, [
       releaseStateScript,
       `--config=${readyConfigPath}`,
@@ -464,7 +733,7 @@ test("release state check requires an operable UGC moderation runbook", () => {
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -527,7 +796,7 @@ test("release state check requires an operable Cloudflare cost and usage runbook
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -590,7 +859,7 @@ test("release state check requires operable TestFlight review notes", () => {
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -627,6 +896,72 @@ test("release state check requires operable TestFlight review notes", () => {
   }
 });
 
+test("release state check requires an operable store privacy disclosure draft", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-store-privacy-disclosure-"));
+  try {
+    const configPath = join(tempDir, "ready-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const incompleteDisclosurePath = join(tempDir, "store-privacy-disclosure-draft.md");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        createPreflightConfig({
+          stagingD1Id: "d1-staging-ready-id",
+          stagingKvId: "kv-staging-ready-id",
+        }),
+      ),
+      "utf8",
+    );
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeFileSync(incompleteDisclosurePath, "# #실시간 App Privacy and Data Safety draft\n\n## Status And Scope\n\ndraft\n", "utf8");
+
+    try {
+      execFileSync(process.execPath, [
+        scriptPath("../scripts/release-state-check.mjs"),
+        `--config=${configPath}`,
+        `--ledger=${ledgerPath}`,
+        `--release-ledger=${releaseLedgerPath}`,
+        `--release-status=${releaseStatusPath}`,
+        `--ugc-runbook=${ugcRunbookPath}`,
+        `--cost-usage-runbook=${costUsageRunbookPath}`,
+        `--review-notes=${testFlightReviewNotesPath}`,
+        `--store-privacy=${incompleteDisclosurePath}`,
+        "--strict",
+      ], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("strict release state should fail when the store privacy disclosure draft is incomplete");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        blockers: string[];
+        checks: Array<{ name: string; status: string; missingTokens?: string[] }>;
+      };
+      const tokenCheck = payload.checks.find((check) => check.name === "store_privacy_disclosure.doc.required_tokens");
+
+      assert.equal(payload.ok, false);
+      assert.ok(payload.blockers.includes("store_privacy_disclosure.doc.apple_app_privacy"));
+      assert.ok(payload.blockers.includes("store_privacy_disclosure.doc.required_tokens"));
+      assert.equal(tokenCheck?.status, "fail");
+      assert.ok(tokenCheck?.missingTokens?.includes("PrivacyInfo.xcprivacy"));
+      assert.ok(tokenCheck?.missingTokens?.includes("Google Play Console"));
+      assert.ok(tokenCheck?.missingTokens?.includes("allowBackup=false"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("release state check requires an operable real-device QA ledger", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-real-device-qa-"));
   try {
@@ -655,7 +990,7 @@ test("release state check requires an operable real-device QA ledger", () => {
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -726,7 +1061,7 @@ test("release state check requires public privacy and support pages", () => {
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -795,7 +1130,7 @@ test("release state check requires final privacy and support URLs", () => {
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -835,6 +1170,69 @@ test("release state check requires final privacy and support URLs", () => {
   }
 });
 
+test("release state check uses allowlisted public URL defaults when process env is absent", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-public-release-env-"));
+  try {
+    const publicEnvPath = join(tempDir, "public-release.env");
+    writeFileSync(
+      publicEnvPath,
+      [
+        "# Only public release URLs may be consumed from this file.",
+        'SILSIGAN_STAGING_PAGES_URL="https://silsigan-staging.pages.dev"',
+        "SILSIGAN_STAGING_API_BASE_URL=https://silsigan-api-staging.workers.dev",
+        "SILSIGAN_PRODUCTION_PAGES_URL=https://silsigan.kr",
+        "SILSIGAN_PRODUCTION_API_BASE_URL=https://api.silsigan.kr",
+        "SILSIGAN_PRIVACY_POLICY_URL=https://silsigan.kr/privacy",
+        "SILSIGAN_SUPPORT_URL=https://silsigan.kr/support",
+        "SILSIGAN_ADMIN_TOKEN=must-not-be-loaded",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const env = { ...process.env };
+    for (const envVarName of [
+      "SILSIGAN_STAGING_PAGES_URL",
+      "SILSIGAN_STAGING_API_BASE_URL",
+      "SILSIGAN_PRODUCTION_PAGES_URL",
+      "SILSIGAN_PRODUCTION_API_BASE_URL",
+      "SILSIGAN_PRIVACY_POLICY_URL",
+      "SILSIGAN_SUPPORT_URL",
+    ]) {
+      delete env[envVarName];
+    }
+
+    const output = execFileSync(
+      process.execPath,
+      [scriptPath("../scripts/release-state-check.mjs"), `--public-env-file=${publicEnvPath}`],
+      { encoding: "utf8", env },
+    );
+    const payload = JSON.parse(output) as {
+      publicEnvPath: string;
+      publicEnvUrlNames: string[];
+      checks: Array<{ name: string; status: string }>;
+    };
+
+    assert.equal(payload.publicEnvPath, publicEnvPath);
+    assert.equal(payload.publicEnvUrlNames.includes("SILSIGAN_ADMIN_TOKEN"), false);
+    for (const checkName of [
+      "policy_url.privacy_policy",
+      "policy_url.support",
+      "deployment_url.staging.pages",
+      "deployment_url.staging.worker_api",
+      "deployment_url.production.pages",
+      "deployment_url.production.worker_api",
+    ]) {
+      assert.ok(
+        payload.checks.some((check) => check.name === checkName && check.status === "pass"),
+        `${checkName} should use its public env-file fallback`,
+      );
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("release state check requires release harness ledger and status docs", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-"));
   try {
@@ -860,7 +1258,7 @@ test("release state check requires release harness ledger and status docs", () =
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${join(tempDir, "missing-release-ledger.yaml")}`,
@@ -914,7 +1312,7 @@ test("release state check blocks on open release harness blockers", () => {
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -948,6 +1346,24 @@ test("release state check blocks on open release harness blockers", () => {
   }
 });
 
+test("release state check fails closed when a release blocker status is missing", () => {
+  const payload = inspectReleaseHarnessBlockerSchema({ blockerStatus: null });
+  const schemaCheck = payload.checks.find((check) => check.name === "release_harness.ledger.blocker_schema");
+
+  assert.equal(schemaCheck?.status, "fail");
+  assert.ok(schemaCheck?.errors?.includes("blockers[0].status is required."));
+  assert.ok(payload.blockers.includes("release_harness.ledger.blocker_schema"));
+});
+
+test("release state check fails closed when a release blocker status is unknown", () => {
+  const payload = inspectReleaseHarnessBlockerSchema({ blockerStatus: "paused" });
+  const schemaCheck = payload.checks.find((check) => check.name === "release_harness.ledger.blocker_schema");
+
+  assert.equal(schemaCheck?.status, "fail");
+  assert.ok(schemaCheck?.errors?.includes('blockers[0].status must be one of "open" or "closed".'));
+  assert.ok(payload.blockers.includes("release_harness.ledger.blocker_schema"));
+});
+
 test("release state check rejects release status missing open blocker evidence", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-harness-evidence-"));
   try {
@@ -977,7 +1393,7 @@ test("release state check rejects release status missing open blocker evidence",
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -1037,7 +1453,7 @@ test("release state check rejects duplicated next action runbook lines", () => {
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -1103,7 +1519,7 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
 
     try {
       execFileSync(process.execPath, [
-        new URL("../scripts/release-state-check.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/release-state-check.mjs"),
         `--config=${configPath}`,
         `--ledger=${ledgerPath}`,
         `--release-ledger=${releaseLedgerPath}`,
@@ -1135,7 +1551,7 @@ test("release state check rejects legacy Supabase and Vercel artifacts", () => {
 });
 
 test("Cloudflare tail redaction smoke accepts redacted captured logs", () => {
-  const output = execFileSync(process.execPath, [new URL("../scripts/cloudflare-staging-smoke.mjs", import.meta.url).pathname, "--tail-only", "--tail-file=tests/fixtures/redacted-worker-tail.log"], {
+  const output = execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-staging-smoke.mjs"), "--tail-only", "--tail-file=tests/fixtures/redacted-worker-tail.log"], {
     encoding: "utf8",
   });
   const payload = JSON.parse(output) as { baseUrl: string | null; ok: boolean; checks: Array<{ name: string; status: string }> };
@@ -1146,7 +1562,7 @@ test("Cloudflare tail redaction smoke accepts redacted captured logs", () => {
     {
       name: "tail.redaction",
       status: "pass",
-      message: "captured tail log에서 raw token/coordinate/anon id/original filename 패턴이 발견되지 않았습니다.",
+      message: "captured tail log에서 raw token/anonymous proof/coordinate/anon id/original filename 패턴이 발견되지 않았습니다.",
       file: "tests/fixtures/redacted-worker-tail.log",
     },
   ]);
@@ -1154,7 +1570,7 @@ test("Cloudflare tail redaction smoke accepts redacted captured logs", () => {
 
 test("Cloudflare staging smoke requires API base URL unless running tail-only", () => {
   try {
-    execFileSync(process.execPath, [new URL("../scripts/cloudflare-staging-smoke.mjs", import.meta.url).pathname], {
+    execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-staging-smoke.mjs")], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -1185,7 +1601,7 @@ test("Cloudflare staging smoke requires API base URL unless running tail-only", 
 
 test("Cloudflare staging smoke can require admin evidence before mutating checks", () => {
   try {
-    execFileSync(process.execPath, [new URL("../scripts/cloudflare-staging-smoke.mjs", import.meta.url).pathname, "--mutating", "--require-admin"], {
+    execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-staging-smoke.mjs"), "--mutating", "--require-admin"], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -1223,6 +1639,8 @@ test("Cloudflare tail redaction smoke rejects raw secrets coordinates anonymous 
         message: "leaky staging request",
         authorization: "Bearer raw-token-value-forbidden",
         admin: "x-silsigan-admin-token: raw-admin-token",
+        anonymousProof: `x-silsigan-anon-proof: ${"P".repeat(43)}`,
+        proof: "Q".repeat(43),
         anonymousId: "anon_leaky_user_12345",
         email: "leaky@example.com",
         latitude: 35.15321,
@@ -1233,7 +1651,7 @@ test("Cloudflare tail redaction smoke rejects raw secrets coordinates anonymous 
     );
 
     try {
-      execFileSync(process.execPath, [new URL("../scripts/cloudflare-staging-smoke.mjs", import.meta.url).pathname, "--tail-only", `--tail-file=${logPath}`], {
+      execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-staging-smoke.mjs"), "--tail-only", `--tail-file=${logPath}`], {
         encoding: "utf8",
         stdio: "pipe",
       });
@@ -1244,7 +1662,7 @@ test("Cloudflare tail redaction smoke rejects raw secrets coordinates anonymous 
 
       assert.equal(payload.ok, false);
       assert.equal(payload.checks.some((check) => check.status === "fail"), true);
-      assert.deepEqual(new Set(payload.checks.flatMap((check) => check.findings ?? [])), new Set(["admin_token_header", "bearer_token", "anonymous_id", "email", "raw_latitude", "raw_longitude", "original_filename"]));
+      assert.deepEqual(new Set(payload.checks.flatMap((check) => check.findings ?? [])), new Set(["admin_token_header", "bearer_token", "anonymous_session_proof", "anonymous_id", "email", "raw_latitude", "raw_longitude", "original_filename"]));
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1256,11 +1674,111 @@ test("Cloudflare Pages browser smoke helpers parse args and redact URLs", () => 
     "--pages-url=https://user:pass@silsigan-staging.pages.dev?token=secret#debug",
     "--api-base-url=https://api.example.test",
     "--mutating",
+    "--local-admin-cost-guard",
+    "--account-deletion",
   ]);
 
   assert.equal(parsed.flags.has("mutating"), true);
+  assert.equal(parsed.flags.has("local-admin-cost-guard"), true);
+  assert.equal(parsed.flags.has("account-deletion"), true);
   assert.equal(parsed.options.get("api-base-url"), "https://api.example.test");
   assert.equal(pagesSmoke.sanitizeUrl(parsed.options.get("pages-url")), "https://silsigan-staging.pages.dev/");
+  assert.equal(pagesSmoke.validateLocalAdminCostGuardTarget(new URL("http://127.0.0.1:3000"), "runtime-test-token"), true);
+  assert.throws(
+    () => pagesSmoke.validateLocalAdminCostGuardTarget(new URL("https://silsigan-staging.example.test"), "runtime-test-token"),
+    /loopback/,
+  );
+  assert.throws(
+    () => pagesSmoke.validateLocalAdminCostGuardTarget(new URL("http://127.0.0.1:3000"), ""),
+    /임시 관리자 토큰/,
+  );
+  assert.equal(pagesSmoke.validateLocalAccountDeletionTarget(new URL("http://127.0.0.1:3000"), true), true);
+  assert.throws(
+    () => pagesSmoke.validateLocalAccountDeletionTarget(new URL("http://127.0.0.1:3000"), false),
+    /mutating/,
+  );
+  assert.throws(
+    () => pagesSmoke.validateLocalAccountDeletionTarget(new URL("https://silsigan-staging.example.test"), true),
+    /loopback/,
+  );
+  assert.throws(
+    () => pagesSmoke.validateLocalAccountDeletionTarget(
+      new URL("http://127.0.0.1:3000"),
+      true,
+      new URL("https://api.example.test"),
+    ),
+    /API.*loopback/,
+  );
+});
+
+test("Cloudflare Pages browser smoke accepts only an unexpired server-bound anonymous session", () => {
+  const now = Date.parse("2026-07-20T00:00:00.000Z");
+  const credential = {
+    anonymousId: "anon_browser_smoke_session",
+    proof: "P".repeat(43),
+    expiresAt: "2026-07-21T00:00:00.000Z",
+  };
+
+  assert.deepEqual(pagesSmoke.parseAnonymousSessionCredential(JSON.stringify(credential), now), credential);
+  assert.equal(
+    pagesSmoke.parseAnonymousSessionCredential(JSON.stringify({ ...credential, proof: "short" }), now),
+    null,
+  );
+  assert.equal(
+    pagesSmoke.parseAnonymousSessionCredential(JSON.stringify({ ...credential, expiresAt: "2026-07-19T00:00:00.000Z" }), now),
+    null,
+  );
+  assert.equal(pagesSmoke.parseAnonymousSessionCredential("not-json", now), null);
+});
+
+test("Cloudflare Pages browser smoke accepts an honest actionable no-data map only without an API", () => {
+  const visibleMap = {
+    width: 320,
+    height: 220,
+    hasInteractiveMarker: true,
+    hasEmptyState: false,
+    hasRetryAction: false,
+  };
+  const honestEmptyMap = {
+    width: 320,
+    height: 220,
+    hasInteractiveMarker: false,
+    hasEmptyState: true,
+    hasRetryAction: true,
+  };
+
+  assert.equal(pagesSmoke.classifyMapSurfaceObservation(visibleMap, false), "places");
+  assert.equal(pagesSmoke.classifyMapSurfaceObservation(honestEmptyMap, true), "empty");
+  assert.equal(pagesSmoke.classifyMapSurfaceObservation(honestEmptyMap, false), null);
+  assert.equal(pagesSmoke.classifyMapSurfaceObservation({ ...honestEmptyMap, width: 200 }, true), null);
+});
+
+test("Cloudflare Pages browser smoke preserves diagnostics when a browser assertion fails", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-pages-failure-artifact-"));
+  try {
+    const artifacts: Record<string, string> = {};
+    const screenshotBytes = Buffer.from("failure-screenshot");
+    await pagesSmoke.writeFailureArtifacts(
+      tempDir,
+      {
+        client: {
+          send: async () => ({ data: screenshotBytes.toString("base64") }),
+        },
+        networkEvents: [{ type: "request", method: "GET", url: "https://staging.example.test/" }],
+        consoleMessages: ["console.error: staging assertion failed"],
+      },
+      artifacts,
+      1234,
+    );
+
+    assert.equal(readFileSync(artifacts.failureScreenshot).equals(screenshotBytes), true);
+    assert.deepEqual(JSON.parse(readFileSync(artifacts.failureNetwork, "utf8")), [
+      { type: "request", method: "GET", url: "https://staging.example.test/" },
+    ]);
+    assert.equal(readFileSync(artifacts.failureConsole, "utf8"), "console.error: staging assertion failed");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("Cloudflare Pages browser smoke matches Worker API requests by parsed path and query", () => {
@@ -1367,6 +1885,94 @@ test("local Pages report smoke validates redacted network artifacts and required
     assert.throws(
       () => pagesLocalReportSmoke.validateSmokeCheckIntegrity([...safeChecks, { name: "map.requeryButton", status: "fail" }], { requiredCheckNames }),
       /map.requeryButton/,
+    );
+
+    assert.deepEqual(
+      pagesLocalReportSmoke.validateFieldReportPublicationContract({
+        clientRequestId: "report-browser-smoke-1234",
+        photoIds: ["photo-field-report-smoke"],
+        hashtagNames: ["광안리", "지금"],
+      }),
+      {
+        validClientRequestId: true,
+        photoIdsArray: true,
+        hashtagNamesArray: true,
+        uploadedPhotoLinked: true,
+        photoCount: 1,
+        hashtagCount: 2,
+        valid: true,
+      },
+    );
+    assert.equal(
+      pagesLocalReportSmoke.validateFieldReportPublicationContract({
+        clientRequestId: "report-browser-smoke-1234",
+        photoIds: [],
+        hashtagNames: ["광안리"],
+      }).valid,
+      false,
+    );
+
+    assert.deepEqual(
+      pagesLocalReportSmoke.validatePlaceAdditionRequestContract({
+        clientRequestId: "place-request-browser-smoke-1234",
+        name: "성수 새 장소",
+        address: "서울특별시 성동구 테스트로 1",
+        category: "기타",
+      }),
+      {
+        exactFields: true,
+        validClientRequestId: true,
+        validName: true,
+        validAddress: true,
+        validCategory: true,
+        valid: true,
+      },
+    );
+    assert.equal(
+      pagesLocalReportSmoke.validatePlaceAdditionRequestContract({
+        clientRequestId: "place-request-browser-smoke-1234",
+        name: "성수 새 장소",
+        address: "서울특별시 성동구 테스트로 1",
+        category: "기타",
+        mapx: "1270000000",
+      }).valid,
+      false,
+    );
+
+    assert.deepEqual(
+      pagesLocalReportSmoke.validateAccountDeletionEvidence({
+        accountDeletionCount: 1,
+        sessionIssueCount: 2,
+        initialSessionId: "anon_local_report_smoke_1",
+        currentSessionId: "anon_local_report_smoke_2",
+        remainingOwnedContentCount: 0,
+      }),
+      {
+        accountDeletionCount: 1,
+        sessionIssueCount: 2,
+        sessionRotated: true,
+        remainingOwnedContentCount: 0,
+      },
+    );
+    assert.throws(
+      () => pagesLocalReportSmoke.validateAccountDeletionEvidence({
+        accountDeletionCount: 1,
+        sessionIssueCount: 1,
+        initialSessionId: "anon_local_report_smoke_1",
+        currentSessionId: "anon_local_report_smoke_1",
+        remainingOwnedContentCount: 0,
+      }),
+      /rotate/,
+    );
+    assert.throws(
+      () => pagesLocalReportSmoke.validateAccountDeletionEvidence({
+        accountDeletionCount: 1,
+        sessionIssueCount: 2,
+        initialSessionId: "anon_local_report_smoke_1",
+        currentSessionId: "anon_local_report_smoke_2",
+        remainingOwnedContentCount: 1,
+      }),
+      /owned content/i,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1496,11 +2102,17 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
     options: parsed.options,
     env: {
       SILSIGAN_STAGING_ADMIN_TOKEN: "super-secret-admin-token",
-      SILSIGAN_STAGING_PAGES_URL: "https://silsigan-staging.pages.dev",
-      SILSIGAN_STAGING_API_BASE_URL: "https://silsigan-api-staging.workers.dev",
+      SILSIGAN_STAGING_PAGES_URL: "https://staging.silsigan.kr",
+      SILSIGAN_STAGING_API_BASE_URL: "https://api-staging.silsigan.kr",
       NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
       SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
-      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://silsigan-staging.pages.dev",
+      SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN: "silsigan.kr",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://staging.silsigan.kr",
+      SILSIGAN_NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED: "1",
+      SILSIGAN_NAVER_MAP_MONTHLY_HARD_LIMIT: "4800000",
+      SILSIGAN_NAVER_MAP_DAILY_HARD_LIMIT: "160000",
+      SILSIGAN_NAVER_MAP_ALERT_THRESHOLD_PERCENT: "70",
+      SILSIGAN_NAVER_MAP_ALERT_RECIPIENT_CONFIRMED: "1",
     },
   });
 
@@ -1511,6 +2123,11 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
   assert.equal(plan.requirePhoto, true);
   assert.equal(plan.tailRequired, true);
   assert.equal(plan.coordinateStatus, false);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "release.provenance")?.args, ["release:provenance"]);
+  assert.ok(
+    plan.steps.findIndex((step: ReleaseGateStep) => step.name === "release.provenance")
+      < plan.steps.findIndex((step: ReleaseGateStep) => step.name === "release.status.strict"),
+  );
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.args, [
     "smoke:staging",
     "--",
@@ -1546,7 +2163,13 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
   assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_API_BASE_URL_REQUIRED"));
   assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "NEXT_PUBLIC_NAVER_MAP_CLIENT_ID_REQUIRED"));
   assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN_REQUIRED"));
   assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_MONTHLY_HARD_LIMIT_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_DAILY_HARD_LIMIT_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALERT_THRESHOLD_PERCENT_REQUIRED"));
+  assert.ok(missingEvidencePlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALERT_RECIPIENT_CONFIRMED_REQUIRED"));
 
   const unsafeUrlPlan = releaseGate.resolveReleaseGatePlan({
     flags: releaseGate.parseArgs(["--release-candidate", "--tail-file", "tests/fixtures/redacted-worker-tail.log"]).flags,
@@ -1563,6 +2186,33 @@ test("Cloudflare release gate release-candidate mode requires final staging evid
   assert.ok(unsafeUrlPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_API_BASE_URL_INVALID"));
   assert.equal(JSON.stringify(unsafeUrlPlan).includes("super-secret"), false);
   assert.equal(JSON.stringify(unsafeUrlPlan).includes("localhost:3000"), false);
+
+  const unsafeCostProtectionPlan = releaseGate.resolveReleaseGatePlan({
+    flags: parsed.flags,
+    options: parsed.options,
+    env: {
+      SILSIGAN_STAGING_ADMIN_TOKEN: "super-secret-admin-token",
+      SILSIGAN_STAGING_PAGES_URL: "https://staging.silsigan.kr",
+      SILSIGAN_STAGING_API_BASE_URL: "https://api-staging.silsigan.kr",
+      NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
+      SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
+      SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN: "silsigan.kr",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://staging.silsigan.kr",
+      SILSIGAN_NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED: "0",
+      SILSIGAN_NAVER_MAP_MONTHLY_HARD_LIMIT: "4800001",
+      SILSIGAN_NAVER_MAP_DAILY_HARD_LIMIT: "160001",
+      SILSIGAN_NAVER_MAP_ALERT_THRESHOLD_PERCENT: "71",
+      SILSIGAN_NAVER_MAP_ALERT_RECIPIENT_CONFIRMED: "0",
+    },
+  });
+
+  assert.equal(unsafeCostProtectionPlan.ok, false);
+  assert.ok(unsafeCostProtectionPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED_REQUIRED"));
+  assert.ok(unsafeCostProtectionPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_MONTHLY_HARD_LIMIT_ABOVE_SAFE_MAXIMUM"));
+  assert.ok(unsafeCostProtectionPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_DAILY_HARD_LIMIT_ABOVE_SAFE_MAXIMUM"));
+  assert.ok(unsafeCostProtectionPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALERT_THRESHOLD_PERCENT_ABOVE_SAFE_MAXIMUM"));
+  assert.ok(unsafeCostProtectionPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALERT_RECIPIENT_CONFIRMED_REQUIRED"));
+  assert.equal(JSON.stringify(unsafeCostProtectionPlan).includes("super-secret"), false);
 });
 
 test("Cloudflare release gate production-candidate mode requires production HTTPS URLs without write smoke", () => {
@@ -1571,11 +2221,17 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
     flags: parsed.flags,
     options: parsed.options,
     env: {
-      SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.pages.dev",
-      SILSIGAN_PRODUCTION_API_BASE_URL: "https://silsigan-api.workers.dev",
+      SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.kr",
+      SILSIGAN_PRODUCTION_API_BASE_URL: "https://api.silsigan.kr",
       NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
       SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
-      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://silsigan.pages.dev",
+      SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN: "silsigan.kr",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://silsigan.kr",
+      SILSIGAN_NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED: "1",
+      SILSIGAN_NAVER_MAP_MONTHLY_HARD_LIMIT: "4800000",
+      SILSIGAN_NAVER_MAP_DAILY_HARD_LIMIT: "160000",
+      SILSIGAN_NAVER_MAP_ALERT_THRESHOLD_PERCENT: "70",
+      SILSIGAN_NAVER_MAP_ALERT_RECIPIENT_CONFIRMED: "1",
     },
   });
 
@@ -1586,6 +2242,11 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
   assert.equal(plan.browserReport, false);
   assert.equal(plan.requirePhoto, false);
   assert.equal(plan.tailRequired, false);
+  assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "release.provenance")?.args, ["release:provenance"]);
+  assert.ok(
+    plan.steps.findIndex((step: ReleaseGateStep) => step.name === "release.provenance")
+      < plan.steps.findIndex((step: ReleaseGateStep) => step.name === "release.status.strict"),
+  );
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.args, ["smoke:staging"]);
   assert.deepEqual(plan.steps.find((step: ReleaseGateStep) => step.name === "staging.api.smoke")?.envKeys, [
     "SILSIGAN_STAGING_API_BASE_URL",
@@ -1604,8 +2265,8 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
     "SILSIGAN_PRODUCTION_PAGES_URL",
     "SILSIGAN_PRODUCTION_API_BASE_URL",
   ]);
-  assert.equal(JSON.stringify(plan).includes("https://silsigan.pages.dev"), false);
-  assert.equal(JSON.stringify(plan).includes("https://silsigan-api.workers.dev"), false);
+  assert.equal(JSON.stringify(plan).includes("https://silsigan.kr"), false);
+  assert.equal(JSON.stringify(plan).includes("https://api.silsigan.kr"), false);
 
   const missingUrlsPlan = releaseGate.resolveReleaseGatePlan({
     flags: parsed.flags,
@@ -1618,7 +2279,13 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
   assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_PRODUCTION_API_BASE_URL_REQUIRED"));
   assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "NEXT_PUBLIC_NAVER_MAP_CLIENT_ID_REQUIRED"));
   assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN_REQUIRED"));
   assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_MONTHLY_HARD_LIMIT_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_DAILY_HARD_LIMIT_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALERT_THRESHOLD_PERCENT_REQUIRED"));
+  assert.ok(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_ALERT_RECIPIENT_CONFIRMED_REQUIRED"));
   assert.equal(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "TAIL_FILE_REQUIRED"), false);
   assert.equal(missingUrlsPlan.errors.some((error: { code: string }) => error.code === "SILSIGAN_STAGING_ADMIN_TOKEN_REQUIRED"), false);
 
@@ -1626,11 +2293,12 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
     flags: parsed.flags,
     options: parsed.options,
     env: {
-      SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.pages.dev",
-      SILSIGAN_PRODUCTION_API_BASE_URL: "https://silsigan-api.workers.dev",
+      SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.kr",
+      SILSIGAN_PRODUCTION_API_BASE_URL: "https://api.silsigan.kr",
       NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
       SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
-      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://other.pages.dev",
+      SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN: "silsigan.kr",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://other.silsigan.kr",
     },
   });
   assert.equal(originMismatchPlan.ok, false);
@@ -1652,6 +2320,49 @@ test("Cloudflare release gate production-candidate mode requires production HTTP
   assert.equal(JSON.stringify(unsafeUrlPlan).includes("localhost:3000"), false);
   assert.equal(JSON.stringify(unsafeUrlPlan).includes("not-a-url"), false);
   assert.equal(JSON.stringify(unsafeUrlPlan).includes("super-secret"), false);
+});
+
+test("Cloudflare release gate refuses Naver Maps activation on shared hosting domains", () => {
+  const sharedHostingPlan = releaseGate.resolveReleaseGatePlan({
+    flags: releaseGate.parseArgs(["--release-candidate", "--tail-file", "tests/fixtures/redacted-worker-tail.log"]).flags,
+    options: releaseGate.parseArgs(["--release-candidate", "--tail-file", "tests/fixtures/redacted-worker-tail.log"]).options,
+    env: {
+      SILSIGAN_STAGING_ADMIN_TOKEN: "super-secret-admin-token",
+      SILSIGAN_STAGING_PAGES_URL: "https://silsigan-web-staging.dudqks0319.workers.dev",
+      SILSIGAN_STAGING_API_BASE_URL: "https://silsigan-api-staging.dudqks0319.workers.dev",
+      NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
+      SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
+      SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN: "workers.dev",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://silsigan-web-staging.dudqks0319.workers.dev",
+    },
+  });
+
+  assert.equal(sharedHostingPlan.ok, false);
+  assert.ok(
+    sharedHostingPlan.errors.some(
+      (error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN_SHARED_HOSTING",
+    ),
+  );
+  assert.equal(JSON.stringify(sharedHostingPlan).includes("dudqks0319"), false);
+
+  const mismatchedDomainPlan = releaseGate.resolveReleaseGatePlan({
+    flags: releaseGate.parseArgs(["--production-candidate"]).flags,
+    env: {
+      SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.kr",
+      SILSIGAN_PRODUCTION_API_BASE_URL: "https://api.silsigan.kr",
+      NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "fixture-map-client-id",
+      SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED: "1",
+      SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN: "example.com",
+      SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS: "https://silsigan.kr",
+    },
+  });
+
+  assert.equal(mismatchedDomainPlan.ok, false);
+  assert.ok(
+    mismatchedDomainPlan.errors.some(
+      (error: { code: string }) => error.code === "SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN_MISSING_SILSIGAN_PRODUCTION_PAGES_URL",
+    ),
+  );
 });
 
 test("Cloudflare release gate summarizes failed collect-blockers steps without secret values", () => {
@@ -1676,6 +2387,25 @@ test("Cloudflare release gate summarizes failed collect-blockers steps without s
       })}`,
     },
     {
+      name: "cloudflare.d1Evidence.staging",
+      status: "fail",
+      outputTail: JSON.stringify({
+        ok: false,
+        results: [
+          {
+            name: "staging.d1.migration_registry",
+            status: "fail",
+            check: {
+              name: "cloudflare.d1.staging.migration_registry",
+              status: "fail",
+              code: "D1_MIGRATION_REGISTRY_DRIFT",
+              message: "Remote staging D1 migration registry disagrees with verified schema; mutating apply is blocked.",
+            },
+          },
+        ],
+      }),
+    },
+    {
       name: "cloudflare.externalState",
       status: "fail",
       outputTail: JSON.stringify({
@@ -1695,14 +2425,21 @@ test("Cloudflare release gate summarizes failed collect-blockers steps without s
   assert.deepEqual(summary, {
     resultCounts: {
       pass: 1,
-      fail: 4,
+      fail: 5,
     },
-    failedSteps: ["release.status.strict", "cloudflare.preflight", "cloudflare.externalState", "pages.browser.smoke"],
+    failedSteps: [
+      "release.status.strict",
+      "cloudflare.preflight",
+      "cloudflare.d1Evidence.staging",
+      "cloudflare.externalState",
+      "pages.browser.smoke",
+    ],
     blockers: [
       "release_harness.ledger.open_blockers",
       "deployment_url.staging.pages",
       "deployment_url.staging.worker_api",
       "deployment_url.production.worker_api",
+      "D1_MIGRATION_REGISTRY_DRIFT",
       "R2_NOT_ENABLED",
     ],
   });
@@ -1743,6 +2480,78 @@ test("Cloudflare external state check requires configured R2 buckets when R2 is 
   assert.equal(check.status, "fail");
   assert.equal(check.code, "R2_BUCKETS_MISSING");
   assert.deepEqual(check.missingBuckets, ["silsigan-photos-production"]);
+});
+
+test("Cloudflare R2 privacy classifiers require disabled r2.dev access and no custom domains", () => {
+  const privateDevUrl = externalState.classifyR2DevUrlResult(
+    {
+      exitCode: 0,
+      stdout: "Public access via the r2.dev URL is disabled.\n",
+      stderr: "",
+    },
+    "silsigan-photos-staging",
+  );
+  const noCustomDomains = externalState.classifyR2CustomDomainListResult(
+    {
+      exitCode: 0,
+      stdout: "Listing custom domains connected to bucket 'silsigan-photos-staging'...\nThere are no custom domains connected to this bucket.\n",
+      stderr: "",
+    },
+    "silsigan-photos-staging",
+  );
+
+  assert.equal(privateDevUrl.status, "pass");
+  assert.equal(noCustomDomains.status, "pass");
+
+  const publicDevUrl = externalState.classifyR2DevUrlResult(
+    {
+      exitCode: 0,
+      stdout: "Public access is enabled at 'https://redacted-account-id.r2.dev'.\n",
+      stderr: "",
+    },
+    "silsigan-photos-staging",
+  );
+  const publicCustomDomain = externalState.classifyR2CustomDomainListResult(
+    {
+      exitCode: 0,
+      stdout: "Listing custom domains connected to bucket 'silsigan-photos-staging'...\nDomain: private-user-domain.example\nEnabled: Yes\n",
+      stderr: "",
+    },
+    "silsigan-photos-staging",
+  );
+
+  assert.equal(publicDevUrl.status, "fail");
+  assert.equal(publicDevUrl.code, "R2_PUBLIC_DEV_URL_ENABLED");
+  assert.equal(publicCustomDomain.status, "fail");
+  assert.equal(publicCustomDomain.code, "R2_PUBLIC_CUSTOM_DOMAIN_CONFIGURED");
+  assert.equal(JSON.stringify(publicDevUrl).includes("redacted-account-id"), false);
+  assert.equal(JSON.stringify(publicCustomDomain).includes("private-user-domain.example"), false);
+});
+
+test("Cloudflare R2 privacy classifiers fail closed when Wrangler cannot prove privacy", () => {
+  const devUrl = externalState.classifyR2DevUrlResult(
+    {
+      exitCode: 1,
+      stdout: "",
+      stderr: "provider error for account user@example.com /accounts/secret-account-id",
+    },
+    "silsigan-photos-staging",
+  );
+  const domains = externalState.classifyR2CustomDomainListResult(
+    {
+      exitCode: 0,
+      stdout: "unexpected output",
+      stderr: "",
+    },
+    "silsigan-photos-staging",
+  );
+
+  assert.equal(devUrl.status, "fail");
+  assert.equal(devUrl.code, "R2_DEV_URL_CHECK_FAILED");
+  assert.equal(domains.status, "fail");
+  assert.equal(domains.code, "R2_CUSTOM_DOMAIN_CHECK_FAILED");
+  assert.equal(JSON.stringify([devUrl, domains]).includes("user@example.com"), false);
+  assert.equal(JSON.stringify([devUrl, domains]).includes("secret-account-id"), false);
 });
 
 test("Cloudflare external state check canonicalizes missing auth before remote checks", () => {
@@ -1789,7 +2598,7 @@ test("Cloudflare external state check classifies missing Worker deployments with
 });
 
 test("Cloudflare external state check classifies remote D1 migration and seed evidence", () => {
-  const missingMigration = externalState.classifyD1MigrationResult(
+  const missingMigration = classifyD1MigrationFixture(
     {
       exitCode: 1,
       stdout: "",
@@ -1802,10 +2611,10 @@ test("Cloudflare external state check classifies remote D1 migration and seed ev
   assert.equal(missingMigration.code, "D1_0006_NOT_APPLIED");
   assert.equal(JSON.stringify(missingMigration).includes("no such table"), false);
 
-  const incompleteSeed = externalState.classifyD1MigrationResult(
+  const incompleteSeed = classifyD1MigrationFixture(
     {
       exitCode: 0,
-      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nposts=3\nquestions=2\n",
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nlive_signal_expiry_required=1\nlive_signals_missing_expiry=0\nplace_event_accuracy_required=1\nplace_event_accuracy_invalid=0\npreference_tables=4\nanalytics_tables=1\nphoto_cleanup_tables=1\nphoto_cleanup_delivery_columns=6\nphoto_cleanup_delivery_indexes=1\nphoto_cleanup_dead_letters=0\nphoto_budget_tables=1\nphoto_budget_rows=1\nphoto_abuse_tables=3\nphoto_upload_control_rows=1\nphoto_read_tables=2\nphoto_read_budget_rows=1\nphoto_read_control_rows=1\nsource_scheduler_tables=1\nsource_scheduler_indexes=2\nsource_scheduler_targets=0\nsource_scheduler_enabled_targets=0\nsource_scheduler_invalid_active=0\nplace_event_moderation_required=1\npublication_tables=5\npublication_delivery_columns=5\npublication_delivery_indexes=1\npublication_dead_letters=0\nposts=3\nquestions=2\n",
       stderr: "",
     },
     "production",
@@ -1815,10 +2624,10 @@ test("Cloudflare external state check classifies remote D1 migration and seed ev
   assert.equal(incompleteSeed.code, "D1_SEED_INCOMPLETE");
   assert.deepEqual(incompleteSeed.missingSeed, ["posts", "questions"]);
 
-  const ready = externalState.classifyD1MigrationResult(
+  const ready = classifyD1MigrationFixture(
     {
       exitCode: 0,
-      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nposts=4\nquestions=3\n",
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nlive_signal_expiry_required=1\nlive_signals_missing_expiry=0\nplace_event_accuracy_required=1\nplace_event_accuracy_invalid=0\npreference_tables=4\nanalytics_tables=1\nphoto_cleanup_tables=1\nphoto_cleanup_delivery_columns=6\nphoto_cleanup_delivery_indexes=1\nphoto_cleanup_dead_letters=0\nphoto_budget_tables=1\nphoto_budget_rows=1\nphoto_abuse_tables=3\nphoto_upload_control_rows=1\nphoto_read_tables=2\nphoto_read_budget_rows=1\nphoto_read_control_rows=1\nsource_scheduler_tables=1\nsource_scheduler_indexes=2\nsource_scheduler_targets=0\nsource_scheduler_enabled_targets=0\nsource_scheduler_invalid_active=0\nplace_event_moderation_required=1\npublication_tables=5\npublication_delivery_columns=5\npublication_delivery_indexes=1\npublication_dead_letters=0\nposts=4\nquestions=3\n",
       stderr: "",
     },
     "staging",
@@ -1826,6 +2635,177 @@ test("Cloudflare external state check classifies remote D1 migration and seed ev
   assert.equal(ready.name, "cloudflare.d1.staging.migration_0006");
   assert.equal(ready.status, "pass");
   assert.deepEqual(ready.counts, { posts: 4, questions: 3 });
+
+  const missingModeration = classifyD1MigrationFixture(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nlive_signal_expiry_required=1\nlive_signals_missing_expiry=0\nplace_event_accuracy_required=1\nplace_event_accuracy_invalid=0\npreference_tables=4\nanalytics_tables=1\nphoto_cleanup_tables=1\nphoto_budget_tables=1\nphoto_budget_rows=1\nphoto_abuse_tables=3\nphoto_upload_control_rows=1\nphoto_read_tables=2\nphoto_read_budget_rows=1\nphoto_read_control_rows=1\nsource_scheduler_tables=1\nsource_scheduler_indexes=2\nsource_scheduler_targets=0\nsource_scheduler_enabled_targets=0\nsource_scheduler_invalid_active=0\nposts=4\nquestions=3\n",
+      stderr: "",
+    },
+    "staging",
+  );
+  assert.equal(missingModeration.status, "fail");
+  assert.equal(missingModeration.code, "D1_0006_NOT_APPLIED");
+  assert.match(missingModeration.message, /moderation/);
+
+  const missingCurrentChain = classifyD1MigrationFixture(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nposts=4\nquestions=3\n",
+      stderr: "",
+    },
+    "staging",
+  );
+  assert.equal(missingCurrentChain.status, "fail");
+  assert.equal(missingCurrentChain.code, "D1_0006_NOT_APPLIED");
+  assert.match(missingCurrentChain.message, /expiry|accuracy|preference|analytics|cleanup/);
+});
+
+test("Cloudflare external state check requires source scheduler migration evidence", () => {
+  const missingSchedulerTable = classifyD1MigrationFixture(
+    {
+      exitCode: 1,
+      stdout: "",
+      stderr: "SQLITE_ERROR: no such table: source_ingestion_targets",
+    },
+    "staging",
+  );
+
+  assert.equal(missingSchedulerTable.status, "fail");
+  assert.equal(missingSchedulerTable.code, "D1_0006_NOT_APPLIED");
+  assert.equal(JSON.stringify(missingSchedulerTable).includes("no such table"), false);
+
+  const missingScheduler = classifyD1MigrationFixture(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nlive_signal_expiry_required=1\nlive_signals_missing_expiry=0\nplace_event_accuracy_required=1\nplace_event_accuracy_invalid=0\npreference_tables=4\nanalytics_tables=1\nphoto_cleanup_tables=1\nphoto_budget_tables=1\nphoto_budget_rows=1\nphoto_abuse_tables=3\nphoto_upload_control_rows=1\nphoto_read_tables=2\nphoto_read_budget_rows=1\nphoto_read_control_rows=1\nplace_event_moderation_required=1\npublication_tables=5\nposts=4\nquestions=3\n",
+      stderr: "",
+    },
+    "staging",
+  );
+
+  assert.equal(missingScheduler.status, "fail");
+  assert.equal(missingScheduler.code, "D1_0006_NOT_APPLIED");
+  assert.match(missingScheduler.message, /source ingestion scheduler/);
+
+  const unsafeScheduler = classifyD1MigrationFixture(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nlive_signal_expiry_required=1\nlive_signals_missing_expiry=0\nplace_event_accuracy_required=1\nplace_event_accuracy_invalid=0\npreference_tables=4\nanalytics_tables=1\nphoto_cleanup_tables=1\nphoto_budget_tables=1\nphoto_budget_rows=1\nphoto_abuse_tables=3\nphoto_upload_control_rows=1\nphoto_read_tables=2\nphoto_read_budget_rows=1\nphoto_read_control_rows=1\nsource_scheduler_tables=1\nsource_scheduler_indexes=2\nsource_scheduler_targets=1\nsource_scheduler_enabled_targets=1\nsource_scheduler_invalid_active=1\nplace_event_moderation_required=1\npublication_tables=5\nposts=4\nquestions=3\n",
+      stderr: "",
+    },
+    "staging",
+  );
+
+  assert.equal(unsafeScheduler.status, "fail");
+  assert.equal(unsafeScheduler.code, "D1_0006_NOT_APPLIED");
+  assert.match(unsafeScheduler.message, /unsafe source ingestion scheduler targets/);
+});
+
+test("Cloudflare external state check requires the Images transformation budget ledger", () => {
+  const missingTransformBudget = externalState.classifyD1MigrationResult(
+    { exitCode: 1, stdout: "", stderr: "SQLITE_ERROR: no such table: photo_transform_budget" },
+    "staging",
+  );
+
+  assert.equal(missingTransformBudget.name, "cloudflare.d1.staging.migration_0020");
+  assert.equal(missingTransformBudget.status, "fail");
+  assert.equal(missingTransformBudget.code, "D1_0020_NOT_APPLIED");
+  assert.match(missingTransformBudget.message, /Cloudflare Images transformation budget ledger/);
+  assert.equal(JSON.stringify(missingTransformBudget).includes("no such table"), false);
+});
+
+test("Cloudflare external state check requires the per-IP photo read abuse ledger", () => {
+  const missingReadAbuseBudget = externalState.classifyD1MigrationResult(
+    { exitCode: 1, stdout: "", stderr: "SQLITE_ERROR: no such table: photo_read_abuse_budget" },
+    "staging",
+  );
+
+  assert.equal(missingReadAbuseBudget.name, "cloudflare.d1.staging.migration_0021");
+  assert.equal(missingReadAbuseBudget.status, "fail");
+  assert.equal(missingReadAbuseBudget.code, "D1_0021_NOT_APPLIED");
+  assert.match(missingReadAbuseBudget.message, /per-IP photo read abuse ledger/);
+  assert.equal(JSON.stringify(missingReadAbuseBudget).includes("no such table"), false);
+});
+
+test("Cloudflare external state check requires the idempotent photo storage-release ledger", () => {
+  const missingStorageReleaseLedger = externalState.classifyD1MigrationResult(
+    { exitCode: 1, stdout: "", stderr: "SQLITE_ERROR: no such table: photo_storage_releases" },
+    "staging",
+  );
+
+  assert.equal(missingStorageReleaseLedger.name, "cloudflare.d1.staging.migration_0022");
+  assert.equal(missingStorageReleaseLedger.status, "fail");
+  assert.equal(missingStorageReleaseLedger.code, "D1_0022_NOT_APPLIED");
+  assert.match(missingStorageReleaseLedger.message, /idempotent photo storage-release ledger/);
+  assert.equal(JSON.stringify(missingStorageReleaseLedger).includes("no such table"), false);
+});
+
+test("Cloudflare external state check requires the server-bound anonymous session ledger", () => {
+  const missingAnonymousSessionLedger = externalState.classifyD1MigrationResult(
+    { exitCode: 1, stdout: "", stderr: "SQLITE_ERROR: no such table: anonymous_sessions" },
+    "staging",
+  );
+
+  assert.equal(missingAnonymousSessionLedger.name, "cloudflare.d1.staging.migration_0023");
+  assert.equal(missingAnonymousSessionLedger.status, "fail");
+  assert.equal(missingAnonymousSessionLedger.code, "D1_0023_NOT_APPLIED");
+  assert.match(missingAnonymousSessionLedger.message, /server-bound anonymous session ledger/);
+  assert.equal(JSON.stringify(missingAnonymousSessionLedger).includes("no such table"), false);
+});
+
+test("Cloudflare external state check requires the exact anonymous session issuance budget", () => {
+  const missingAnonymousSessionBudget = externalState.classifyD1MigrationResult(
+    { exitCode: 1, stdout: "", stderr: "SQLITE_ERROR: no such table: anonymous_session_issuance_budget" },
+    "staging",
+  );
+
+  assert.equal(missingAnonymousSessionBudget.name, "cloudflare.d1.staging.migration_0024");
+  assert.equal(missingAnonymousSessionBudget.status, "fail");
+  assert.equal(missingAnonymousSessionBudget.code, "D1_0024_NOT_APPLIED");
+  assert.match(missingAnonymousSessionBudget.message, /anonymous session issuance budget/);
+  assert.equal(JSON.stringify(missingAnonymousSessionBudget).includes("no such table"), false);
+});
+
+test("Cloudflare external state check requires the private place addition request queue", () => {
+  const missingPlaceRequestQueue = externalState.classifyD1MigrationResult(
+    { exitCode: 1, stdout: "", stderr: "SQLITE_ERROR: no such table: place_addition_requests" },
+    "staging",
+  );
+
+  assert.equal(missingPlaceRequestQueue.name, "cloudflare.d1.staging.migration_0025");
+  assert.equal(missingPlaceRequestQueue.status, "fail");
+  assert.equal(missingPlaceRequestQueue.code, "D1_0025_NOT_APPLIED");
+  assert.match(missingPlaceRequestQueue.message, /private place addition request queue/);
+  assert.equal(JSON.stringify(missingPlaceRequestQueue).includes("no such table"), false);
+});
+
+test("Cloudflare external state check requires the global API cost guard ledger", () => {
+  const missingApiCostGuard = externalState.classifyD1MigrationResult(
+    { exitCode: 1, stdout: "", stderr: "SQLITE_ERROR: no such table: api_cost_guard_control" },
+    "staging",
+  );
+
+  assert.equal(missingApiCostGuard.name, "cloudflare.d1.staging.migration_0026");
+  assert.equal(missingApiCostGuard.status, "fail");
+  assert.equal(missingApiCostGuard.code, "D1_0026_NOT_APPLIED");
+  assert.match(missingApiCostGuard.message, /global Workers and D1 cost guard/);
+  assert.equal(JSON.stringify(missingApiCostGuard).includes("no such table"), false);
+});
+
+test("Cloudflare external state check blocks a remote D1 chain without accuracy buckets", () => {
+  const missingAccuracy = classifyD1MigrationFixture(
+    {
+      exitCode: 0,
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nlive_signal_expiry_required=1\nlive_signals_missing_expiry=0\npreference_tables=4\nanalytics_tables=1\nphoto_cleanup_tables=1\nphoto_budget_tables=1\nphoto_budget_rows=1\nphoto_abuse_tables=3\nphoto_upload_control_rows=1\nphoto_read_tables=2\nphoto_read_budget_rows=1\nphoto_read_control_rows=1\nsource_scheduler_tables=1\nsource_scheduler_indexes=2\nsource_scheduler_targets=0\nsource_scheduler_enabled_targets=0\nsource_scheduler_invalid_active=0\nplace_event_moderation_required=1\nposts=4\nquestions=3\n",
+      stderr: "",
+    },
+    "staging",
+  );
+
+  assert.equal(missingAccuracy.status, "fail");
+  assert.equal(missingAccuracy.code, "D1_0006_NOT_APPLIED");
+  assert.match(missingAccuracy.message, /accuracy bucket/);
 });
 
 test("Cloudflare D1 release evidence planner defaults to non-mutating steps", async () => {
@@ -1841,7 +2821,7 @@ test("Cloudflare D1 release evidence planner defaults to non-mutating steps", as
     })) as {
       ok: boolean;
       mode: string;
-      targets: Array<{ envName: string; databaseName: string; steps: Array<{ name: string; applyOnly?: boolean }> }>;
+      targets: Array<{ envName: string; databaseName: string; steps: Array<{ name: string; args: string[]; applyOnly?: boolean }> }>;
     };
 
     assert.equal(plan.ok, true);
@@ -1853,9 +2833,88 @@ test("Cloudflare D1 release evidence planner defaults to non-mutating steps", as
       ["d1.migrations.list", "d1.posts_questions.evidence"],
     );
     assert.equal(plan.targets[0]?.steps.some((step) => step.applyOnly), false);
+    const evidenceCommand = plan.targets[0]?.steps.find((step) => step.name === "d1.posts_questions.evidence")?.args.at(-1) ?? "";
+    assert.match(evidenceCommand, /source_scheduler_tables/);
+    assert.match(evidenceCommand, /source_scheduler_indexes/);
+    assert.match(evidenceCommand, /source_scheduler_invalid_active/);
+    assert.match(evidenceCommand, /photo_cleanup_delivery_columns/);
+    assert.match(evidenceCommand, /photo_cleanup_dead_letters/);
+    assert.match(evidenceCommand, /publication_delivery_columns/);
+    assert.match(evidenceCommand, /publication_dead_letters/);
+    assert.match(evidenceCommand, /place_request_tables/);
+    assert.match(evidenceCommand, /place_request_indexes/);
+    assert.match(evidenceCommand, /place_request_triggers/);
+    assert.match(evidenceCommand, /api_cost_guard_tables/);
+    assert.match(evidenceCommand, /api_cost_guard_indexes/);
+    assert.match(evidenceCommand, /api_cost_guard_control_rows/);
+    assert.match(evidenceCommand, /api_cost_guard_warning_columns/);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("Cloudflare D1 release evidence detects migration registry drift before apply", () => {
+  const pendingMigrations = d1ReleaseEvidence.parsePendingD1Migrations({
+    exitCode: 0,
+    stdout: [
+      "Migrations to be applied:",
+      "0018_photo_read_budget.sql",
+      "0019_background_job_delivery.sql",
+      "0026_global_api_cost_guard.sql",
+      "0018_photo_read_budget.sql",
+    ].join("\n"),
+    stderr: "",
+  });
+
+  assert.deepEqual(pendingMigrations, [
+    "0018_photo_read_budget.sql",
+    "0019_background_job_delivery.sql",
+    "0026_global_api_cost_guard.sql",
+  ]);
+
+  const registryCheck = d1ReleaseEvidence.classifyD1MigrationRegistry({
+    envName: "staging",
+    pendingMigrations,
+    schemaCheck: {
+      name: "cloudflare.d1.staging.migration_0026",
+      status: "fail",
+      code: "D1_0026_NOT_APPLIED",
+      message: "Remote staging D1 is missing the global Workers and D1 cost guard.",
+    },
+  });
+
+  assert.equal(registryCheck.status, "fail");
+  assert.equal(registryCheck.code, "D1_MIGRATION_REGISTRY_DRIFT");
+  assert.equal(registryCheck.firstSchemaMissing, "0026");
+  assert.deepEqual(registryCheck.unregisteredSchemaMigrations, [
+    "0018_photo_read_budget.sql",
+    "0019_background_job_delivery.sql",
+  ]);
+  assert.match(registryCheck.message, /apply is blocked/i);
+});
+
+test("Cloudflare D1 release evidence accepts the exact pending suffix and rejects missing registry rows", () => {
+  const schemaCheck = {
+    name: "cloudflare.d1.staging.migration_0026",
+    status: "fail",
+    code: "D1_0026_NOT_APPLIED",
+    message: "Remote staging D1 is missing the global Workers and D1 cost guard.",
+  };
+  const exactSuffix = d1ReleaseEvidence.classifyD1MigrationRegistry({
+    envName: "staging",
+    pendingMigrations: ["0026_global_api_cost_guard.sql"],
+    schemaCheck,
+  });
+  const missingRegistryRow = d1ReleaseEvidence.classifyD1MigrationRegistry({
+    envName: "staging",
+    pendingMigrations: [],
+    schemaCheck,
+  });
+
+  assert.equal(exactSuffix.status, "pass");
+  assert.equal(exactSuffix.firstSchemaMissing, "0026");
+  assert.equal(missingRegistryRow.status, "fail");
+  assert.equal(missingRegistryRow.code, "D1_MIGRATION_REGISTRY_DRIFT");
 });
 
 test("Cloudflare D1 release evidence planner gates mutating production apply", async () => {
@@ -1888,11 +2947,55 @@ test("Cloudflare D1 release evidence planner gates mutating production apply", a
       confirmed.targets[0]?.steps.map((step) => [step.name, Boolean(step.applyOnly)]),
       [
         ["d1.migrations.list", false],
+        ["d1.preapply.evidence", true],
         ["d1.migrations.apply", true],
         ["d1.seed.apply", true],
+        ["d1.migrations.list.postapply", true],
         ["d1.posts_questions.evidence", false],
       ],
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare D1 release evidence never runs migrations apply when registry drift is detected", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-release-drift-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+    const parsed = d1ReleaseEvidence.parseArgs(["--env=staging", "--config", configPath, "--apply"]);
+    const plan = await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: parsed.flags,
+      options: parsed.options,
+      env: {},
+    });
+    const calls: string[][] = [];
+
+    const execution = await d1ReleaseEvidence.executeD1ReleaseEvidencePlan(plan, {
+      commandRunner: async (_command: string, args: string[]) => {
+        calls.push(args);
+        if (args.includes("migrations") && args.includes("list")) {
+          return {
+            exitCode: 0,
+            stdout: "0018_photo_read_budget.sql\n0019_background_job_delivery.sql\n0026_global_api_cost_guard.sql\n",
+            stderr: "",
+          };
+        }
+        if (args.includes("--command")) {
+          return {
+            exitCode: 1,
+            stdout: "",
+            stderr: "SQLITE_ERROR: no such table: api_cost_guard_control",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    assert.equal(execution.ok, false);
+    assert.ok(execution.results.some((result: { check?: { code?: string } }) => result.check?.code === "D1_MIGRATION_REGISTRY_DRIFT"));
+    assert.equal(calls.some((args) => args.includes("migrations") && args.includes("apply")), false);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -1920,7 +3023,7 @@ test("Cloudflare R2 release evidence planner defaults to non-mutating steps", as
     assert.deepEqual(plan.targets[0]?.bucketNames, ["silsigan-photos-staging"]);
     assert.deepEqual(
       plan.targets[0]?.steps.map((step) => step.name),
-      ["r2.buckets.list"],
+      ["r2.buckets.list", "r2.bucket.dev-url.get", "r2.bucket.domain.list"],
     );
     assert.equal(plan.targets[0]?.steps.some((step) => step.applyOnly), false);
   } finally {
@@ -1959,6 +3062,8 @@ test("Cloudflare R2 release evidence planner gates mutating production apply", a
       [
         ["r2.buckets.list", null, false],
         ["r2.bucket.create", "silsigan-photos-production", true],
+        ["r2.bucket.dev-url.get", "silsigan-photos-production", false],
+        ["r2.bucket.domain.list", "silsigan-photos-production", false],
       ],
     );
   } finally {
@@ -1997,6 +3102,31 @@ test("Cloudflare external state check classifies deployment URL blockers without
   });
   assert.ok(duplicateChecks.some((check: { name: string; status: string; code?: string }) => check.name === "deployment_urls.staging.pages.production.pages" && check.status === "fail" && check.code === "DEPLOYMENT_URL_DUPLICATE"));
   assert.ok(duplicateChecks.some((check: { name: string; status: string; code?: string }) => check.name === "deployment_urls.staging.worker_api.production.worker_api" && check.status === "fail" && check.code === "DEPLOYMENT_URL_DUPLICATE"));
+});
+
+test("Cloudflare external state check requires exact API origins for each Pages deployment", () => {
+  const missing = externalState.classifyApiAllowedOriginsState({}, ["staging"]);
+  assert.equal(missing[0]?.code, "API_ALLOWED_ORIGINS_REQUIRED");
+
+  const configured = externalState.classifyApiAllowedOriginsState(
+    {
+      SILSIGAN_STAGING_PAGES_URL: "https://silsigan-staging.pages.dev/app",
+      SILSIGAN_STAGING_API_ALLOWED_ORIGINS: "https://silsigan-staging.pages.dev",
+    },
+    ["staging"],
+  );
+  assert.equal(configured[0]?.status, "pass");
+
+  const unsafe = externalState.classifyApiAllowedOriginsState(
+    {
+      SILSIGAN_STAGING_PAGES_URL: "https://silsigan-staging.pages.dev",
+      SILSIGAN_STAGING_API_ALLOWED_ORIGINS: "* , https://attacker.example/path?token=secret",
+    },
+    ["staging"],
+  );
+  assert.equal(unsafe[0]?.code, "API_ALLOWED_ORIGINS_INVALID");
+  assert.equal(JSON.stringify(unsafe).includes("attacker.example"), false);
+  assert.equal(JSON.stringify(unsafe).includes("secret"), false);
 });
 
 test("Cloudflare external state check summarizes canonical release blockers", () => {
@@ -2113,6 +3243,16 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
   const restrictionAnonymousUserId = `anon_${"a".repeat(48)}`;
   const reportId = "report_staging_smoke_fixture";
   const adminToken = "test-admin-token";
+  const issuedSessionIds = [
+    "anon_fixture_primary_session",
+    "anon_fixture_restrict_session",
+    "anon_fixture_lifecycle_session",
+  ];
+  const sessionProofs = new Map<string, string>();
+  const revokedSessions = new Set<string>();
+  let sessionIssueCount = 0;
+  let invalidProofRejections = 0;
+  let revokedProofRejections = 0;
   let photoDeleted = false;
   let commentCreated = false;
   let commentDeleted = false;
@@ -2141,6 +3281,54 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
 
       return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
     };
+
+    if (request.method === "POST" && url.pathname === "/api/session/anonymous") {
+      const anonymousId = issuedSessionIds[sessionIssueCount];
+      const proof = String.fromCharCode(65 + sessionIssueCount).repeat(43);
+      sessionIssueCount += 1;
+      if (!anonymousId) {
+        send(429, { success: false, error: { code: "RATE_LIMITED", message: "too many fixture sessions" } });
+        return;
+      }
+      sessionProofs.set(anonymousId, proof);
+      send(201, success({ anonymousId, proof, expiresAt: "2099-12-31T23:59:59.999Z" }));
+      return;
+    }
+
+    const proofRequired =
+      ((request.method !== "GET" && request.method !== "HEAD") && !url.pathname.startsWith("/api/admin/"))
+      || (request.method === "GET" && url.pathname === "/api/preferences");
+    if (proofRequired) {
+      const requestProof = String(request.headers["x-silsigan-anon-proof"] ?? "");
+      if (revokedSessions.has(requestAnonId)) {
+        revokedProofRejections += 1;
+        send(403, { success: false, error: { code: "ANONYMOUS_SESSION_REVOKED", message: "revoked" } });
+        return;
+      }
+      if (!sessionProofs.has(requestAnonId) || sessionProofs.get(requestAnonId) !== requestProof) {
+        invalidProofRejections += 1;
+        send(403, { success: false, error: { code: "ANONYMOUS_SESSION_PROOF_INVALID", message: "invalid proof" } });
+        return;
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/session/anonymous/rotate") {
+      const proof = "R".repeat(43);
+      sessionProofs.set(requestAnonId, proof);
+      send(200, success({ anonymousId: requestAnonId, proof, expiresAt: "2099-12-31T23:59:59.999Z" }));
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname === "/api/session/anonymous") {
+      revokedSessions.add(requestAnonId);
+      send(200, success({ revoked: true, revokedAt: "2026-07-20T00:00:00.000Z" }));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/preferences") {
+      send(200, success({ categories: [], savedPlaces: [], followedTopics: [], notificationSubscriptions: [] }));
+      return;
+    }
 
     if (request.method === "GET" && url.pathname === "/api/health") {
       send(200, success({ ok: true, service: "fixture-worker", storage: "fixture" }));
@@ -2375,7 +3563,7 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
     const { stdout } = await execFileAsync(
       process.execPath,
       [
-        new URL("../scripts/cloudflare-staging-smoke.mjs", import.meta.url).pathname,
+        scriptPath("../scripts/cloudflare-staging-smoke.mjs"),
         `--base-url=http://127.0.0.1:${address.port}`,
         "--mutating",
         "--coordinate-status",
@@ -2389,6 +3577,9 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
 
     assert.equal(payload.ok, true);
     assert.ok(payload.checks.some((check) => check.name === "realtime.place" && check.status === "pass"));
+    assert.ok(payload.checks.some((check) => check.name === "anonymousSession.forgedProof" && check.status === "pass"));
+    assert.ok(payload.checks.some((check) => check.name === "anonymousSession.lifecycle" && check.status === "pass"));
+    assert.ok(payload.checks.some((check) => check.name === "anonymousSession.cleanup" && check.status === "pass"));
     assert.ok(payload.checks.some((check) => check.name === "realtime.region" && check.status === "pass"));
     assert.ok(payload.checks.some((check) => check.name === "realtime.global" && check.status === "pass"));
     assert.ok(payload.checks.some((check) => check.name === "photos.previewList" && check.status === "pass"));
@@ -2411,6 +3602,10 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
     assert.ok(payload.checks.some((check) => check.name === "users.restrictionCleanup" && check.status === "pass"));
     assert.ok(payload.checks.some((check) => check.name === "coordinateStatus.verify" && check.status === "pass"));
     assert.ok(payload.checks.some((check) => check.name === "coordinateStatus.publicDetail" && check.status === "pass"));
+    assert.equal(sessionIssueCount, 3);
+    assert.equal(invalidProofRejections, 2);
+    assert.equal(revokedProofRejections, 1);
+    assert.deepEqual(new Set(revokedSessions), new Set(issuedSessionIds));
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }
@@ -2628,7 +3823,7 @@ function writeCloudflareCostUsageRunbook(path: string) {
       "",
       "## Alert Rules",
       "",
-      "Configure Billing alerts at 50% and 80% of the MVP budget before TestFlight expansion.",
+      "Configure Billing alerts and the dedicated COST_GUARD_STATE mirror before TestFlight expansion. The /api/admin/api-cost-guard control uses a 60% warning, 70% degradation, and 80% stop, then requires Cloudflare reconciliation before resume. WAF remains required because a request is counted before Worker code runs.",
       "",
       "## Evidence And Cadence",
       "",
@@ -2771,7 +3966,11 @@ function writePublicPolicySupportPages(privacyPagePath: string, supportPagePath:
 function writeReleaseHarnessFiles(
   rootDir: string,
   sourceLedgerPath: string,
-  options: { omitOpenBlockerEvidenceFromStatus?: boolean; openBlocker?: boolean } = {},
+  options: {
+    blockerStatus?: "open" | "closed" | "paused" | null;
+    omitOpenBlockerEvidenceFromStatus?: boolean;
+    openBlocker?: boolean;
+  } = {},
 ) {
   const releaseLedgerPath = join(rootDir, "release-ledger.yaml");
   const releaseStatusPath = join(rootDir, "RELEASE_STATUS.md");
@@ -2795,9 +3994,11 @@ function writeReleaseHarnessFiles(
             "blockers:",
             "  - id: \"P0-SILSIGAN-R2-DASHBOARD\"",
             "    severity: \"P0\"",
-            "    status: \"open\"",
+            ...(options.blockerStatus === null ? [] : [`    status: \"${options.blockerStatus ?? "open"}\"`]),
             "    title: \"Cloudflare R2 account is not enabled.\"",
+            "    owner: \"release-operator\"",
             "    evidence: \"R2_NOT_ENABLED\"",
+            "    due: \"before_staging_release_candidate\"",
           ]
         : ["blockers: []"]),
       "next_action:",
@@ -2838,10 +4039,46 @@ function writeReleaseHarnessFiles(
   return { releaseLedgerPath, releaseStatusPath };
 }
 
+function inspectReleaseHarnessBlockerSchema(options: { blockerStatus: "open" | "closed" | "paused" | null }) {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-blocker-schema-"));
+  try {
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(
+      tempDir,
+      "docs/current-release-state.md",
+      { openBlocker: true, ...options },
+    );
+    const output = execFileSync(process.execPath, [
+      scriptPath("../scripts/release-state-check.mjs"),
+      `--release-ledger=${releaseLedgerPath}`,
+      `--release-status=${releaseStatusPath}`,
+    ], {
+      encoding: "utf8",
+      env: createReadyPreflightProcessEnv(),
+      stdio: "pipe",
+    });
+
+    return JSON.parse(output) as {
+      blockers: string[];
+      checks: Array<{ name: string; status: string; errors?: string[] }>;
+    };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 function createPreflightEnv(input: { envName: "staging" | "production"; d1Id: string; kvId: string }) {
   return {
     vars: {
       ENVIRONMENT: input.envName,
+      SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+      SILSIGAN_TURNSTILE_SITE_KEY: `public-turnstile-${input.envName}`,
+      SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+      SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100000",
+      SILSIGAN_D1_DAILY_READ_LIMIT: "5000000",
+      SILSIGAN_D1_DAILY_WRITE_LIMIT: "100000",
+      SILSIGAN_COST_GUARD_WARN_PERCENT: "60",
+      SILSIGAN_COST_GUARD_DEGRADE_PERCENT: "70",
+      SILSIGAN_COST_GUARD_STOP_PERCENT: "80",
     },
     d1_databases: [
       {
@@ -2855,6 +4092,15 @@ function createPreflightEnv(input: { envName: "staging" | "production"; d1Id: st
         binding: "CACHE",
         id: input.kvId,
       },
+      {
+        binding: "COST_GUARD_STATE",
+        id: `cost-guard-${input.kvId}`,
+      },
+    ],
+    ratelimits: [
+      { name: "PUBLIC_API_RATE_LIMITER" },
+      { name: "ADMIN_API_RATE_LIMITER" },
+      { name: "HIGH_COST_API_RATE_LIMITER" },
     ],
     r2_buckets: [
       {
@@ -2989,6 +4235,7 @@ test("Worker runtime config defaults launch flags to false in explicit demo stor
     dataMode: string;
     featureFlags: Record<string, boolean>;
     dimensionSettings: Array<{ settingKey: string; defaultTtlSeconds: number }>;
+    photoUploadProtection: { turnstileRequired: boolean; turnstileSiteKey: string | null };
   }>;
   assert.equal(payload.data.contractVersion, 2);
   assert.equal(payload.data.dataMode, "demo");
@@ -3002,7 +4249,29 @@ test("Worker runtime config defaults launch flags to false in explicit demo stor
     SOCIAL_FEED_ENABLED: false,
   });
   assert.equal(payload.data.dimensionSettings.find((setting) => setting.settingKey === "parking")?.defaultTtlSeconds, 900);
+  assert.deepEqual(payload.data.photoUploadProtection, { turnstileRequired: false, turnstileSiteKey: null });
   assert.equal(payload.meta?.storage, "memory");
+});
+
+test("Worker runtime config exposes only the public Turnstile site key", async () => {
+  const secret = "must-never-appear-in-runtime-config";
+  const response = await worker.handleRequest(new Request("https://api.test/api/config"), {
+    ENVIRONMENT: "development",
+    SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+    SILSIGAN_TURNSTILE_SITE_KEY: "public-turnstile-site-key",
+    SILSIGAN_TURNSTILE_SECRET_KEY: secret,
+  });
+  const raw = await response.text();
+  const payload = JSON.parse(raw) as SuccessPayload<{
+    photoUploadProtection: { turnstileRequired: boolean; turnstileSiteKey: string | null };
+  }>;
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(payload.data.photoUploadProtection, {
+    turnstileRequired: true,
+    turnstileSiteKey: "public-turnstile-site-key",
+  });
+  assert.equal(raw.includes(secret), false);
 });
 
 test("Worker runtime config applies a D1 region feature override", { skip: !sqlite3Available() }, async () => {
@@ -3306,7 +4575,7 @@ test("KMA ingestion stays disabled until approved and then persists hashed offic
     assert.equal(signal?.sourceType, "official_periodic");
     assert.equal(signal?.observedAt, expectedObservedAt);
     assert.notEqual(signal?.observedAt, signal?.fetchedAt);
-    assert.equal(Date.parse(signal?.expiresAt ?? "") - Date.parse(signal?.observedAt ?? ""), 1_800_000);
+    assert.equal(Date.parse(signal?.expiresAt ?? "") - Date.parse(signal?.observedAt ?? ""), 7_200_000);
     assert.equal(signal?.idempotencyKey.includes(serviceKey), false);
 
     const evidence = await db.prepare(`
@@ -3323,6 +4592,725 @@ test("KMA ingestion stays disabled until approved and then persists hashed offic
     const signalCount = await db.prepare("SELECT COUNT(*) AS count FROM live_signals WHERE source_id = 'source-kma-weather'").first<{ count: number }>();
     assert.equal(signalCount?.count, 1);
     assert.equal(fetchCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled KMA requests use the latest safely published Korea Standard Time hour", () => {
+  assert.deepEqual(worker.resolveScheduledKmaBaseTime(new Date("2026-07-19T15:39:00.000Z")), {
+    baseDate: "20260719",
+    baseTime: "2300",
+  });
+  assert.deepEqual(worker.resolveScheduledKmaBaseTime(new Date("2026-07-19T15:45:00.000Z")), {
+    baseDate: "20260720",
+    baseTime: "0000",
+  });
+});
+
+test("scheduled handler disables platform retries and logs aggregate data only", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalLog = console.log;
+  const logs: string[] = [];
+  let noRetryCount = 0;
+
+  try {
+    console.log = (...values: unknown[]): void => {
+      logs.push(values.map(String).join(" "));
+    };
+
+    await worker.default.scheduled(
+      {
+        scheduledTime: Date.parse("2026-07-19T00:00:00.000Z"),
+        cron: "*/5 * * * *",
+        noRetry: () => {
+          noRetryCount += 1;
+        },
+      },
+      { DB: db, SILSIGAN_SOURCE_INGESTION_SCHEDULED: "1" },
+    );
+
+    assert.equal(noRetryCount, 1);
+    assert.equal(logs.length, 1);
+    assert.deepEqual(JSON.parse(logs[0] ?? "{}"), {
+      event: "background.schedule.completed",
+      cron: "*/5 * * * *",
+      scheduledAt: "2026-07-19T00:00:00.000Z",
+      sourceIngestion: {
+        ok: true,
+        summary: {
+          scheduledAt: "2026-07-19T00:00:00.000Z",
+          examinedCount: 0,
+          claimedCount: 0,
+          succeededCount: 0,
+          failedCount: 0,
+          skippedCount: 0,
+          errorCodes: {},
+        },
+      },
+      photoCleanup: {
+        ok: true,
+        summary: {
+          scheduledAt: "2026-07-19T00:00:00.000Z",
+          examinedCount: 0,
+          claimedCount: 0,
+          succeededCount: 0,
+          retriedCount: 0,
+          deadLetteredCount: 0,
+          skippedCount: 0,
+          errorCodes: {},
+        },
+      },
+      publicationOutbox: {
+        ok: true,
+        summary: {
+          scheduledAt: "2026-07-19T00:00:00.000Z",
+          examinedCount: 0,
+          claimedCount: 0,
+          succeededCount: 0,
+          retriedCount: 0,
+          deadLetteredCount: 0,
+          skippedCount: 0,
+          errorCodes: {},
+        },
+      },
+    });
+    assert.equal(logs.join("\n").includes("adapterConfigJson"), false);
+    assert.equal(logs.join("\n").includes("serviceKey"), false);
+  } finally {
+    console.log = originalLog;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled handler skips unapproved source ingestion but still runs cleanup and publication consumers", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalLog = console.log;
+  const logs: string[] = [];
+
+  try {
+    console.log = (...values: unknown[]): void => {
+      logs.push(values.map(String).join(" "));
+    };
+
+    await worker.default.scheduled(
+      {
+        scheduledTime: Date.parse("2026-07-19T00:00:00.000Z"),
+        cron: "*/5 * * * *",
+        noRetry: () => undefined,
+      },
+      { DB: db, SILSIGAN_SOURCE_INGESTION_SCHEDULED: "0" },
+    );
+
+    const payload = JSON.parse(logs[0] ?? "{}") as {
+      sourceIngestion?: unknown;
+      photoCleanup?: { ok?: boolean };
+      publicationOutbox?: { ok?: boolean };
+    };
+    assert.deepEqual(payload.sourceIngestion, {
+      ok: true,
+      skipped: true,
+      reason: "disabled-by-environment",
+    });
+    assert.equal(payload.photoCleanup?.ok, true);
+    assert.equal(payload.publicationOutbox?.ok, true);
+  } finally {
+    console.log = originalLog;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled consumer failures are isolated so cleanup and publication still complete", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalLog = console.log;
+  const logs: string[] = [];
+
+  try {
+    await db.prepare("DROP TABLE source_ingestion_targets").run();
+    console.log = (...values: unknown[]): void => {
+      logs.push(values.map(String).join(" "));
+    };
+
+    await worker.default.scheduled(
+      {
+        scheduledTime: Date.parse("2026-07-19T00:00:00.000Z"),
+        cron: "*/5 * * * *",
+        noRetry: () => undefined,
+      },
+      { DB: db, SILSIGAN_SOURCE_INGESTION_SCHEDULED: "1" },
+    );
+
+    const payload = JSON.parse(logs[0] ?? "{}") as {
+      sourceIngestion?: { ok?: boolean; errorCode?: string };
+      photoCleanup?: { ok?: boolean };
+      publicationOutbox?: { ok?: boolean };
+    };
+    assert.equal(payload.sourceIngestion?.ok, false);
+    assert.equal(payload.sourceIngestion?.errorCode, "SOURCE_SCHEDULER_UNAVAILABLE");
+    assert.equal(payload.photoCleanup?.ok, true);
+    assert.equal(payload.publicationOutbox?.ok, true);
+  } finally {
+    console.log = originalLog;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled photo cleanup deletes R2 objects and releases the storage ledger exactly once", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const scheduledAt = new Date("2026-07-19T00:00:00.000Z");
+
+  try {
+    await r2.put("pending/cleanup-once.webp", "fixture");
+    await db.prepare("UPDATE photo_storage_budget SET active_bytes = 512 WHERE id = 1").run();
+    await db.prepare(`
+      INSERT INTO photo_cleanup_jobs (
+        id, photo_id, storage_key, byte_size, reason, status, attempts,
+        next_attempt_at, last_error_code, created_at, updated_at
+      ) VALUES (
+        'cleanup-once', NULL, 'pending/cleanup-once.webp', 512, 'test_cleanup',
+        'pending', 0, '2026-07-18T23:59:00.000Z', 'R2_DELETE_FAILED',
+        '2026-07-18T23:59:00.000Z', '2026-07-18T23:59:00.000Z'
+      )
+    `).run();
+
+    const first = await worker.runScheduledPhotoCleanup({ DB: db, PHOTOS: r2 }, scheduledAt);
+    const second = await worker.runScheduledPhotoCleanup({ DB: db, PHOTOS: r2 }, scheduledAt);
+    const job = await db.prepare(`
+      SELECT status, attempts, budget_released_at AS budgetReleasedAt,
+             completed_at AS completedAt, lease_token AS leaseToken
+      FROM photo_cleanup_jobs WHERE id = 'cleanup-once'
+    `).first<{
+      status: string;
+      attempts: number;
+      budgetReleasedAt: string | null;
+      completedAt: string | null;
+      leaseToken: string | null;
+    }>();
+    const budget = await db.prepare("SELECT active_bytes AS activeBytes FROM photo_storage_budget WHERE id = 1")
+      .first<{ activeBytes: number }>();
+
+    assert.deepEqual(first, {
+      scheduledAt: scheduledAt.toISOString(),
+      examinedCount: 1,
+      claimedCount: 1,
+      succeededCount: 1,
+      retriedCount: 0,
+      deadLetteredCount: 0,
+      skippedCount: 0,
+      errorCodes: {},
+    });
+    assert.equal(second.examinedCount, 0);
+    assert.deepEqual(r2.deletedKeys, ["pending/cleanup-once.webp"]);
+    assert.equal(job?.status, "completed");
+    assert.equal(job?.attempts, 1);
+    assert.equal(job?.budgetReleasedAt, scheduledAt.toISOString());
+    assert.equal(job?.completedAt, scheduledAt.toISOString());
+    assert.equal(job?.leaseToken, null);
+    assert.equal(budget?.activeBytes, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled photo cleanup prunes expired upload and per-IP abuse ledgers", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const scheduledAt = new Date("2026-07-19T00:00:00.000Z");
+
+  try {
+    await db.prepare(`
+      INSERT INTO photo_upload_claims (upload_id, anonymous_user_id, expires_at, consumed_at)
+      VALUES
+        ('old-claim', 'anon_old', '2026-07-15T00:00:00.000Z', '2026-07-15T00:00:00.000Z'),
+        ('current-claim', 'anon_current', '2026-07-19T00:05:00.000Z', '2026-07-19T00:00:00.000Z')
+    `).run();
+    await db.prepare(`
+      INSERT INTO photo_abuse_budget (principal_hash, day_utc, upload_count, bytes_in_period, updated_at)
+      VALUES
+        ('hmac-sha256:old-upload', '2026-07-15', 1, 10, '2026-07-15T00:00:00.000Z'),
+        ('hmac-sha256:current-upload', '2026-07-19', 1, 10, '2026-07-19T00:00:00.000Z')
+    `).run();
+    await db.prepare(`
+      INSERT INTO photo_read_abuse_budget (principal_hash, day_utc, read_count, updated_at)
+      VALUES
+        ('hmac-sha256:old-read', '2026-07-15', 1, '2026-07-15T00:00:00.000Z'),
+        ('hmac-sha256:current-read', '2026-07-19', 1, '2026-07-19T00:00:00.000Z')
+    `).run();
+    await db.prepare(`
+      INSERT INTO anonymous_sessions (
+        session_hash, proof_hash, status, expires_at, created_at, last_seen_at, rotated_at, revoked_at
+      ) VALUES
+        ('expired-session', 'sha256:expired', 'active', '2026-07-18T23:59:59.000Z', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', NULL, NULL),
+        ('old-revoked-session', 'sha256:old-revoked', 'revoked', '2027-07-19T00:00:00.000Z', '2026-07-01T00:00:00.000Z', '2026-07-15T00:00:00.000Z', NULL, '2026-07-15T00:00:00.000Z'),
+        ('recent-revoked-session', 'sha256:recent-revoked', 'revoked', '2027-07-19T00:00:00.000Z', '2026-07-01T00:00:00.000Z', '2026-07-18T00:00:00.000Z', NULL, '2026-07-18T00:00:00.000Z'),
+        ('current-session', 'sha256:current', 'active', '2027-07-19T00:00:00.000Z', '2026-07-01T00:00:00.000Z', '2026-07-19T00:00:00.000Z', NULL, NULL)
+    `).run();
+    await db.prepare(`
+      INSERT INTO anonymous_session_issuance_budget (day_utc, issue_count, updated_at)
+      VALUES
+        ('2026-07-15', 10, '2026-07-15T00:00:00.000Z'),
+        ('2026-07-19', 2, '2026-07-19T00:00:00.000Z')
+    `).run();
+
+    const summary = await worker.runScheduledPhotoCleanup({ DB: db }, scheduledAt);
+    const claims = await db.prepare("SELECT upload_id AS uploadId FROM photo_upload_claims ORDER BY upload_id").all<{ uploadId: string }>();
+    const uploads = await db.prepare("SELECT principal_hash AS principalHash FROM photo_abuse_budget ORDER BY principal_hash").all<{ principalHash: string }>();
+    const reads = await db.prepare("SELECT principal_hash AS principalHash FROM photo_read_abuse_budget ORDER BY principal_hash").all<{ principalHash: string }>();
+    const sessions = await db.prepare("SELECT session_hash AS sessionHash FROM anonymous_sessions ORDER BY session_hash").all<{ sessionHash: string }>();
+    const sessionBudgets = await db.prepare("SELECT day_utc AS dayUtc FROM anonymous_session_issuance_budget ORDER BY day_utc").all<{ dayUtc: string }>();
+
+    assert.equal(summary.examinedCount, 0);
+    assert.deepEqual(claims.results, [{ uploadId: "current-claim" }]);
+    assert.deepEqual(uploads.results, [{ principalHash: "hmac-sha256:current-upload" }]);
+    assert.deepEqual(reads.results, [{ principalHash: "hmac-sha256:current-read" }]);
+    assert.deepEqual(sessions.results, [
+      { sessionHash: "current-session" },
+      { sessionHash: "recent-revoked-session" },
+    ]);
+    assert.deepEqual(sessionBudgets.results, [{ dayUtc: "2026-07-19" }]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled photo cleanup dead-letters bounded failures without leaking storage keys", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const scheduledAt = new Date("2026-07-19T00:00:00.000Z");
+  class FailingDeleteR2Bucket extends FakeR2Bucket {
+    override async delete(): Promise<void> {
+      throw new Error("provider failure with private key pending/secret-user-file.webp");
+    }
+  }
+
+  try {
+    await db.prepare("UPDATE photo_storage_budget SET active_bytes = 256 WHERE id = 1").run();
+    await db.prepare(`
+      INSERT INTO photo_cleanup_jobs (
+        id, photo_id, storage_key, byte_size, reason, status, attempts,
+        next_attempt_at, last_error_code, created_at, updated_at
+      ) VALUES (
+        'cleanup-dead-letter', NULL, 'pending/secret-user-file.webp', 256, 'test_failure',
+        'pending', 4, '2026-07-18T23:59:00.000Z', 'R2_DELETE_FAILED',
+        '2026-07-18T23:59:00.000Z', '2026-07-18T23:59:00.000Z'
+      )
+    `).run();
+
+    const summary = await worker.runScheduledPhotoCleanup(
+      { DB: db, PHOTOS: new FailingDeleteR2Bucket() },
+      scheduledAt,
+    );
+    const job = await db.prepare(`
+      SELECT status, attempts, last_error_code AS lastErrorCode,
+             dead_lettered_at AS deadLetteredAt, lease_token AS leaseToken
+      FROM photo_cleanup_jobs WHERE id = 'cleanup-dead-letter'
+    `).first<{
+      status: string;
+      attempts: number;
+      lastErrorCode: string;
+      deadLetteredAt: string | null;
+      leaseToken: string | null;
+    }>();
+    const budget = await db.prepare("SELECT active_bytes AS activeBytes FROM photo_storage_budget WHERE id = 1")
+      .first<{ activeBytes: number }>();
+
+    assert.equal(summary.deadLetteredCount, 1);
+    assert.deepEqual(summary.errorCodes, { BACKGROUND_JOB_FAILED: 1 });
+    assert.equal(JSON.stringify(summary).includes("secret-user-file"), false);
+    assert.equal(job?.status, "failed");
+    assert.equal(job?.attempts, 5);
+    assert.equal(job?.lastErrorCode, "BACKGROUND_JOB_FAILED");
+    assert.equal(job?.deadLetteredAt, scheduledAt.toISOString());
+    assert.equal(job?.leaseToken, null);
+    assert.equal(budget?.activeBytes, 256);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled publication outbox emits a safe event only after field report approval", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const anonymousId = "anon_scheduled_outbox";
+  const scheduledAt = new Date("2030-07-19T00:05:00.000Z");
+  const env = {
+    DB: db,
+    PLACE_ROOM: new FakeDurableObjectNamespace(() => new worker.PlaceRoom()),
+    REGION_ROOM: new FakeDurableObjectNamespace(() => new worker.RegionRoom()),
+    GLOBAL_ROOM: new FakeDurableObjectNamespace(() => new worker.GlobalRoom()),
+  };
+
+  try {
+    const response = await rawD1Post(db, "https://api.test/api/reports", anonymousId, {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      hashtagNames: ["#광안리지금"],
+      clientRequestId: "scheduled-outbox-001",
+    });
+    const payload = (await response.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(response.status, 201);
+
+    const pendingOutbox = await db.prepare("SELECT COUNT(*) AS count FROM publication_outbox WHERE aggregate_id = ?").bind(payload.data.report.id).first<{ count: number }>();
+    const pendingSummary = await worker.runScheduledPublicationOutbox(env, scheduledAt);
+    const pendingPlaceRoom = await getRealtimeRoom<{
+      events: Array<{ type: string; payload: Record<string, unknown> }>;
+    }>(env, "/api/realtime/place/busan-gwangalli", anonymousId);
+    assert.equal(pendingOutbox?.count, 0);
+    assert.equal(pendingSummary.succeededCount, 0);
+    assert.equal(pendingPlaceRoom.events.length, 0);
+
+    await d1AdminPost<SuccessPayload<{ moderationStatus: string }>>(
+      db,
+      `https://api.test/api/admin/field-reports/${payload.data.report.id}/action`,
+      { status: "approved", reason: "실시간 발행 전 개인정보 검수 완료" },
+      {},
+      "test-moderator-token",
+    );
+
+    const summary = await worker.runScheduledPublicationOutbox(env, scheduledAt);
+    const outbox = await db.prepare(`
+      SELECT status, attempts, published_at AS publishedAt,
+             last_error_code AS lastErrorCode, lease_token AS leaseToken
+      FROM publication_outbox WHERE aggregate_id = ?
+    `).bind(payload.data.report.id).first<{
+      status: string;
+      attempts: number;
+      publishedAt: string | null;
+      lastErrorCode: string | null;
+      leaseToken: string | null;
+    }>();
+    const placeRoom = await getRealtimeRoom<{
+      events: Array<{ type: string; payload: Record<string, unknown> }>;
+    }>(env, "/api/realtime/place/busan-gwangalli", anonymousId);
+
+    assert.equal(summary.succeededCount, 1);
+    assert.equal(summary.retriedCount, 0);
+    assert.equal(outbox?.status, "published");
+    assert.equal(outbox?.attempts, 1);
+    assert.equal(outbox?.publishedAt, scheduledAt.toISOString());
+    assert.equal(outbox?.lastErrorCode, null);
+    assert.equal(outbox?.leaseToken, null);
+    assert.equal(placeRoom.events[0]?.type, "report.created");
+    assert.deepEqual(placeRoom.events[0]?.payload, {
+      reportId: payload.data.report.id,
+      placeId: "busan-gwangalli",
+      regionId: "busan",
+      areaId: "busan-suyeong",
+    });
+    assert.equal(JSON.stringify(placeRoom.events[0]).includes(anonymousId), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("source ingestion targets reject embedded provider secrets", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    await assert.rejects(
+      db.prepare(`
+        INSERT INTO source_ingestion_targets (
+          id, source_id, place_id, adapter_config_json,
+          refresh_interval_seconds, next_run_at
+        ) VALUES (?, 'source-kma-weather', 'busan-gwangalli', ?, 3600, ?)
+      `).bind(
+        "scheduled-secret-rejected",
+        JSON.stringify({ nx: 98, ny: 76, serviceKey: "must-not-be-stored" }),
+        "2026-07-19T00:00:00.000Z",
+      ).run(),
+      /CHECK constraint failed/,
+    );
+
+    const count = await db.prepare("SELECT COUNT(*) AS count FROM source_ingestion_targets").first<{ count: number }>();
+    assert.equal(count?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled ingestion skips an active lease and never calls an unapproved provider", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const scheduledAt = new Date();
+  let fetchCount = 0;
+
+  try {
+    await db.prepare(`
+      INSERT INTO source_ingestion_targets (
+        id, source_id, place_id, adapter_config_json, enabled,
+        refresh_interval_seconds, next_run_at
+      ) VALUES (?, 'source-kma-weather', 'busan-gwangalli', ?, 1, 3600, ?)
+    `).bind(
+      "scheduled-kma-unapproved",
+      JSON.stringify({ nx: 98, ny: 76 }),
+      new Date(scheduledAt.getTime() - 60_000).toISOString(),
+    ).run();
+    await db.prepare(`
+      INSERT INTO source_ingestion_targets (
+        id, source_id, place_id, adapter_config_json, enabled,
+        refresh_interval_seconds, next_run_at, lease_token, lease_until
+      ) VALUES (?, 'source-kma-weather', 'ulsan-taehwagang', ?, 1, 3600, ?, ?, ?)
+    `).bind(
+      "scheduled-kma-leased",
+      JSON.stringify({ nx: 102, ny: 83 }),
+      new Date(scheduledAt.getTime() - 60_000).toISOString(),
+      "existing-lease-token",
+      new Date(scheduledAt.getTime() + 5 * 60_000).toISOString(),
+    ).run();
+    globalThis.fetch = async (): Promise<Response> => {
+      fetchCount += 1;
+      return Response.json({ unexpected: true });
+    };
+
+    const summary = await worker.runScheduledSourceIngestion(
+      { DB: db, KMA_SERVICE_KEY: "must-not-be-used" },
+      scheduledAt,
+    );
+    const failed = await db.prepare(`
+      SELECT consecutive_failures AS consecutiveFailures, last_error_code AS lastErrorCode,
+             lease_token AS leaseToken, lease_until AS leaseUntil, next_run_at AS nextRunAt
+      FROM source_ingestion_targets
+      WHERE id = 'scheduled-kma-unapproved'
+    `).first<{
+      consecutiveFailures: number;
+      lastErrorCode: string;
+      leaseToken: string | null;
+      leaseUntil: string | null;
+      nextRunAt: string;
+    }>();
+    const leased = await db.prepare(`
+      SELECT lease_token AS leaseToken, lease_until AS leaseUntil
+      FROM source_ingestion_targets
+      WHERE id = 'scheduled-kma-leased'
+    `).first<{ leaseToken: string; leaseUntil: string }>();
+
+    assert.equal(summary.examinedCount, 1);
+    assert.equal(summary.claimedCount, 1);
+    assert.equal(summary.succeededCount, 0);
+    assert.equal(summary.failedCount, 1);
+    assert.deepEqual(summary.errorCodes, { SOURCE_NOT_ACTIVE: 1 });
+    assert.equal(fetchCount, 0);
+    assert.equal(failed?.consecutiveFailures, 1);
+    assert.equal(failed?.lastErrorCode, "SOURCE_NOT_ACTIVE");
+    assert.equal(failed?.leaseToken, null);
+    assert.equal(failed?.leaseUntil, null);
+    assert.ok(Date.parse(failed?.nextRunAt ?? "") > scheduledAt.getTime());
+    assert.equal(leased?.leaseToken, "existing-lease-token");
+    assert.ok(Date.parse(leased?.leaseUntil ?? "") > scheduledAt.getTime());
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled ingestion isolates a credential failure and refreshes another due target", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const scheduledAt = new Date();
+  const expectedBase = worker.resolveScheduledKmaBaseTime(scheduledAt);
+  const serviceKey = "scheduled-kma-fixture-key";
+  let fetchCount = 0;
+
+  try {
+    await db.prepare(`
+      UPDATE data_sources
+      SET enabled = 1, health_status = 'healthy', default_ttl_seconds = 7200
+      WHERE source_key = 'kma_weather'
+    `).run();
+    await db.prepare(`
+      UPDATE data_sources
+      SET commercial_use_status = 'allowed_with_attribution', enabled = 1,
+          health_status = 'healthy', default_ttl_seconds = 600
+      WHERE source_key = 'national_traffic'
+    `).run();
+    await db.prepare(`
+      INSERT INTO source_ingestion_targets (
+        id, source_id, place_id, adapter_config_json, enabled,
+        refresh_interval_seconds, next_run_at
+      ) VALUES (?, 'source-national-traffic', 'busan-gwangalli', ?, 1, 600, ?)
+    `).bind(
+      "a-scheduled-traffic-missing-credential",
+      JSON.stringify({
+        linkId: "2600012400",
+        roadType: "all",
+        minLng: 129.1,
+        maxLng: 129.14,
+        minLat: 35.14,
+        maxLat: 35.17,
+      }),
+      new Date(scheduledAt.getTime() - 60_000).toISOString(),
+    ).run();
+    await db.prepare(`
+      INSERT INTO source_ingestion_targets (
+        id, source_id, place_id, adapter_config_json, enabled,
+        refresh_interval_seconds, next_run_at
+      ) VALUES (?, 'source-kma-weather', 'busan-gwangalli', ?, 1, 300, ?)
+    `).bind(
+      "b-scheduled-kma-success",
+      JSON.stringify({ nx: 98, ny: 76, baseDate: "19990101", baseTime: "0000" }),
+      new Date(scheduledAt.getTime() - 60_000).toISOString(),
+    ).run();
+    globalThis.fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      fetchCount += 1;
+      const url = new URL(String(input));
+      assert.equal(url.searchParams.get("ServiceKey"), serviceKey);
+      assert.equal(url.searchParams.get("base_date"), expectedBase.baseDate);
+      assert.equal(url.searchParams.get("base_time"), expectedBase.baseTime);
+      assert.notEqual(url.searchParams.get("base_date"), "19990101", "stored baseDate must be ignored");
+      return Response.json({
+        response: {
+          header: { resultCode: "00", resultMsg: "NORMAL_SERVICE" },
+          body: {
+            totalCount: 4,
+            items: {
+              item: [
+                { ...expectedBase, category: "T1H", nx: 98, ny: 76, obsrValue: "24.1" },
+                { ...expectedBase, category: "RN1", nx: 98, ny: 76, obsrValue: "0" },
+                { ...expectedBase, category: "WSD", nx: 98, ny: 76, obsrValue: "1.8" },
+                { ...expectedBase, category: "PTY", nx: 98, ny: 76, obsrValue: "0" },
+              ],
+            },
+          },
+        },
+      });
+    };
+
+    const summary = await worker.runScheduledSourceIngestion(
+      { DB: db, KMA_SERVICE_KEY: serviceKey },
+      scheduledAt,
+    );
+    const trafficTarget = await db.prepare(`
+      SELECT consecutive_failures AS consecutiveFailures, last_error_code AS lastErrorCode,
+             lease_token AS leaseToken, next_run_at AS nextRunAt
+      FROM source_ingestion_targets
+      WHERE id = 'a-scheduled-traffic-missing-credential'
+    `).first<{
+      consecutiveFailures: number;
+      lastErrorCode: string;
+      leaseToken: string | null;
+      nextRunAt: string;
+    }>();
+    const kmaTarget = await db.prepare(`
+      SELECT consecutive_failures AS consecutiveFailures, last_error_code AS lastErrorCode,
+             lease_token AS leaseToken, last_succeeded_at AS lastSucceededAt, next_run_at AS nextRunAt
+      FROM source_ingestion_targets
+      WHERE id = 'b-scheduled-kma-success'
+    `).first<{
+      consecutiveFailures: number;
+      lastErrorCode: string | null;
+      leaseToken: string | null;
+      lastSucceededAt: string;
+      nextRunAt: string;
+    }>();
+    const signalCount = await db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM live_signals
+      WHERE source_id = 'source-kma-weather' AND place_id = 'busan-gwangalli'
+    `).first<{ count: number }>();
+
+    assert.equal(summary.examinedCount, 2);
+    assert.equal(summary.claimedCount, 2);
+    assert.equal(summary.succeededCount, 1);
+    assert.equal(summary.failedCount, 1);
+    assert.equal(summary.skippedCount, 0);
+    assert.deepEqual(summary.errorCodes, { SOURCE_CREDENTIAL_REQUIRED: 1 });
+    assert.equal(fetchCount, 1);
+    assert.equal(trafficTarget?.consecutiveFailures, 1);
+    assert.equal(trafficTarget?.lastErrorCode, "SOURCE_CREDENTIAL_REQUIRED");
+    assert.equal(trafficTarget?.leaseToken, null);
+    assert.ok(Date.parse(trafficTarget?.nextRunAt ?? "") > scheduledAt.getTime());
+    assert.equal(kmaTarget?.consecutiveFailures, 0);
+    assert.equal(kmaTarget?.lastErrorCode, null);
+    assert.equal(kmaTarget?.leaseToken, null);
+    assert.equal(kmaTarget?.lastSucceededAt, scheduledAt.toISOString());
+    assert.equal(
+      Date.parse(kmaTarget?.nextRunAt ?? "") - scheduledAt.getTime(),
+      3_600_000,
+      "source refresh interval must prevent a target from over-polling KMA",
+    );
+    assert.equal(signalCount?.count, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("scheduled ingestion cannot overwrite a newer target lease", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const scheduledAt = new Date();
+  const expectedBase = worker.resolveScheduledKmaBaseTime(scheduledAt);
+
+  try {
+    await db.prepare(`
+      UPDATE data_sources
+      SET enabled = 1, health_status = 'healthy', default_ttl_seconds = 7200
+      WHERE source_key = 'kma_weather'
+    `).run();
+    await db.prepare(`
+      INSERT INTO source_ingestion_targets (
+        id, source_id, place_id, adapter_config_json, enabled,
+        refresh_interval_seconds, next_run_at
+      ) VALUES (?, 'source-kma-weather', 'busan-gwangalli', ?, 1, 3600, ?)
+    `).bind(
+      "scheduled-kma-lease-fencing",
+      JSON.stringify({ nx: 98, ny: 76 }),
+      new Date(scheduledAt.getTime() - 60_000).toISOString(),
+    ).run();
+
+    globalThis.fetch = async (): Promise<Response> => {
+      await db.prepare(`
+        UPDATE source_ingestion_targets
+        SET lease_token = 'newer-lease-token', lease_until = ?, updated_at = ?
+        WHERE id = 'scheduled-kma-lease-fencing'
+      `).bind(
+        new Date(scheduledAt.getTime() + 10 * 60_000).toISOString(),
+        new Date(scheduledAt.getTime() + 1_000).toISOString(),
+      ).run();
+      return Response.json({
+        response: {
+          header: { resultCode: "00", resultMsg: "NORMAL_SERVICE" },
+          body: {
+            totalCount: 4,
+            items: {
+              item: [
+                { ...expectedBase, category: "T1H", nx: 98, ny: 76, obsrValue: "24.1" },
+                { ...expectedBase, category: "RN1", nx: 98, ny: 76, obsrValue: "0" },
+                { ...expectedBase, category: "WSD", nx: 98, ny: 76, obsrValue: "1.8" },
+                { ...expectedBase, category: "PTY", nx: 98, ny: 76, obsrValue: "0" },
+              ],
+            },
+          },
+        },
+      });
+    };
+
+    await assert.rejects(
+      worker.runScheduledSourceIngestion(
+        { DB: db, KMA_SERVICE_KEY: "scheduled-kma-fencing-key" },
+        scheduledAt,
+      ),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "SOURCE_SCHEDULER_LEASE_LOST");
+        return true;
+      },
+    );
+
+    const target = await db.prepare(`
+      SELECT lease_token AS leaseToken, last_succeeded_at AS lastSucceededAt,
+             last_failed_at AS lastFailedAt, consecutive_failures AS consecutiveFailures
+      FROM source_ingestion_targets
+      WHERE id = 'scheduled-kma-lease-fencing'
+    `).first<{
+      leaseToken: string;
+      lastSucceededAt: string | null;
+      lastFailedAt: string | null;
+      consecutiveFailures: number;
+    }>();
+    assert.equal(target?.leaseToken, "newer-lease-token");
+    assert.equal(target?.lastSucceededAt, null);
+    assert.equal(target?.lastFailedAt, null);
+    assert.equal(target?.consecutiveFailures, 0);
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(tempDir, { recursive: true, force: true });
@@ -3529,44 +5517,781 @@ test("staging and production reject memory fallback when D1 is unavailable", asy
   }
 });
 
-test("Cloudflare Worker serves posts hashtags and questions without Next.js mock APIs", async () => {
-  const anonymousId = "anon_posts_questions_test";
-  const postsPayload = await get<SuccessPayload<FeedPost[]>>("https://api.test/api/posts?regionId=seoul&limit=10", anonymousId);
-  assert.equal(postsPayload.meta?.storage, "memory-fallback");
-  assert.equal(postsPayload.data.length >= 1, true);
-  assert.equal(postsPayload.data.every((postItem) => postItem.placeId === "seoul-yeouido"), true);
-  assert.equal(postsPayload.data.every((postItem) => !postItem.userId.startsWith("anon_")), true);
-  assert.equal(postsPayload.data[0]?.hashtags.some((tag) => tag.name === "서울"), true);
-  assert.match(postsPayload.data[0]?.shareCard.headline ?? "", /여의도 한강공원/);
+test("production browser mutations require an exact configured API origin", async () => {
+  const allowedOrigin = "https://silsigan.pages.dev";
+  const productionEnv = {
+    ENVIRONMENT: "production",
+    SILSIGAN_API_ALLOWED_ORIGINS: allowedOrigin,
+  };
 
-  const hashtagsPayload = await get<SuccessPayload<Array<{ name: string; postCount: number }>>>("https://api.test/api/hashtags", anonymousId);
-  assert.equal(hashtagsPayload.data.some((tag) => tag.name === "서울" && tag.postCount >= 1), true);
-
-  const filteredPayload = await get<SuccessPayload<FeedPost[]>>(
-    "https://api.test/api/posts?hashtagName=%EC%84%9C%EC%9A%B8&limit=10",
-    anonymousId,
+  const allowedPreflight = await worker.handleRequest(
+    new Request("https://api.test/api/reports", {
+      method: "OPTIONS",
+      headers: {
+        origin: allowedOrigin,
+        "access-control-request-method": "POST",
+      },
+    }),
+    productionEnv,
   );
-  assert.equal(filteredPayload.data.every((postItem) => postItem.hashtagNames.includes("서울")), true);
+  assert.equal(allowedPreflight.status, 204);
+  assert.equal(allowedPreflight.headers.get("access-control-allow-origin"), allowedOrigin);
+  assert.equal(allowedPreflight.headers.get("vary"), "Origin");
 
-  const questionsPayload = await get<SuccessPayload<QuestionData[]>>("https://api.test/api/questions?regionId=seoul&limit=10", anonymousId);
-  assert.equal(questionsPayload.data.some((question) => question.placeId === "seoul-yeouido"), true);
+  const disallowed = await worker.handleRequest(
+    new Request("https://api.test/api/reports", {
+      method: "POST",
+      headers: { origin: "https://attacker.example", "content-type": "application/json" },
+      body: "{}",
+    }),
+    productionEnv,
+  );
+  const disallowedPayload = (await disallowed.json()) as FailurePayload;
+  assert.equal(disallowed.status, 403);
+  assert.equal(disallowedPayload.error.code, "ORIGIN_NOT_ALLOWED");
 
-  const created = await post<SuccessPayload<{ question: QuestionData; balance: number; creditEvent: { amount: number } }>>(
-    "https://api.test/api/questions",
-    anonymousId,
+  const missingPolicy = await worker.handleRequest(
+    new Request("https://api.test/api/reports", {
+      method: "OPTIONS",
+      headers: {
+        origin: allowedOrigin,
+        "access-control-request-method": "POST",
+      },
+    }),
+    { ENVIRONMENT: "production" },
+  );
+  const missingPolicyPayload = (await missingPolicy.json()) as FailurePayload;
+  assert.equal(missingPolicy.status, 503);
+  assert.equal(missingPolicyPayload.error.code, "ORIGIN_POLICY_REQUIRED");
+
+  const developmentRequest = await worker.handleRequest(
+    new Request("https://api.test/api/reports", {
+      method: "POST",
+      headers: { origin: "http://localhost:3000", "content-type": "application/json" },
+      body: "{}",
+    }),
+  );
+  const developmentPayload = (await developmentRequest.json()) as FailurePayload;
+  assert.notEqual(developmentPayload.error.code, "ORIGIN_NOT_ALLOWED");
+});
+
+test("staging public API fails closed when the global Cloudflare rate limiter is required but unavailable", async () => {
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/places", {
+      headers: { "cf-connecting-ip": "203.0.113.170" },
+    }),
     {
-      placeId: "seoul-yeouido",
-      questionType: "crowd",
-      body: "지금 잔디밭 자리 여유 있나요?",
-      availableCredits: 3,
+      ENVIRONMENT: "staging",
+      SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED: "1",
     },
   );
-  assert.equal(created.data.question.placeId, "seoul-yeouido");
-  assert.equal(created.data.balance, 2);
-  assert.equal(created.data.creditEvent.amount, -1);
+  const payload = (await response.json()) as FailurePayload;
 
-  const mine = await get<SuccessPayload<QuestionData[]>>("https://api.test/api/my-questions", anonymousId);
-  assert.equal(mine.data.some((question) => question.id === created.data.question.id && question.status === "pending"), true);
+  assert.equal(response.status, 503);
+  assert.equal(payload.error.code, "PUBLIC_API_RATE_LIMITER_UNAVAILABLE");
+});
+
+test("global Cloudflare rate limiter blocks public API traffic before D1 and hashes the client IP", async () => {
+  const clientIp = "203.0.113.171";
+  const limiter = new FakeRateLimitBinding(false);
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/places", {
+      headers: { "cf-connecting-ip": clientIp },
+    }),
+    {
+      ENVIRONMENT: "staging",
+      SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED: "1",
+      PUBLIC_API_RATE_LIMITER: limiter,
+    },
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 429);
+  assert.equal(payload.error.code, "PUBLIC_API_RATE_LIMITED");
+  assert.equal(limiter.calls.length, 1);
+  assert.equal(limiter.calls[0]?.includes(clientIp), false);
+});
+
+test("global Cloudflare rate limiter also protects CORS preflight traffic", async () => {
+  const limiter = new FakeRateLimitBinding(false);
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/comments", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://staging.example.com",
+        "cf-connecting-ip": "203.0.113.172",
+      },
+    }),
+    {
+      ENVIRONMENT: "staging",
+      SILSIGAN_API_ALLOWED_ORIGINS: "https://staging.example.com",
+      SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED: "1",
+      PUBLIC_API_RATE_LIMITER: limiter,
+    },
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 429);
+  assert.equal(payload.error.code, "PUBLIC_API_RATE_LIMITED");
+  assert.equal(limiter.calls.length, 1);
+});
+
+test("health checks use the public edge limiter and global Workers request ledger", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const limiter = new FakeRateLimitBinding();
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/health", {
+        headers: { "cf-connecting-ip": "203.0.113.173" },
+      }),
+      {
+        DB: db,
+        ENVIRONMENT: "staging",
+        SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED: "1",
+        SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+        PUBLIC_API_RATE_LIMITER: limiter,
+      },
+    );
+    const daily = await db
+      .prepare(
+        `SELECT reserved_workers_requests AS reservedWorkersRequests,
+                reserved_rows_read AS reservedRowsRead,
+                reserved_rows_written AS reservedRowsWritten
+         FROM api_cost_guard_daily`,
+      )
+      .first<{ reservedWorkersRequests: number; reservedRowsRead: number; reservedRowsWritten: number }>();
+
+    assert.equal(response.status, 200);
+    assert.equal(limiter.calls.length, 1);
+    assert.deepEqual(daily, {
+      reservedWorkersRequests: 1,
+      reservedRowsRead: 1000,
+      reservedRowsWritten: 2,
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging anonymous session issuance fails closed without its dedicated edge limiter", async () => {
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/session/anonymous", {
+      method: "POST",
+      headers: { "cf-connecting-ip": "203.0.113.201" },
+    }),
+    { ENVIRONMENT: "staging" },
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.error.code, "ANONYMOUS_SESSION_RATE_LIMITER_UNAVAILABLE");
+});
+
+test("anonymous session edge limiter blocks issuance before D1 and hashes the client IP", async () => {
+  const clientIp = "203.0.113.202";
+  const limiter = new FakeRateLimitBinding(false);
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/session/anonymous", {
+      method: "POST",
+      headers: { "cf-connecting-ip": clientIp },
+    }),
+    {
+      ENVIRONMENT: "staging",
+      ANONYMOUS_SESSION_RATE_LIMITER: limiter,
+    },
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 429);
+  assert.equal(payload.error.code, "ANONYMOUS_SESSION_RATE_LIMITED");
+  assert.equal(limiter.calls.length, 1);
+  assert.equal(limiter.calls[0]?.includes(clientIp), false);
+});
+
+test("anonymous session daily D1 guard caps distributed issuance before session insert", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = {
+    DB: db,
+    SILSIGAN_ANON_SESSION_REQUIRED: "1",
+    SILSIGAN_ANON_SESSION_DAILY_LIMIT: "2",
+  };
+
+  try {
+    const emergencyStopResponse = await worker.handleRequest(
+      new Request("https://api.test/api/session/anonymous", { method: "POST" }),
+      { ...env, SILSIGAN_ANON_SESSION_DAILY_LIMIT: "0" },
+    );
+    const emergencyStopPayload = (await emergencyStopResponse.json()) as FailurePayload;
+    assert.equal(emergencyStopResponse.status, 429);
+    assert.equal(emergencyStopPayload.error.code, "ANONYMOUS_SESSION_DAILY_LIMIT_EXHAUSTED");
+
+    const responses = [];
+    for (const clientIp of ["203.0.113.211", "198.51.100.212", "192.0.2.213"]) {
+      responses.push(
+        await worker.handleRequest(
+          new Request("https://api.test/api/session/anonymous", {
+            method: "POST",
+            headers: { "cf-connecting-ip": clientIp },
+          }),
+          env,
+        ),
+      );
+    }
+
+    const blockedPayload = (await responses[2]?.json()) as FailurePayload;
+    const sessions = await db.prepare("SELECT COUNT(*) AS count FROM anonymous_sessions").first<{ count: number }>();
+    const budget = await db
+      .prepare("SELECT issue_count AS issueCount FROM anonymous_session_issuance_budget")
+      .first<{ issueCount: number }>();
+
+    assert.deepEqual(responses.map((response) => response.status), [201, 201, 429]);
+    assert.equal(blockedPayload.error.code, "ANONYMOUS_SESSION_DAILY_LIMIT_EXHAUSTED");
+    assert.equal(sessions?.count, 2);
+    assert.equal(budget?.issueCount, 2);
+
+    const publicReadAfterExhaustion = await worker.handleRequest(
+      new Request("https://api.test/api/places?limit=1"),
+      env,
+    );
+    const publicReadPayload = (await publicReadAfterExhaustion.json()) as SuccessPayload<unknown[]>;
+    assert.equal(publicReadAfterExhaustion.status, 200);
+    assert.equal(publicReadPayload.success, true);
+    assert.equal(Array.isArray(publicReadPayload.data), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("place addition requests require verified proof, normalize fields, replay idempotently, and remain owner-only", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = { DB: db, SILSIGAN_ANON_SESSION_REQUIRED: "1" };
+
+  try {
+    const session = await issueVerifiedAnonymousSession(db);
+    const body = {
+      clientRequestId: "place-request-client-0001",
+      name: "  Ｃａｆｅ   온  ",
+      address: " 부산광역시   수영구 광안해변로  ",
+      category: "  카페  ",
+    };
+    const missingProof = await worker.handleRequest(
+      new Request("https://api.test/api/place-requests", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": session.anonymousId },
+        body: JSON.stringify(body),
+      }),
+      env,
+    );
+    assert.equal(missingProof.status, 401);
+
+    const rejectedProviderFields = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, {
+        ...body,
+        clientRequestId: "place-request-client-provider-fields",
+        mapx: "1290000000",
+        mapy: "350000000",
+        link: "https://map.naver.com/fixture",
+        query: "fixture query",
+        userAgent: "fixture UA",
+      }),
+      env,
+    );
+    const rejectedProviderPayload = (await rejectedProviderFields.json()) as FailurePayload;
+    assert.equal(rejectedProviderFields.status, 400);
+    assert.equal(rejectedProviderPayload.error.code, "UNSUPPORTED_FIELD");
+
+    const createdResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, body),
+      env,
+    );
+    const created = (await createdResponse.json()) as SuccessPayload<{
+      id: string;
+      name: string;
+      address: string;
+      category: string;
+      status: string;
+    }>;
+    assert.equal(createdResponse.status, 201);
+    assert.equal(created.data.name, "Cafe 온");
+    assert.equal(created.data.address, "부산광역시 수영구 광안해변로");
+    assert.equal(created.data.category, "카페");
+    assert.equal(created.data.status, "needs_verification");
+    await db
+      .prepare("UPDATE anonymous_users SET last_seen_at = ? WHERE id = (SELECT anonymous_user_id FROM place_addition_requests WHERE id = ?)")
+      .bind("2000-01-01T00:00:00.000Z", created.data.id)
+      .run();
+
+    const replayResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, {
+        ...body,
+        name: "Cafe 온",
+        address: "부산광역시 수영구 광안해변로",
+        category: "카페",
+      }),
+      env,
+    );
+    const replay = (await replayResponse.json()) as SuccessPayload<{ id: string }>;
+    assert.equal(replayResponse.status, 200);
+    assert.equal(replay.data.id, created.data.id);
+    assert.equal(replay.meta?.idempotentReplay, true);
+    const replayOwner = await db
+      .prepare(
+        "SELECT last_seen_at AS lastSeenAt FROM anonymous_users WHERE id = (SELECT anonymous_user_id FROM place_addition_requests WHERE id = ?)",
+      )
+      .bind(created.data.id)
+      .first<{ lastSeenAt: string }>();
+    assert.equal(replayOwner?.lastSeenAt, "2000-01-01T00:00:00.000Z");
+
+    const reusedKey = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, { ...body, name: "다른 장소" }),
+      env,
+    );
+    const reusedKeyPayload = (await reusedKey.json()) as FailurePayload;
+    assert.equal(reusedKey.status, 409);
+    assert.equal(reusedKeyPayload.error.code, "IDEMPOTENCY_KEY_REUSED");
+
+    const mineResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests?mine=1", "GET", session),
+      env,
+    );
+    const mine = (await mineResponse.json()) as SuccessPayload<Array<{ id: string }>>;
+    assert.equal(mineResponse.status, 200);
+    assert.deepEqual(mine.data.map((item) => item.id), [created.data.id]);
+
+    const otherSession = await issueVerifiedAnonymousSession(db);
+    const otherMineResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests?mine=1", "GET", otherSession),
+      env,
+    );
+    const otherMine = (await otherMineResponse.json()) as SuccessPayload<Array<{ id: string }>>;
+    assert.deepEqual(otherMine.data, []);
+
+    const budget = await db
+      .prepare("SELECT request_count AS requestCount FROM place_addition_request_daily_budget")
+      .first<{ requestCount: number }>();
+    assert.equal(budget?.requestCount, 1);
+    const columns = await db.prepare("SELECT name FROM pragma_table_info('place_addition_requests')").all<{ name: string }>();
+    assert.equal(
+      (columns.results ?? []).some((column) => /mapx|mapy|link|query|ip|user.?agent/i.test(column.name)),
+      false,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("place addition request D1 guards enforce per-session and exact global 80 percent stops", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = { DB: db, SILSIGAN_ANON_SESSION_REQUIRED: "1" };
+
+  try {
+    const session = await issueVerifiedAnonymousSession(db);
+    for (let index = 0; index < 3; index += 1) {
+      const response = await worker.handleRequest(
+        anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, {
+          clientRequestId: `place-session-limit-${index}`,
+          name: `테스트 장소 ${index}`,
+          address: `서울시 테스트로 ${index}`,
+          category: "카페",
+        }),
+        env,
+      );
+      assert.equal(response.status, 201);
+    }
+    await db.prepare("UPDATE anonymous_users SET last_seen_at = '2000-01-01T00:00:00.000Z'").run();
+    const sessionBlocked = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, {
+        clientRequestId: "place-session-limit-3",
+        name: "네 번째 장소",
+        address: "서울시 테스트로 4",
+        category: "카페",
+      }),
+      env,
+    );
+    const sessionBlockedPayload = (await sessionBlocked.json()) as FailurePayload;
+    assert.equal(sessionBlocked.status, 429);
+    assert.equal(sessionBlockedPayload.error.code, "PLACE_REQUEST_SESSION_DAILY_LIMIT");
+    const blockedOwner = await db
+      .prepare("SELECT last_seen_at AS lastSeenAt FROM anonymous_users LIMIT 1")
+      .first<{ lastSeenAt: string }>();
+    assert.equal(blockedOwner?.lastSeenAt, "2000-01-01T00:00:00.000Z");
+
+    await db.prepare("DELETE FROM place_addition_requests").run();
+    await db.prepare("UPDATE place_addition_request_daily_budget SET request_count = 1599").run();
+    const firstGlobalSession = await issueVerifiedAnonymousSession(db);
+    const reachesStop = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", firstGlobalSession, {
+        clientRequestId: "place-global-budget-1599",
+        name: "안전 한도 마지막 장소",
+        address: "부산시 테스트로 1",
+        category: "공원",
+      }),
+      env,
+    );
+    assert.equal(reachesStop.status, 201);
+    const ownersBeforeGlobalBlock = await db.prepare("SELECT COUNT(*) AS count FROM anonymous_users").first<{ count: number }>();
+
+    const secondGlobalSession = await issueVerifiedAnonymousSession(db);
+    const globalBlocked = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", secondGlobalSession, {
+        clientRequestId: "place-global-budget-1600",
+        name: "차단되어야 하는 장소",
+        address: "부산시 테스트로 2",
+        category: "공원",
+      }),
+      env,
+    );
+    const globalBlockedPayload = (await globalBlocked.json()) as FailurePayload;
+    const budget = await db
+      .prepare("SELECT request_count AS requestCount FROM place_addition_request_daily_budget")
+      .first<{ requestCount: number }>();
+    const stored = await db.prepare("SELECT COUNT(*) AS count FROM place_addition_requests").first<{ count: number }>();
+    const ownersAfterGlobalBlock = await db.prepare("SELECT COUNT(*) AS count FROM anonymous_users").first<{ count: number }>();
+    assert.equal(globalBlocked.status, 429);
+    assert.equal(globalBlockedPayload.error.code, "PLACE_REQUEST_DAILY_BUDGET_80_PERCENT_STOP");
+    assert.equal(budget?.requestCount, 1600);
+    assert.equal(stored?.count, 1);
+    assert.equal(ownersAfterGlobalBlock?.count, ownersBeforeGlobalBlock?.count);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin place request review is anonymous-header-free, audited, duplicate-safe, and never imports places", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = { DB: db, SILSIGAN_ANON_SESSION_REQUIRED: "1", ADMIN_TOKENS: testAdminTokens };
+
+  try {
+    const session = await issueVerifiedAnonymousSession(db);
+    const createdResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, {
+        clientRequestId: "place-admin-review-0001",
+        name: "광안리 새 장소",
+        address: "부산광역시 수영구 테스트로 1",
+        category: "카페",
+      }),
+      env,
+    );
+    const created = (await createdResponse.json()) as SuccessPayload<{ id: string }>;
+    const placesBefore = await db.prepare("SELECT * FROM places ORDER BY id").all<Record<string, unknown>>();
+
+    const queueResponse = await worker.handleRequest(
+      new Request("https://api.test/api/admin/place-requests", {
+        headers: { "x-silsigan-admin-token": "test-moderator-token" },
+      }),
+      env,
+    );
+    const queue = (await queueResponse.json()) as SuccessPayload<Array<{ id: string }>>;
+    assert.equal(queueResponse.status, 200);
+    assert.equal(queueResponse.headers.has("x-silsigan-anon-id"), false);
+    assert.deepEqual(queue.data.map((item) => item.id), [created.data.id]);
+
+    const missingMatch = await worker.handleRequest(
+      new Request(`https://api.test/api/admin/place-requests/${created.data.id}/action`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-admin-token": "test-moderator-token" },
+        body: JSON.stringify({ status: "duplicate", reason: "기존 장소와 중복입니다." }),
+      }),
+      env,
+    );
+    assert.equal(missingMatch.status, 400);
+
+    const unverifiedMatch = await worker.handleRequest(
+      new Request(`https://api.test/api/admin/place-requests/${created.data.id}/action`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-admin-token": "test-moderator-token" },
+        body: JSON.stringify({ status: "duplicate", reason: "좌표 검증 전 장소입니다.", matchedPlaceId: "jeju-coordinate-review" }),
+      }),
+      env,
+    );
+    assert.equal(unverifiedMatch.status, 400);
+
+    const reviewedResponse = await worker.handleRequest(
+      new Request(`https://api.test/api/admin/place-requests/${created.data.id}/action`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-moderator-token",
+          "x-silsigan-admin-subject": "reviewer@example.test",
+        },
+        body: JSON.stringify({ status: "duplicate", reason: "검증된 기존 장소와 중복입니다.", matchedPlaceId: "busan-gwangalli" }),
+      }),
+      env,
+    );
+    const reviewed = (await reviewedResponse.json()) as SuccessPayload<{ status: string; matchedPlaceId: string }>;
+    assert.equal(reviewedResponse.status, 200);
+    assert.equal(reviewed.data.status, "duplicate");
+    assert.equal(reviewed.data.matchedPlaceId, "busan-gwangalli");
+    const audit = await db
+      .prepare("SELECT admin_subject AS adminSubject, action_type AS actionType, target_type AS targetType, reason FROM admin_actions WHERE target_id = ?")
+      .bind(created.data.id)
+      .first<{ adminSubject: string; actionType: string; targetType: string; reason: string }>();
+    assert.deepEqual(audit, {
+      adminSubject: "reviewer@example.test",
+      actionType: "place_request_duplicate",
+      targetType: "place_request",
+      reason: "검증된 기존 장소와 중복입니다.",
+    });
+    const placesAfter = await db.prepare("SELECT * FROM places ORDER BY id").all<Record<string, unknown>>();
+    assert.deepEqual(placesAfter.results, placesBefore.results);
+
+    const reviewedMineResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests?mine=1", "GET", session),
+      env,
+    );
+    const reviewedMine = (await reviewedMineResponse.json()) as SuccessPayload<Array<Record<string, unknown>>>;
+    assert.equal(reviewedMineResponse.status, 200);
+    assert.equal(reviewedMine.data[0]?.status, "duplicate");
+    assert.equal(reviewedMine.data[0]?.matchedPlaceId, "busan-gwangalli");
+    assert.equal(Object.hasOwn(reviewedMine.data[0] ?? {}, "reviewReason"), false);
+
+    const auditBeforeTerminalRetry = await db
+      .prepare("SELECT COUNT(*) AS count FROM admin_actions WHERE target_id = ?")
+      .bind(created.data.id)
+      .first<{ count: number }>();
+    const terminalRetry = await worker.handleRequest(
+      new Request(`https://api.test/api/admin/place-requests/${created.data.id}/action`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-admin-token": "test-moderator-token" },
+        body: JSON.stringify({ status: "rejected", reason: "이미 완료된 중복 판정을 변경합니다." }),
+      }),
+      env,
+    );
+    const terminalRetryPayload = (await terminalRetry.json()) as FailurePayload;
+    const auditAfterTerminalRetry = await db
+      .prepare("SELECT COUNT(*) AS count FROM admin_actions WHERE target_id = ?")
+      .bind(created.data.id)
+      .first<{ count: number }>();
+    assert.equal(terminalRetry.status, 409);
+    assert.equal(terminalRetryPayload.error.code, "PLACE_REQUEST_TERMINAL_STATUS");
+    assert.equal(auditAfterTerminalRetry?.count, auditBeforeTerminalRetry?.count);
+
+    const deletionResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/account/deletion", "POST", session, { confirmation: "DELETE_MY_ACCOUNT" }),
+      env,
+    );
+    assert.equal(deletionResponse.status, 200);
+    const remainingRequests = await db
+      .prepare("SELECT COUNT(*) AS count FROM place_addition_requests WHERE id = ?")
+      .bind(created.data.id)
+      .first<{ count: number }>();
+    assert.equal(remainingRequests?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent place request review rejects a stale decision without writing a false audit", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const baseEnv = { DB: db, SILSIGAN_ANON_SESSION_REQUIRED: "1", ADMIN_TOKENS: testAdminTokens };
+
+  try {
+    const session = await issueVerifiedAnonymousSession(db);
+    const createdResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, {
+        clientRequestId: "place-admin-race-0001",
+        name: "동시 검토 장소",
+        address: "서울특별시 테스트로 10",
+        category: "공원",
+      }),
+      baseEnv,
+    );
+    const created = (await createdResponse.json()) as SuccessPayload<{ id: string }>;
+    let injectedConcurrentReview = false;
+    const racingDb = {
+      prepare: (query: string) => db.prepare(query),
+      batch: async (statements: worker.D1PreparedStatement[]) => {
+        if (!injectedConcurrentReview) {
+          injectedConcurrentReview = true;
+          const concurrentAt = "2026-07-20T00:00:00.000Z";
+          await db
+            .prepare(
+              `UPDATE place_addition_requests
+               SET status = 'rejected', review_reason = ?, reviewed_at = ?, updated_at = ?
+               WHERE id = ?`,
+            )
+            .bind("다른 운영자가 먼저 거절했습니다.", concurrentAt, concurrentAt, created.data.id)
+            .run();
+        }
+        return db.batch(statements);
+      },
+    };
+
+    const response = await worker.handleRequest(
+      new Request(`https://api.test/api/admin/place-requests/${created.data.id}/action`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-admin-token": "test-moderator-token" },
+        body: JSON.stringify({ status: "ready_for_manual_import", reason: "주소 검증을 완료했습니다." }),
+      }),
+      { ...baseEnv, DB: racingDb },
+    );
+    const payload = (await response.json()) as FailurePayload;
+    const stored = await db
+      .prepare("SELECT status, review_reason AS reviewReason FROM place_addition_requests WHERE id = ?")
+      .bind(created.data.id)
+      .first<{ status: string; reviewReason: string }>();
+    const audit = await db
+      .prepare("SELECT COUNT(*) AS count FROM admin_actions WHERE target_id = ?")
+      .bind(created.data.id)
+      .first<{ count: number }>();
+
+    assert.equal(response.status, 409);
+    assert.equal(payload.error.code, "PLACE_REQUEST_REVIEW_CONFLICT");
+    assert.deepEqual(stored, { status: "rejected", reviewReason: "다른 운영자가 먼저 거절했습니다." });
+    assert.equal(audit?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("anonymous session issuance fails closed before insert when its exact cost ledger is unavailable", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    await db.prepare("DROP TABLE anonymous_session_issuance_budget").run();
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/session/anonymous", { method: "POST" }),
+      { DB: db, SILSIGAN_ANON_SESSION_REQUIRED: "1" },
+    );
+    const payload = (await response.json()) as FailurePayload;
+    const sessions = await db.prepare("SELECT COUNT(*) AS count FROM anonymous_sessions").first<{ count: number }>();
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "ANONYMOUS_SESSION_COST_GUARD_UNAVAILABLE");
+    assert.equal(sessions?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("JSON request reader rejects an oversized streamed body before field validation", async () => {
+  const request = new Request("https://api.test/api/comments", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-silsigan-anon-id": "anon_json_body_limit_test",
+    },
+    body: JSON.stringify({
+      placeId: "busan-gwangalli",
+      body: "a".repeat(70 * 1024),
+    }),
+  });
+  assert.equal(request.headers.has("content-length"), false);
+
+  const response = await worker.handleRequest(request);
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 413);
+  assert.equal(payload.error.code, "JSON_BODY_TOO_LARGE");
+});
+
+test("JSON request reader returns a stable invalid-json error without leaking parser details", async () => {
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/comments", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-anon-id": "anon_invalid_json_test",
+      },
+      body: "{",
+    }),
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.error.code, "INVALID_JSON");
+  assert.equal(JSON.stringify(payload).includes("SyntaxError"), false);
+});
+
+test("multipart photo reader rejects an oversized streamed request before form-data field validation", async () => {
+  const form = new FormData();
+  form.set("file", new Blob([new Uint8Array(4 * 1024 * 1024)], { type: "image/jpeg" }), "oversized.jpg");
+  const request = new Request("https://api.test/api/photos/upload", {
+    method: "POST",
+    headers: { "x-silsigan-anon-id": "anon_multipart_body_limit" },
+    body: form,
+  });
+  assert.equal(request.headers.has("content-length"), false);
+
+  const response = await worker.handleRequest(request);
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 413);
+  assert.equal(payload.error.code, "PHOTO_REQUEST_SIZE_LIMIT");
+});
+
+test("Cloudflare Worker rejects direct access to disabled feature APIs", async () => {
+  const requests: Array<{ method: "GET" | "POST"; url: string; body?: Record<string, unknown> }> = [
+    { method: "GET", url: "https://api.test/api/posts?regionId=seoul" },
+    { method: "POST", url: "https://api.test/api/posts", body: { placeId: "seoul-yeouido" } },
+    { method: "GET", url: "https://api.test/api/questions?regionId=seoul" },
+    {
+      method: "POST",
+      url: "https://api.test/api/questions",
+      body: {
+        placeId: "seoul-yeouido",
+        questionType: "crowd",
+        body: "지금 잔디밭 자리 여유 있나요?",
+        availableCredits: 999,
+      },
+    },
+    { method: "GET", url: "https://api.test/api/my-questions" },
+    { method: "GET", url: "https://api.test/api/live-streams" },
+    { method: "GET", url: "https://api.test/api/ads" },
+  ];
+
+  for (const request of requests) {
+    const response = await worker.handleRequest(
+      new Request(request.url, {
+        method: request.method,
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": "anon_disabled_feature_test",
+        },
+        ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+      }),
+    );
+    const payload = (await response.json()) as FailurePayload;
+    assert.equal(response.status, 404, request.url);
+    assert.equal(payload.error.code, "FEATURE_DISABLED", request.url);
+  }
+
+  const hashtagsResponse = await worker.handleRequest(new Request("https://api.test/api/hashtags"));
+  const hashtagsPayload = (await hashtagsResponse.json()) as SuccessPayload<Array<{ name: string }>>;
+  assert.equal(hashtagsResponse.status, 200);
+  assert.equal(Array.isArray(hashtagsPayload.data), true);
+});
+
+test("Worker feature gates honor region overrides at the API boundary", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    await enableD1FeatureFlags(db, ["SOCIAL_FEED_ENABLED"], "region", "busan");
+    const busanPosts = await worker.handleRequest(new Request("https://api.test/api/posts?regionId=busan"), { DB: db });
+    assert.equal(busanPosts.status, 200);
+
+    const seoulPosts = await worker.handleRequest(new Request("https://api.test/api/posts?regionId=seoul"), { DB: db });
+    const seoulFailure = (await seoulPosts.json()) as FailurePayload;
+    assert.equal(seoulPosts.status, 404);
+    assert.equal(seoulFailure.error.code, "FEATURE_DISABLED");
+
+    await enableD1FeatureFlags(db, ["QNA_ENABLED", "REWARDS_ENABLED"], "region", "busan");
+    const busanQuestions = await worker.handleRequest(new Request("https://api.test/api/questions?regionId=busan"), { DB: db });
+    assert.equal(busanQuestions.status, 200);
+
+    const questionResponse = await rawD1Post(db, "https://api.test/api/questions", "anon_region_question", {
+      placeId: "busan-gwangalli",
+      questionType: "crowd",
+      body: "지금 사람이 많이 붐비나요?",
+      availableCredits: 999,
+    });
+    const questionFailure = (await questionResponse.json()) as FailurePayload;
+    assert.equal(questionResponse.status, 503);
+    assert.equal(questionFailure.error.code, "CREDIT_LEDGER_REQUIRED");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("Cloudflare Worker reads places and rankings from D1 when DB binding is present", async () => {
@@ -3682,24 +6407,55 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
 test("D1 migration chain and core seed are release-order idempotent", { skip: !sqlite3Available() }, () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-migrations-"));
   const dbPath = join(tempDir, "migrations.db");
-  const migrations = [
+  const idempotentMigrations = [
     "0001_initial.sql",
     "0002_posts_questions.sql",
     "0003_post_moderation_targets.sql",
     "0004_v2_foundation.sql",
     "0005_v2_signals.sql",
     "0006_trust_safety_identity.sql",
+    "0007_enforce_live_signal_expiry.sql",
+    "0008_persistent_preferences.sql",
+    "0009_analytics_events.sql",
+    "0010_photo_cleanup_jobs.sql",
+    "0014_field_report_publications.sql",
+    "0015_photo_storage_budget.sql",
+    "0016_photo_abuse_protection.sql",
+    "0017_photo_read_budget.sql",
+    "0018_source_ingestion_scheduler.sql",
   ]
     .map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8"))
     .join("\n");
+  const locationAccuracyMigration = readFileSync(new URL("../workers/api/migrations/0011_location_accuracy_buckets.sql", import.meta.url), "utf8");
+  const verificationMethodMigration = readFileSync(new URL("../workers/api/migrations/0012_field_verification_method.sql", import.meta.url), "utf8");
+  const moderationMigration = readFileSync(new URL("../workers/api/migrations/0013_field_report_moderation.sql", import.meta.url), "utf8");
+  const backgroundDeliveryMigration = readFileSync(new URL("../workers/api/migrations/0019_background_job_delivery.sql", import.meta.url), "utf8");
+  const transformBudgetMigration = readFileSync(new URL("../workers/api/migrations/0020_photo_transform_budget.sql", import.meta.url), "utf8");
+  const readAbuseBudgetMigration = readFileSync(new URL("../workers/api/migrations/0021_photo_read_abuse_budget.sql", import.meta.url), "utf8");
+  const storageReleaseMigration = readFileSync(new URL("../workers/api/migrations/0022_photo_storage_release_ledger.sql", import.meta.url), "utf8");
+  const anonymousSessionMigration = readFileSync(new URL("../workers/api/migrations/0023_anonymous_session_proofs.sql", import.meta.url), "utf8");
+  const anonymousSessionBudgetMigration = readFileSync(new URL("../workers/api/migrations/0024_anonymous_session_cost_guard.sql", import.meta.url), "utf8");
+  const placeAdditionRequestMigration = readFileSync(new URL("../workers/api/migrations/0025_place_addition_requests.sql", import.meta.url), "utf8");
+  const globalApiCostGuardMigration = readFileSync(new URL("../workers/api/migrations/0026_global_api_cost_guard.sql", import.meta.url), "utf8");
   const seed = readFileSync(new URL("../workers/api/seeds/001_core_seed.sql", import.meta.url), "utf8");
 
   try {
     const output = execFileSync("sqlite3", [dbPath], {
       encoding: "utf8",
       input: `
-        ${migrations}
-        ${migrations}
+        ${idempotentMigrations}
+        ${idempotentMigrations}
+        ${locationAccuracyMigration}
+        ${verificationMethodMigration}
+        ${moderationMigration}
+        ${backgroundDeliveryMigration}
+        ${transformBudgetMigration}
+        ${readAbuseBudgetMigration}
+        ${storageReleaseMigration}
+        ${anonymousSessionMigration}
+        ${anonymousSessionBudgetMigration}
+        ${placeAdditionRequestMigration}
+        ${globalApiCostGuardMigration}
         ${seed}
         ${seed}
         SELECT 'tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('regions', 'areas', 'places', 'place_rankings', 'posts', 'questions');
@@ -3707,7 +6463,44 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
         SELECT 'question_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_questions_place_created', 'idx_questions_anon_created');
         SELECT 'v2_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('profiles', 'identity_links', 'data_sources', 'place_source_mappings', 'dimension_settings', 'feature_flags', 'decision_profiles', 'decision_profile_dimensions', 'place_decision_profiles', 'live_signals', 'official_observations', 'aggregated_place_status');
         SELECT 'trust_safety_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_moderation_states', 'report_votes', 'user_blocks', 'consents', 'terms_acceptances', 'account_deletion_requests', 'identity_link_events');
+        SELECT 'preference_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('saved_places', 'saved_posts', 'followed_topics', 'notification_subscriptions');
+        SELECT 'analytics_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'analytics_events';
+        SELECT 'photo_cleanup_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_cleanup_jobs';
+        SELECT 'photo_cleanup_delivery_columns=' || COUNT(*) FROM pragma_table_info('photo_cleanup_jobs') WHERE name IN ('byte_size', 'lease_token', 'lease_expires_at', 'budget_released_at', 'dead_lettered_at', 'updated_at');
+        SELECT 'photo_budget_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_storage_budget';
+        SELECT 'photo_release_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_storage_releases';
+        SELECT 'anonymous_session_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'anonymous_sessions';
+        SELECT 'anonymous_session_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_anonymous_sessions_status_expiry';
+        SELECT 'anonymous_session_budget_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'anonymous_session_issuance_budget';
+        SELECT 'place_request_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('place_addition_requests', 'place_addition_request_daily_budget');
+        SELECT 'place_request_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_place_addition_requests_owner_created', 'idx_place_addition_requests_queue');
+        SELECT 'place_request_triggers=' || COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND name = 'trg_place_addition_requests_daily_guard';
+        SELECT 'api_cost_guard_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('api_cost_guard_control', 'api_cost_guard_daily', 'api_cost_guard_reconciliations');
+        SELECT 'api_cost_guard_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_api_cost_guard_reconcile_day';
+        SELECT 'api_cost_guard_control_rows=' || COUNT(*) FROM api_cost_guard_control WHERE id = 1 AND mode = 'running' AND generation = 1;
+        SELECT 'api_cost_guard_warning_columns=' || COUNT(*) FROM pragma_table_info('api_cost_guard_daily') WHERE name IN ('warned_percent', 'warned_metric');
+        SELECT 'photo_budget_rows=' || COUNT(*) FROM photo_storage_budget WHERE id = 1 AND active_bytes = 0 AND writes_in_period = 0;
+        SELECT 'photo_abuse_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_upload_claims', 'photo_abuse_budget', 'photo_upload_control');
+        SELECT 'photo_upload_control_rows=' || COUNT(*) FROM photo_upload_control WHERE id = 1 AND uploads_enabled = 0 AND reason = 'storage-release-ledger-migration-reconciliation-required';
+        SELECT 'photo_read_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_read_budget', 'photo_read_control');
+        SELECT 'photo_read_budget_rows=' || COUNT(*) FROM photo_read_budget WHERE id = 1 AND reads_in_period = 0 AND reads_in_day = 0;
+        SELECT 'photo_read_control_rows=' || COUNT(*) FROM photo_read_control WHERE id = 1 AND reads_enabled = 1;
+        SELECT 'photo_transform_budget_rows=' || COUNT(*) FROM photo_transform_budget WHERE id = 1 AND transforms_in_period = 0;
+        SELECT 'photo_read_abuse_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_read_abuse_budget';
+        SELECT 'source_scheduler_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'source_ingestion_targets';
+        SELECT 'source_scheduler_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_source_ingestion_targets_due', 'idx_source_ingestion_targets_lease');
+        SELECT 'source_scheduler_targets=' || COUNT(*) FROM source_ingestion_targets;
+        SELECT 'kma_scheduler_ttl=' || default_ttl_seconds FROM data_sources WHERE source_key = 'kma_weather';
+        SELECT 'publication_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('field_report_publications', 'field_report_media', 'hashtags', 'field_report_hashtags', 'publication_outbox');
+        SELECT 'publication_delivery_columns=' || COUNT(*) FROM pragma_table_info('publication_outbox') WHERE name IN ('lease_token', 'lease_expires_at', 'last_error_code', 'dead_lettered_at', 'updated_at');
         SELECT 'v2_flags=' || COUNT(*) FROM feature_flags WHERE scope_type = 'global' AND scope_key = '*' AND enabled = 0;
+        SELECT 'live_signal_expiry_notnull=' || "notnull" FROM pragma_table_info('live_signals') WHERE name = 'expires_at';
+        SELECT 'place_event_accuracy_notnull=' || "notnull" FROM pragma_table_info('place_events') WHERE name = 'accuracy_bucket';
+        SELECT 'place_event_accuracy_default=' || dflt_value FROM pragma_table_info('place_events') WHERE name = 'accuracy_bucket';
+        SELECT 'place_event_verification_notnull=' || "notnull" FROM pragma_table_info('place_events') WHERE name = 'verification_method';
+        SELECT 'place_event_verification_default=' || dflt_value FROM pragma_table_info('place_events') WHERE name = 'verification_method';
+        SELECT 'place_event_moderation_notnull=' || "notnull" FROM pragma_table_info('place_events') WHERE name = 'moderation_status';
+        SELECT 'place_event_moderation_default=' || dflt_value FROM pragma_table_info('place_events') WHERE name = 'moderation_status';
         SELECT 'parking_ttl=' || default_ttl_seconds FROM dimension_settings WHERE setting_key = 'parking';
         SELECT 'queue_ttl=' || default_ttl_seconds FROM dimension_settings WHERE setting_key = 'queue';
         SELECT 'photo_current_ttl=' || default_ttl_seconds FROM dimension_settings WHERE setting_key = 'photo_current';
@@ -3727,7 +6520,45 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
     assert.match(output, /question_indexes=2/);
     assert.match(output, /v2_tables=12/);
     assert.match(output, /trust_safety_tables=7/);
+    assert.match(output, /preference_tables=4/);
+    assert.match(output, /analytics_tables=1/);
+    assert.match(output, /photo_cleanup_tables=1/);
+    assert.match(output, /photo_cleanup_delivery_columns=6/);
+    assert.match(output, /photo_budget_tables=1/);
+    assert.match(output, /photo_release_tables=1/);
+    assert.match(output, /anonymous_session_tables=1/);
+    assert.match(output, /anonymous_session_indexes=1/);
+    assert.match(output, /anonymous_session_budget_tables=1/);
+    assert.match(output, /place_request_tables=2/);
+    assert.match(output, /place_request_indexes=2/);
+    assert.match(output, /place_request_triggers=1/);
+    assert.match(output, /api_cost_guard_tables=3/);
+    assert.match(output, /api_cost_guard_indexes=1/);
+    assert.match(output, /api_cost_guard_control_rows=1/);
+    assert.match(output, /api_cost_guard_warning_columns=2/);
+    assert.match(output, /photo_budget_rows=1/);
+    assert.match(output, /photo_abuse_tables=3/);
+    assert.match(output, /photo_upload_control_rows=1/);
+    assert.match(output, /photo_read_tables=2/);
+    assert.match(output, /photo_read_budget_rows=1/);
+    assert.match(output, /photo_read_control_rows=1/);
+    assert.match(output, /photo_transform_budget_rows=1/);
+    assert.match(output, /photo_read_abuse_tables=1/);
+    assert.match(output, /source_scheduler_tables=1/);
+    assert.match(output, /source_scheduler_indexes=2/);
+    assert.match(output, /source_scheduler_targets=0/);
+    assert.match(output, /kma_scheduler_ttl=7200/);
+    assert.match(output, /publication_tables=5/);
+    assert.match(output, /publication_delivery_columns=5/);
+    assert.match(output, /place_event_moderation_notnull=1/);
     assert.match(output, /v2_flags=7/);
+    assert.match(output, /live_signal_expiry_notnull=1/);
+    assert.match(output, /place_event_accuracy_notnull=1/);
+    assert.match(output, /place_event_accuracy_default='unknown'/);
+    assert.match(output, /place_event_verification_notnull=1/);
+    assert.match(output, /place_event_verification_default='none'/);
+    assert.match(output, /place_event_moderation_notnull=1/);
+    assert.match(output, /place_event_moderation_default='approved'/);
     assert.match(output, /parking_ttl=900/);
     assert.match(output, /queue_ttl=1200/);
     assert.match(output, /photo_current_ttl=7200/);
@@ -3739,6 +6570,98 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
     assert.match(output, /rankings=6/);
     assert.match(output, /posts=4/);
     assert.match(output, /questions=3/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("storage release migration preserves active objects while legacy cleanup is pending", { skip: !sqlite3Available() }, async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-storage-release-migration-"));
+  const dbPath = join(tempDir, "migration.db");
+  const migrationSql = (fileNames: string[]) =>
+    fileNames.map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8")).join("\n");
+  const beforeBudget = migrationSql([
+    "0001_initial.sql",
+    "0002_posts_questions.sql",
+    "0003_post_moderation_targets.sql",
+    "0004_v2_foundation.sql",
+    "0005_v2_signals.sql",
+    "0006_trust_safety_identity.sql",
+    "0007_enforce_live_signal_expiry.sql",
+    "0008_persistent_preferences.sql",
+    "0009_analytics_events.sql",
+    "0010_photo_cleanup_jobs.sql",
+    "0011_location_accuracy_buckets.sql",
+    "0012_field_verification_method.sql",
+    "0013_field_report_moderation.sql",
+    "0014_field_report_publications.sql",
+  ]);
+  const afterBudget = migrationSql([
+    "0015_photo_storage_budget.sql",
+    "0016_photo_abuse_protection.sql",
+    "0017_photo_read_budget.sql",
+    "0018_source_ingestion_scheduler.sql",
+    "0019_background_job_delivery.sql",
+    "0020_photo_transform_budget.sql",
+    "0021_photo_read_abuse_budget.sql",
+    "0022_photo_storage_release_ledger.sql",
+    "0023_anonymous_session_proofs.sql",
+    "0024_anonymous_session_cost_guard.sql",
+  ]);
+
+  try {
+    execFileSync("sqlite3", [dbPath], {
+      encoding: "utf8",
+      input: `
+        ${beforeBudget}
+        INSERT INTO regions (id, name, level, launch_stage, is_active) VALUES ('busan', '부산', 'city', 'active', 1);
+        INSERT INTO areas (id, region_id, name) VALUES ('busan-suyeong', 'busan', '수영구');
+        INSERT INTO categories (id, name, is_sensitive) VALUES ('tourism', '관광', 0);
+        INSERT INTO places (
+          id, area_id, region_id, category_id, name, address,
+          latitude, longitude, coordinate_status, launch_stage, is_active
+        ) VALUES (
+          'busan-gwangalli', 'busan-suyeong', 'busan', 'tourism', '광안리해수욕장', '부산',
+          35.1532, 129.1186, 'verified', 'active', 1
+        );
+        INSERT INTO anonymous_users (id, session_hash) VALUES ('anon_migration_fixture', 'migration-session-fixture');
+        INSERT INTO photos (
+          id, place_id, anonymous_user_id, r2_key, mime_type, byte_size,
+          width, height, status, deleted_at, hidden_at, created_at
+        ) VALUES
+          ('photo_active_fixture', 'busan-gwangalli', 'anon_migration_fixture', 'photos/active-fixture.webp', 'image/webp', 200, 1, 1, 'ready', NULL, NULL, '2026-07-01T00:00:00.000Z'),
+          ('photo_cleanup_fixture', 'busan-gwangalli', 'anon_migration_fixture', 'photos/cleanup-fixture.webp', 'image/webp', 100, 1, 1, 'rejected', '2026-07-02T00:00:00.000Z', '2026-07-02T00:00:00.000Z', '2026-07-01T00:00:00.000Z');
+        INSERT INTO photo_cleanup_jobs (
+          id, photo_id, storage_key, reason, status, attempts,
+          next_attempt_at, last_error_code, completed_at, created_at
+        ) VALUES (
+          'cleanup_legacy_fixture', 'photo_cleanup_fixture', 'photos/cleanup-fixture.webp',
+          'legacy_pending_cleanup', 'pending', 0, '2026-07-02T00:00:00.000Z',
+          'R2_DELETE_FAILED', NULL, '2026-07-02T00:00:00.000Z'
+        );
+        ${afterBudget}
+      `,
+    });
+    const db = new SqliteD1Database(dbPath);
+    const beforeCleanup = await db.prepare("SELECT active_bytes AS activeBytes FROM photo_storage_budget WHERE id = 1").first<{ activeBytes: number }>();
+    const control = await db.prepare("SELECT uploads_enabled AS uploadsEnabled, reason FROM photo_upload_control WHERE id = 1").first<{ uploadsEnabled: number; reason: string }>();
+
+    assert.equal(beforeCleanup?.activeBytes, 300);
+    assert.deepEqual(control, {
+      uploadsEnabled: 0,
+      reason: "storage-release-ledger-migration-reconciliation-required",
+    });
+
+    const summary = await worker.runScheduledPhotoCleanup(
+      { DB: db, PHOTOS: new FakeR2Bucket() },
+      new Date("2030-07-19T00:00:00.000Z"),
+    );
+    const afterCleanup = await db.prepare("SELECT active_bytes AS activeBytes FROM photo_storage_budget WHERE id = 1").first<{ activeBytes: number }>();
+    const release = await db.prepare("SELECT byte_size AS byteSize FROM photo_storage_releases WHERE storage_key = 'photos/cleanup-fixture.webp'").first<{ byteSize: number }>();
+
+    assert.equal(summary.succeededCount, 1);
+    assert.equal(afterCleanup?.activeBytes, 200);
+    assert.equal(release?.byteSize, 100);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -3786,6 +6709,27 @@ test("D1 live signal schema rejects invalid expiry and accepts a valid current o
       /CHECK constraint failed/,
     );
 
+    await assert.rejects(
+      db
+        .prepare(insert)
+        .bind(
+          "signal-missing-expiry",
+          "busan-gwangalli",
+          "crowd",
+          "busy",
+          "source-user-report",
+          "ugc",
+          "User field report",
+          "2026-07-10T00:20:00.000Z",
+          "2026-07-10T00:21:00.000Z",
+          null,
+          0.7,
+          1,
+        )
+        .run(),
+      /NOT NULL constraint failed/,
+    );
+
     await db
       .prepare(insert)
       .bind(
@@ -3818,15 +6762,116 @@ test("D1 live signal schema rejects invalid expiry and accepts a valid current o
   }
 });
 
+test("0007 backfills legacy signal expiry and rejects new nullable signals", { skip: !sqlite3Available() }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-expiry-migration-"));
+  const dbPath = join(tempDir, "expiry-migration.db");
+  const baseMigrations = [
+    "0001_initial.sql",
+    "0002_posts_questions.sql",
+    "0003_post_moderation_targets.sql",
+    "0004_v2_foundation.sql",
+    "0005_v2_signals.sql",
+    "0006_trust_safety_identity.sql",
+  ]
+    .map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8"))
+    .join("\n");
+  const seed = readFileSync(new URL("../workers/api/seeds/001_core_seed.sql", import.meta.url), "utf8");
+  const enforceExpiry = readFileSync(new URL("../workers/api/migrations/0007_enforce_live_signal_expiry.sql", import.meta.url), "utf8");
+
+  try {
+    execFileSync("sqlite3", [dbPath], {
+      encoding: "utf8",
+      input: `
+        ${baseMigrations}
+        ${seed}
+        INSERT INTO live_signals (
+          id, place_id, dimension, value_code, source_id, source_type, source_name,
+          observed_at, fetched_at, expires_at, confidence_score, is_publicly_visible
+        ) VALUES (
+          'legacy-null-expiry', 'busan-gwangalli', 'crowd', 'busy', 'source-user-report',
+          'ugc', 'Legacy field report', '2026-07-10T00:20:00.000Z',
+          '2026-07-10T00:21:00.000Z', NULL, 0.7, 1
+        );
+      `,
+    });
+
+    const output = execFileSync("sqlite3", [dbPath], {
+      encoding: "utf8",
+      input: `${enforceExpiry}
+        SELECT 'expiry=' || expires_at FROM live_signals WHERE id = 'legacy-null-expiry';
+        SELECT 'notnull=' || "notnull" FROM pragma_table_info('live_signals') WHERE name = 'expires_at';
+      `,
+    });
+    assert.match(output, /expiry=2026-07-10T00:50:00\.000Z/);
+    assert.match(output, /notnull=1/);
+
+    assert.throws(
+      () =>
+        execFileSync("sqlite3", [dbPath], {
+          encoding: "utf8",
+          input: `
+            INSERT INTO live_signals (
+              id, place_id, dimension, value_code, source_id, source_type, source_name,
+              observed_at, fetched_at, expires_at, confidence_score, is_publicly_visible
+            ) VALUES (
+              'new-null-expiry', 'busan-gwangalli', 'crowd', 'busy', 'source-user-report',
+              'ugc', 'New field report', '2026-07-10T00:20:00.000Z',
+              '2026-07-10T00:21:00.000Z', NULL, 0.7, 1
+            );
+          `,
+          stdio: "pipe",
+        }),
+      /NOT NULL constraint failed/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("D1 posts hashtags and questions use Cloudflare schema", { skip: !sqlite3Available() }, async () => {
   const { db, tempDir } = createSeededSqliteD1();
 
   try {
+    await enableD1FeatureFlags(db, ["SOCIAL_FEED_ENABLED", "QNA_ENABLED", "REWARDS_ENABLED"]);
     const anonymousId = "anon_d1_posts_questions";
     const postsPayload = await d1Get<SuccessPayload<FeedPost[]>>(db, "https://api.test/api/posts?regionId=seoul&limit=10", anonymousId);
     assert.equal(postsPayload.meta?.storage, "d1");
     assert.equal(postsPayload.data.some((postItem) => postItem.placeId === "seoul-yeouido"), true);
     assert.equal(postsPayload.data.every((postItem) => postItem.hiddenAt === null), true);
+
+    const configuredUrlResponse = await worker.handleRequest(
+      new Request("https://api.test/api/posts?regionId=seoul&limit=10"),
+      { DB: db, SILSIGAN_PUBLIC_SITE_URL: "https://staging.example.test/" },
+    );
+    const configuredUrlPayload = (await configuredUrlResponse.json()) as SuccessPayload<FeedPost[]>;
+    assert.equal(configuredUrlResponse.status, 200);
+    assert.equal(configuredUrlPayload.data[0]?.shareCard.url.startsWith("https://staging.example.test/place/"), true);
+
+    const sharedPostId = configuredUrlPayload.data[0]?.id;
+    assert.ok(sharedPostId);
+    const sharedPostResponse = await worker.handleRequest(
+      new Request(`https://api.test/api/share/posts/${encodeURIComponent(sharedPostId)}`),
+      { DB: db, SILSIGAN_PUBLIC_SITE_URL: "https://staging.example.test/" },
+    );
+    const sharedPostPayload = (await sharedPostResponse.json()) as SuccessPayload<{
+      shareCard: { headline: string; body: string; variant: string };
+      status: { status: string; dataMode: string; currentSignals: unknown[] };
+    }>;
+    assert.equal(sharedPostResponse.status, 200);
+    assert.equal(sharedPostPayload.data.status.dataMode, "live");
+    assert.equal(sharedPostPayload.data.status.status, "insufficient");
+    assert.equal(sharedPostPayload.data.status.currentSignals.length, 0);
+    assert.match(sharedPostPayload.data.shareCard.headline, /현재 정보 부족/);
+    assert.match(sharedPostPayload.data.shareCard.body, /현재 판단: 현재 정보 부족/);
+    assert.equal(sharedPostPayload.data.shareCard.variant, "neutral");
+
+    const unsafeUrlResponse = await worker.handleRequest(
+      new Request("https://api.test/api/posts?regionId=seoul&limit=10"),
+      { DB: db, SILSIGAN_PUBLIC_SITE_URL: "http://localhost:3000/?token=unsafe" },
+    );
+    const unsafeUrlPayload = (await unsafeUrlResponse.json()) as SuccessPayload<FeedPost[]>;
+    assert.equal(unsafeUrlResponse.status, 200);
+    assert.equal(unsafeUrlPayload.data[0]?.shareCard.url.startsWith("https://silsigan.pages.dev/place/"), true);
 
     const createdPost = await d1Post<SuccessPayload<{ post: FeedPost; credits: Array<{ amount: number }>; privacyNotice: string }>>(
       db,
@@ -3875,23 +6920,524 @@ test("D1 posts hashtags and questions use Cloudflare schema", { skip: !sqlite3Av
     );
     assert.equal(postsAfterPostReport.data.some((postItem) => postItem.id === createdPost.data.post.id), false);
 
-    const createdQuestion = await d1Post<SuccessPayload<{ question: QuestionData; balance: number }>>(
-      db,
-      "https://api.test/api/questions",
-      anonymousId,
-      {
-        placeId: "seoul-yeouido",
-        questionType: "photo_request",
-        body: "지금 한강 사진 요청 가능할까요?",
-        availableCredits: 3,
-      },
-    );
-    assert.equal(createdQuestion.meta?.storage, "d1");
-    assert.equal(createdQuestion.data.question.creditCost, 2);
-    assert.equal(createdQuestion.data.balance, 1);
+    const questionResponse = await rawD1Post(db, "https://api.test/api/questions", anonymousId, {
+      placeId: "seoul-yeouido",
+      questionType: "photo_request",
+      body: "지금 한강 사진 요청 가능할까요?",
+      availableCredits: 999,
+    });
+    const questionFailure = (await questionResponse.json()) as FailurePayload;
+    assert.equal(questionResponse.status, 503);
+    assert.equal(questionFailure.error.code, "CREDIT_LEDGER_REQUIRED");
+    const questionCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM questions WHERE anonymous_user_id = ?")
+      .bind(anonymousId)
+      .first<{ count: number }>();
+    assert.equal(questionCount?.count, 0);
 
     const mine = await d1Get<SuccessPayload<QuestionData[]>>(db, "https://api.test/api/my-questions", anonymousId);
-    assert.equal(mine.data.some((question) => question.id === createdQuestion.data.question.id && question.status === "pending"), true);
+    assert.equal(mine.data.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 field report publication links owned photos and hashtags idempotently", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const anonymousId = "anon_field_report_publication";
+
+  try {
+    const photo = await d1Post<SuccessPayload<PhotoCompleteData>>(db, "https://api.test/api/photos/complete", anonymousId, {
+      uploadId: "upload_field_report_publication",
+      placeId: "busan-gwangalli",
+      byteSize: 100_000,
+      mimeType: "image/webp",
+      width: 800,
+      height: 600,
+      clientReencoded: true,
+    });
+    await d1AdminPost<SuccessPayload<{ decision: string }>>(
+      db,
+      `https://api.test/api/admin/photos/${photo.data.photo.id}/moderation`,
+      { decision: "approved", reason: "현장 제보 연결 사진 공개 검수" },
+      {},
+      "test-moderator-token",
+    );
+    const requestBody = {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      comment: "해변 중앙 쪽에 사람이 많습니다.",
+      photoIds: [photo.data.photo.id],
+      hashtagNames: ["#광안리지금", "#사람많음", "#발행검수태그"],
+      clientRequestId: "field-report-publication-001",
+    };
+
+    const first = await rawD1Post(db, "https://api.test/api/reports", anonymousId, requestBody);
+    const firstPayload = (await first.json()) as SuccessPayload<FieldReportData & {
+      publication: { clientRequestId: string; photoIds: string[]; hashtagNames: string[] };
+    }>;
+    assert.equal(first.status, 201);
+    assert.equal(firstPayload.data.publication.clientRequestId, requestBody.clientRequestId);
+    assert.deepEqual(firstPayload.data.publication.photoIds, [photo.data.photo.id]);
+    assert.deepEqual(firstPayload.data.publication.hashtagNames, ["광안리지금", "사람많음", "발행검수태그"]);
+
+    const second = await rawD1Post(db, "https://api.test/api/reports", anonymousId, requestBody);
+    const secondPayload = (await second.json()) as SuccessPayload<FieldReportData & {
+      publication: { clientRequestId: string; photoIds: string[]; hashtagNames: string[] };
+    }>;
+    assert.equal(second.status, 200);
+    assert.equal(secondPayload.data.report.id, firstPayload.data.report.id);
+    assert.deepEqual(secondPayload.data.publication, firstPayload.data.publication);
+
+    const publicationCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM field_report_publications WHERE client_request_id = ?")
+      .bind(requestBody.clientRequestId)
+      .first<{ count: number }>();
+    const mediaCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM field_report_media WHERE report_id = ? AND photo_id = ?")
+      .bind(firstPayload.data.report.id, photo.data.photo.id)
+      .first<{ count: number }>();
+    const hashtagCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM field_report_hashtags WHERE report_id = ?")
+      .bind(firstPayload.data.report.id)
+      .first<{ count: number }>();
+    assert.equal(publicationCount?.count, 1);
+    assert.equal(mediaCount?.count, 1);
+    assert.equal(hashtagCount?.count, 3);
+
+    const eventCountBeforeFailedBatch = await db
+      .prepare("SELECT COUNT(*) AS count FROM place_events WHERE anonymous_user_id = ? AND source = 'field_report'")
+      .bind(anonymousId)
+      .first<{ count: number }>();
+    const reusedPhotoResponse = await rawD1Post(db, "https://api.test/api/reports", anonymousId, {
+      ...requestBody,
+      clientRequestId: "field-report-publication-reused-photo",
+    });
+    const reusedPhotoPayload = (await reusedPhotoResponse.json()) as FailurePayload;
+    assert.equal(reusedPhotoResponse.status, 409);
+    assert.equal(reusedPhotoPayload.error.code, "PUBLICATION_PHOTO_ALREADY_LINKED");
+    const eventCountAfterFailedBatch = await db
+      .prepare("SELECT COUNT(*) AS count FROM place_events WHERE anonymous_user_id = ? AND source = 'field_report'")
+      .bind(anonymousId)
+      .first<{ count: number }>();
+    assert.equal(eventCountAfterFailedBatch?.count, eventCountBeforeFailedBatch?.count);
+
+    const foreignPhotoResponse = await rawD1Post(db, "https://api.test/api/reports", "anon_other_publication_user", {
+      ...requestBody,
+      clientRequestId: "field-report-publication-foreign-photo",
+    });
+    const foreignPhotoPayload = (await foreignPhotoResponse.json()) as FailurePayload;
+    assert.equal(foreignPhotoResponse.status, 400);
+    assert.equal(foreignPhotoPayload.error.code, "PUBLICATION_PHOTO_INVALID");
+
+    const pendingHashtags = await d1Get<SuccessPayload<Array<{ name: string }>>>(db, "https://api.test/api/hashtags", anonymousId);
+    assert.equal(pendingHashtags.data.some((hashtag) => hashtag.name === "발행검수태그"), false);
+    await d1AdminPost(
+      db,
+      `https://api.test/api/admin/field-reports/${firstPayload.data.report.id}/action`,
+      { status: "approved", reason: "발행 묶음 공개 검수" },
+      {},
+      "test-moderator-token",
+    );
+    const approvedHashtags = await d1Get<SuccessPayload<Array<{ name: string }>>>(db, "https://api.test/api/hashtags", anonymousId);
+    assert.equal(approvedHashtags.data.some((hashtag) => hashtag.name === "발행검수태그"), true);
+    const approvedReports = await d1Get<SuccessPayload<Array<{ id: string; photoIds: string[]; hashtagNames: string[] }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli",
+      anonymousId,
+    );
+    const approvedReport = approvedReports.data.find((report) => report.id === firstPayload.data.report.id);
+    assert.deepEqual(approvedReport?.photoIds, [photo.data.photo.id]);
+    assert.deepEqual(approvedReport?.hashtagNames, ["광안리지금", "사람많음", "발행검수태그"]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 hashtag media paginates beyond 100 and excludes cross-region or non-public photos", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const tagName = "회귀사진태그";
+  const anonymousId = "anon_hashtag_media_contract";
+
+  try {
+    await db.prepare(
+      "INSERT INTO anonymous_users (id, session_hash) VALUES (?, ?)",
+    ).bind(anonymousId, "hash_hashtag_media_contract").run();
+    await db.prepare(
+      "INSERT INTO hashtags (name, tag_type, moderation_status, post_count, last_post_at) VALUES (?, 'purpose', 'approved', 0, ?)",
+    ).bind(tagName, "2026-07-19T12:00:00.000Z").run();
+
+    const statements: worker.D1PreparedStatement[] = [];
+    const addPublication = (input: {
+      id: string;
+      placeId: string;
+      createdAt: string;
+      expiresAt?: string;
+      publicationStatus?: "approved" | "hidden";
+      eventStatus?: "approved" | "hidden";
+      photoDeletedAt?: string | null;
+      photoHiddenAt?: string | null;
+    }) => {
+      const photoId = `photo_${input.id}`;
+      statements.push(
+        db.prepare(
+          `INSERT INTO place_events
+            (id, place_id, anonymous_user_id, event_type, source, region_code, area_code, category, moderation_status, created_at, expires_at)
+           VALUES (?, ?, ?, 'report', 'field_report', ?, 'test-area', 'tourism', ?, ?, ?)`,
+        ).bind(
+          input.id,
+          input.placeId,
+          anonymousId,
+          input.placeId.startsWith("busan-") ? "busan" : "seoul",
+          input.eventStatus ?? "approved",
+          input.createdAt,
+          input.expiresAt ?? "2099-01-01T00:00:00.000Z",
+        ),
+        db.prepare(
+          `INSERT INTO field_report_publications
+            (report_id, place_id, anonymous_user_id, response_json, moderation_status, created_at, updated_at)
+           VALUES (?, ?, ?, '{}', ?, ?, ?)`,
+        ).bind(input.id, input.placeId, anonymousId, input.publicationStatus ?? "approved", input.createdAt, input.createdAt),
+        db.prepare(
+          `INSERT INTO photos
+            (id, place_id, anonymous_user_id, r2_key, mime_type, byte_size, width, height, status, deleted_at, hidden_at, created_at)
+           VALUES (?, ?, ?, ?, 'image/webp', 1000, 800, 600, 'ready', ?, ?, ?)`,
+        ).bind(photoId, input.placeId, anonymousId, `photos/${photoId}`, input.photoDeletedAt ?? null, input.photoHiddenAt ?? null, input.createdAt),
+        db.prepare("INSERT INTO field_report_media (report_id, photo_id, position, created_at) VALUES (?, ?, 0, ?)")
+          .bind(input.id, photoId, input.createdAt),
+        db.prepare("INSERT INTO field_report_hashtags (report_id, hashtag_name, position, created_at) VALUES (?, ?, 0, ?)")
+          .bind(input.id, tagName, input.createdAt),
+      );
+    };
+
+    for (let index = 0; index < 102; index += 1) {
+      addPublication({
+        id: `field_report_page_${String(index).padStart(3, "0")}`,
+        placeId: "busan-gwangalli",
+        createdAt: new Date(Date.UTC(2026, 6, 19, 12, 0, index)).toISOString(),
+      });
+    }
+    addPublication({ id: "field_report_cross_region", placeId: "seoul-yeouido", createdAt: "2026-07-19T13:00:00.000Z" });
+    addPublication({ id: "field_report_expired", placeId: "busan-gwangalli", createdAt: "2026-07-19T13:01:00.000Z", expiresAt: "2020-01-01T00:00:00.000Z" });
+    addPublication({ id: "field_report_hidden", placeId: "busan-gwangalli", createdAt: "2026-07-19T13:02:00.000Z", publicationStatus: "hidden" });
+    addPublication({ id: "field_report_deleted_photo", placeId: "busan-gwangalli", createdAt: "2026-07-19T13:03:00.000Z", photoDeletedAt: "2026-07-19T13:04:00.000Z" });
+    addPublication({ id: "field_report_hidden_photo", placeId: "busan-gwangalli", createdAt: "2026-07-19T13:05:00.000Z", photoHiddenAt: "2026-07-19T13:06:00.000Z" });
+    await db.batch(statements);
+    await db.prepare(
+      `INSERT INTO posts
+        (id, place_id, anonymous_user_id, creator_name, creator_badge, crowd_level, parking_status, line_status, weather_feel, photo_count, photo_label, hashtag_names)
+       VALUES ('post_legacy_hashtag_media', 'busan-gwangalli', ?, 'legacy', 'legacy', 'normal', 'unknown', 'none', 'good', 1, 'legacy photo', ?)`,
+    ).bind(anonymousId, JSON.stringify([tagName])).run();
+
+    const first = await d1Get<SuccessPayload<Array<{
+      name: string;
+      latestObservedAt: string;
+      activePlaceCount: number;
+      recentPhotoCount: number;
+      recentMedia: Array<{ id: string; placeId: string; photoIds: string[] }>;
+      nextCursor: string | null;
+    }>>>(db, `https://api.test/api/hashtags?name=${encodeURIComponent(tagName)}&regionId=busan&hasPhoto=true&activeOnly=true&sort=recent&limit=100`, anonymousId);
+    const tag = first.data[0];
+    assert.equal(first.meta?.socialFeedEnabled, false);
+    assert.equal(tag?.recentPhotoCount, 102);
+    assert.equal(tag?.activePlaceCount, 1);
+    assert.equal(tag?.recentMedia.length, 100);
+    assert.equal(tag?.recentMedia.every((media) => media.placeId === "busan-gwangalli" && media.photoIds.length === 1), true);
+    assert.ok(tag?.nextCursor);
+    assert.equal(tag?.recentMedia.some((media) => media.id.includes("expired") || media.id.includes("hidden") || media.id.includes("deleted")), false);
+
+    const second = await d1Get<SuccessPayload<Array<{ recentMedia: Array<{ id: string }>; nextCursor: string | null }>>>(
+      db,
+      `https://api.test/api/hashtags?name=${encodeURIComponent(tagName)}&regionId=busan&hasPhoto=true&activeOnly=true&sort=recent&limit=100&cursor=${encodeURIComponent(tag?.nextCursor ?? "")}`,
+      anonymousId,
+    );
+    assert.equal(second.data[0]?.recentMedia.length, 2);
+    assert.equal(second.data[0]?.nextCursor, null);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 anonymous preferences sync saves, follows, and stores only notification hashes", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const anonymousId = "anon_preferences_sync";
+
+  try {
+    const initial = await d1Get<SuccessPayload<{
+      savedPlaceIds: string[];
+      savedPostIds: string[];
+      followedTopicNames: string[];
+      notificationEnabled: boolean;
+    }>>(db, "https://api.test/api/preferences", anonymousId);
+    assert.deepEqual(initial.data, {
+      savedPlaceIds: [],
+      savedPostIds: [],
+      followedTopicNames: [],
+      notificationEnabled: false,
+      notificationPlatform: "webview",
+    });
+
+    await d1Post(db, "https://api.test/api/preferences", anonymousId, {
+      kind: "saved_place",
+      key: "busan-gwangalli",
+      enabled: true,
+    });
+    await d1Post(db, "https://api.test/api/preferences", anonymousId, {
+      kind: "saved_post",
+      key: "post_seed_gwangalli_parking",
+      enabled: true,
+    });
+    await d1Post(db, "https://api.test/api/preferences", anonymousId, {
+      kind: "followed_topic",
+      key: "광안리주차",
+      enabled: true,
+    });
+    await d1Post(db, "https://api.test/api/preferences", anonymousId, {
+      kind: "notifications",
+      enabled: true,
+      platform: "webview",
+      pushTokenHash: `sha256:${"a".repeat(64)}`,
+    });
+
+    const synced = await d1Get<SuccessPayload<{
+      savedPlaceIds: string[];
+      savedPostIds: string[];
+      followedTopicNames: string[];
+      notificationEnabled: boolean;
+      notificationPlatform: string;
+    }>>(db, "https://api.test/api/preferences", anonymousId);
+    assert.deepEqual(synced.data, {
+      savedPlaceIds: ["busan-gwangalli"],
+      savedPostIds: ["post_seed_gwangalli_parking"],
+      followedTopicNames: ["광안리주차"],
+      notificationEnabled: true,
+      notificationPlatform: "webview",
+    });
+
+    const rawToken = await rawD1Post(db, "https://api.test/api/preferences", anonymousId, {
+      kind: "notifications",
+      enabled: true,
+      pushTokenHash: "raw-push-token",
+    });
+    const rawTokenPayload = (await rawToken.json()) as FailurePayload;
+    assert.equal(rawToken.status, 400);
+    assert.equal(rawTokenPayload.error.code, "VALIDATION_ERROR");
+
+    const storedToken = await db
+      .prepare("SELECT push_token_hash AS pushTokenHash FROM notification_subscriptions LIMIT 1")
+      .first<{ pushTokenHash: string | null }>();
+    assert.match(storedToken?.pushTokenHash ?? "", /^sha256:[a-f0-9]{64}$/);
+
+    await d1Post(db, "https://api.test/api/preferences", anonymousId, {
+      kind: "notifications",
+      enabled: false,
+      platform: "webview",
+      pushTokenHash: null,
+    });
+    const clearedToken = await db
+      .prepare("SELECT push_token_hash AS pushTokenHash FROM notification_subscriptions WHERE platform = 'webview' LIMIT 1")
+      .first<{ pushTokenHash: string | null }>();
+    assert.equal(clearedToken?.pushTokenHash, null);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("analytics events use a server sink and never store private properties", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const anonymousId = "anon_analytics_sink_test";
+
+  try {
+    const response = await d1Post<SuccessPayload<{ accepted: boolean; eventName: string }>>(
+      db,
+      "https://api.test/api/analytics/events",
+      anonymousId,
+      {
+        eventName: "nearby_loaded",
+        properties: {
+          placeId: "busan-gwangalli",
+          resultCount: 5,
+          latitude: 35.1532,
+          memo: "private operator note",
+          email: "person@example.com",
+          token: "secret-token",
+        },
+      },
+    );
+
+    assert.equal(response.meta?.storage, "d1");
+    assert.equal(response.data.accepted, true);
+    assert.equal(response.data.eventName, "nearby_loaded");
+
+    const stored = await db
+      .prepare("SELECT actor_identity_key AS actorIdentityKey, properties_json AS propertiesJson FROM analytics_events LIMIT 1")
+      .first<{ actorIdentityKey: string; propertiesJson: string }>();
+    assert.match(stored?.actorIdentityKey ?? "", /^analytics:[a-f0-9]{64}$/);
+    assert.equal(stored?.actorIdentityKey.includes(anonymousId), false);
+    assert.deepEqual(JSON.parse(stored?.propertiesJson ?? "{}"), {
+      placeId: "busan-gwangalli",
+      resultCount: 5,
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("beta KPI success and runtime error events pass the analytics allowlist without raw error details", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const mapSuccess = await d1Post<SuccessPayload<{ accepted: boolean; eventName: string }>>(
+      db,
+      "https://api.test/api/analytics/events",
+      "anon_kpi_event_allowlist",
+      { eventName: "map_load_succeeded" },
+    );
+    const runtimeError = await d1Post<SuccessPayload<{ accepted: boolean; eventName: string }>>(
+      db,
+      "https://api.test/api/analytics/events",
+      "anon_kpi_event_allowlist",
+      {
+        eventName: "app_runtime_error",
+        properties: {
+          surface: "app_route",
+          errorMessage: "private stack content",
+          digest: "private-digest",
+        },
+      },
+    );
+    const stored = await db
+      .prepare("SELECT event_name AS eventName, properties_json AS propertiesJson FROM analytics_events ORDER BY created_at ASC")
+      .all<{ eventName: string; propertiesJson: string }>();
+
+    assert.equal(mapSuccess.data.eventName, "map_load_succeeded");
+    assert.equal(runtimeError.data.eventName, "app_runtime_error");
+    assert.deepEqual(stored.results?.map((row) => row.eventName), ["map_load_succeeded", "app_runtime_error"]);
+    assert.deepEqual(JSON.parse(stored.results?.[1]?.propertiesJson ?? "{}"), { surface: "app_route" });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("operator beta KPI endpoint returns aggregate-only retention funnel reliability and moderation evidence", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const atUtcDay = (daysAgo: number, hour = 12) => {
+    const date = new Date();
+    date.setUTCHours(hour, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() - daysAgo);
+    return date.toISOString();
+  };
+  const insertEvent = async (
+    id: string,
+    eventName: string,
+    actor: string,
+    daysAgo: number,
+    properties: Record<string, unknown> = {},
+  ) => {
+    await db
+      .prepare(
+        `INSERT INTO analytics_events (id, event_name, actor_identity_key, properties_json, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(id, eventName, `analytics:${actor}`, JSON.stringify(properties), atUtcDay(daysAgo))
+      .run();
+  };
+
+  try {
+    await insertEvent("kpi-a-open", "app_opened", "actor-a", 8);
+    await insertEvent("kpi-a-d1", "view_home", "actor-a", 7);
+    await insertEvent("kpi-a-d7", "map_load_succeeded", "actor-a", 1);
+    await insertEvent("kpi-a-start", "report_started", "actor-a", 1);
+    await insertEvent("kpi-a-submit", "report_submitted", "actor-a", 1, { completionMs: 12_000 });
+    await insertEvent("kpi-b-open", "app_opened", "actor-b", 2);
+    await insertEvent("kpi-b-d1", "map_load_failed", "actor-b", 1);
+    await insertEvent("kpi-b-start", "report_started", "actor-b", 1);
+    await insertEvent("kpi-b-runtime-error", "app_runtime_error", "actor-b", 1, { surface: "app" });
+
+    const approvedResponse = await rawD1Post(db, "https://api.test/api/reports", "anon_kpi_approved", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      clientRequestId: "kpi-approved-report",
+    });
+    const approvedPayload = (await approvedResponse.json()) as SuccessPayload<FieldReportData>;
+    await d1AdminPost(
+      db,
+      `https://api.test/api/admin/field-reports/${approvedPayload.data.report.id}/action`,
+      { status: "approved", reason: "KPI 승인 fixture" },
+      {},
+      "test-moderator-token",
+    );
+    await db
+      .prepare(
+        `UPDATE field_report_publications
+         SET created_at = ?, updated_at = ?, moderation_status = 'approved'
+         WHERE report_id = ?`,
+      )
+      .bind(atUtcDay(1, 10), atUtcDay(1, 11), approvedPayload.data.report.id)
+      .run();
+    await db.prepare("UPDATE places SET launch_stage = 'seed'").run();
+    await db.prepare("UPDATE places SET launch_stage = 'active' WHERE id = 'busan-gwangalli'").run();
+    await db.prepare("UPDATE places SET launch_stage = 'beta' WHERE id = 'seoul-yeouido'").run();
+
+    const pendingResponse = await rawD1Post(db, "https://api.test/api/reports", "anon_kpi_pending", {
+      placeId: "seoul-yeouido",
+      category: "tourism",
+      parkingStatus: "limited",
+      clientRequestId: "kpi-pending-report",
+    });
+    const pendingPayload = (await pendingResponse.json()) as SuccessPayload<FieldReportData>;
+    await db
+      .prepare("UPDATE field_report_publications SET created_at = ?, updated_at = ? WHERE report_id = ?")
+      .bind(atUtcDay(1, 10), atUtcDay(1, 10), pendingPayload.data.report.id)
+      .run();
+
+    const unauthorized = await worker.handleRequest(
+      new Request("https://api.test/api/admin/beta-kpis?days=30"),
+      { DB: db, ADMIN_TOKENS: testAdminTokens },
+    );
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/admin/beta-kpis?days=30", {
+        headers: { "x-silsigan-admin-token": "test-operator-token" },
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens },
+    );
+    const payload = (await response.json()) as SuccessPayload<BetaKpiData>;
+    const serialized = JSON.stringify(payload);
+
+    assert.equal(unauthorized.status, 403);
+    assert.equal(response.status, 200);
+    assert.equal(payload.data.windowDays, 30);
+    assert.equal(payload.data.privacy, "aggregate-only");
+    assert.equal(payload.data.audience.activeUsers, 2);
+    assert.equal(payload.data.audience.appOpens, 2);
+    assert.equal(payload.data.reportFunnel.started, 2);
+    assert.equal(payload.data.reportFunnel.submitted, 1);
+    assert.equal(payload.data.reportFunnel.conversionPercent, 50);
+    assert.equal(payload.data.reportFunnel.medianCompletionSeconds, 12);
+    assert.equal(payload.data.mapReliability.succeeded, 1);
+    assert.equal(payload.data.mapReliability.failed, 1);
+    assert.equal(payload.data.mapReliability.successPercent, 50);
+    assert.equal(payload.data.moderation.submitted, 2);
+    assert.equal(payload.data.moderation.approved, 1);
+    assert.equal(payload.data.moderation.pending, 1);
+    assert.equal(payload.data.moderation.approvalPercent, 100);
+    assert.equal(payload.data.moderation.reviewedWithin24HoursPercent, 100);
+    assert.deepEqual(payload.data.retention.d1, { cohortUsers: 2, retainedUsers: 2, percent: 100 });
+    assert.deepEqual(payload.data.retention.d7, { cohortUsers: 1, retainedUsers: 1, percent: 100 });
+    assert.deepEqual(payload.data.freshCoverage, {
+      eligiblePlaces: 2,
+      coveredPlaces: 1,
+      percent: 50,
+      tierA: { eligiblePlaces: 1, coveredPlaces: 1, percent: 100 },
+      tierB: { eligiblePlaces: 1, coveredPlaces: 0, percent: 0 },
+    });
+    assert.deepEqual(payload.data.runtimeReliability, { appOpenUsers: 2, errorUsers: 1, errorFreePercent: 50 });
+    assert.equal(serialized.includes("actor-a"), false);
+    assert.equal(serialized.includes("actor-b"), false);
+    assert.equal(serialized.includes("properties_json"), false);
+    assert.equal(serialized.includes("anonymousUserId"), false);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -3901,6 +7447,7 @@ test("D1 public posts ignore includeHidden query parameter", { skip: !sqlite3Ava
   const { db, tempDir } = createSeededSqliteD1();
 
   try {
+    await enableD1FeatureFlags(db, ["SOCIAL_FEED_ENABLED"]);
     const anonymousId = "anon_d1_public_posts_hidden_guard";
     const createdPost = await d1Post<SuccessPayload<{ post: FeedPost; credits: Array<{ amount: number }>; privacyNotice: string }>>(
       db,
@@ -4292,6 +7839,7 @@ test("D1 report creation sends a redacted moderation alert webhook", { skip: !sq
       {
         DB: db,
         ENVIRONMENT: "staging",
+        SILSIGAN_ANON_SESSION_REQUIRED: "0",
         MODERATION_ALERT_WEBHOOK_URL: "https://alerts.example.test/silsigan/moderation",
         MODERATION_ALERT_WEBHOOK_TOKEN: "alert-token-fixture",
       },
@@ -4349,6 +7897,7 @@ test("D1 field reports store coarse realtime status without client coordinates",
       clientLocation: {
         latitude: 35.1532,
         longitude: 129.1186,
+        accuracyM: 18,
       },
     });
     const payload = (await response.json()) as SuccessPayload<FieldReportData>;
@@ -4359,6 +7908,9 @@ test("D1 field reports store coarse realtime status without client coordinates",
     assert.equal(payload.meta?.locationPolicy, "clientLocation-used-only-for-distance-and-not-stored");
     assert.equal(payload.data.report.placeId, "busan-gwangalli");
     assert.equal(payload.data.report.verifiedRadiusM, 50);
+    assert.equal(payload.data.report.verificationMethod, "radius");
+    assert.equal(payload.data.report.accuracyBucket, "high");
+    assert.equal(payload.data.report.moderationStatus, "pending");
     assert.deepEqual(
       payload.data.report.observations.map((observation) => [observation.dimension, observation.valueCode]),
       [
@@ -4427,6 +7979,8 @@ test("D1 field reports store coarse realtime status without client coordinates",
           line_status AS lineStatus,
           parking_status AS parkingStatus,
           verified_radius_m AS verifiedRadiusM,
+          accuracy_bucket AS accuracyBucket,
+          moderation_status AS moderationStatus,
           created_at AS createdAt,
           expires_at AS expiresAt
         FROM place_events
@@ -4443,20 +7997,86 @@ test("D1 field reports store coarse realtime status without client coordinates",
         verifiedRadiusM: number;
         createdAt: string;
         expiresAt: string;
+        moderationStatus: string;
       }>();
     assert.ok(event);
     assert.deepEqual(event, {
       id: payload.data.report.id,
       eventType: "report",
-      source: "field_report",
-      crowdLevel: "busy",
-      lineStatus: "short",
+        source: "field_report",
+        crowdLevel: "busy",
+        lineStatus: "short",
       parkingStatus: "limited",
       verifiedRadiusM: 50,
+      accuracyBucket: "high",
+      moderationStatus: "pending",
       createdAt: event.createdAt,
       expiresAt: event.expiresAt,
     });
     assert.equal(new Date(event.expiresAt).getTime() - new Date(event.createdAt).getTime(), 3 * 60 * 60 * 1000);
+
+    const pendingPublic = await d1Get<SuccessPayload<Array<{ id: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=5",
+      anonymousId,
+    );
+    assert.equal(pendingPublic.data.some((report) => report.id === payload.data.report.id), false);
+    const pendingMine = await d1Get<SuccessPayload<Array<{ id: string; moderationStatus: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&mine=1&limit=5",
+      anonymousId,
+    );
+    assert.equal(pendingMine.data.find((report) => report.id === payload.data.report.id)?.moderationStatus, "pending");
+    const pendingQueue = await d1AdminGet<SuccessPayload<Array<{ id: string; moderationStatus: string }>>>(
+      db,
+      "https://api.test/api/admin/field-reports?status=pending&limit=5",
+    );
+    assert.equal(pendingQueue.data.find((report) => report.id === payload.data.report.id)?.moderationStatus, "pending");
+    const pendingRanking = await d1Get<SuccessPayload<Ranking[]>>(db, "https://api.test/api/rankings/regions/busan?limit=10", anonymousId);
+    const pendingGwangalli = pendingRanking.data.find((item) => item.placeId === "busan-gwangalli");
+    assert.equal(pendingGwangalli?.reportCount, 0);
+    const pendingVote = await rawD1Post(
+      db,
+      `https://api.test/api/reports/${payload.data.report.id}/votes`,
+      "anon_pending_vote",
+      { voteType: "agree" },
+    );
+    const pendingVotePayload = (await pendingVote.json()) as FailurePayload;
+    assert.equal(pendingVote.status, 409);
+    assert.equal(pendingVotePayload.error.code, "FIELD_REPORT_NOT_PUBLIC");
+    const approvalResponse = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${payload.data.report.id}/action`,
+      { status: "approved", reason: "정상 현장 제보 fixture" },
+      "test-moderator-token",
+    );
+    const approvalPayload = (await approvalResponse.json()) as SuccessPayload<{ moderationStatus: string }>;
+    assert.equal(approvalResponse.status, 200);
+    assert.equal(approvalPayload.data.moderationStatus, "approved");
+
+    const visibleSignalCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM live_signals WHERE evidence_id = ? AND is_publicly_visible = 1")
+      .bind(payload.data.report.id)
+      .first<{ count: number }>();
+    assert.equal(visibleSignalCount?.count, 4);
+    const approvedEvent = await db
+      .prepare("SELECT moderation_status AS moderationStatus, expires_at AS expiresAt FROM place_events WHERE id = ?")
+      .bind(payload.data.report.id)
+      .first<{ moderationStatus: string; expiresAt: string }>();
+    assert.equal(approvedEvent?.moderationStatus, "approved");
+    const approvedReportCount = await db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM place_events
+         WHERE place_id = ?
+           AND event_type = 'report'
+           AND source = 'field_report'
+           AND moderation_status = 'approved'
+           AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind("busan-gwangalli")
+      .first<{ count: number }>();
+    assert.equal(approvedReportCount?.count, 1);
 
     const hourlyAggregate = await db
       .prepare(
@@ -4501,6 +8121,58 @@ test("D1 field reports store coarse realtime status without client coordinates",
     assert.equal(expiredList.meta?.includeExpired, false);
     assert.equal(expiredList.data.some((report) => report.id === payload.data.report.id), false);
 
+    const secondReportResponse = await rawD1Post(db, "https://api.test/api/reports", "anon_d1_field_reporter_two", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "normal",
+      lineStatus: "none",
+      parkingStatus: "available",
+      comment: "두 번째 제보는 검수 거절 경로를 확인합니다.",
+      clientLocation: {
+        latitude: 35.1532,
+        longitude: 129.1186,
+        accuracyM: 18,
+      },
+    });
+    const secondReportPayload = (await secondReportResponse.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(secondReportResponse.status, 201);
+    assert.equal(secondReportPayload.data.report.moderationStatus, "pending");
+    const rejectionResponse = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${secondReportPayload.data.report.id}/action`,
+      { status: "rejected", reason: "검수 fixture 거절" },
+      "test-moderator-token",
+    );
+    const rejectionPayload = (await rejectionResponse.json()) as SuccessPayload<{ moderationStatus: string }>;
+    assert.equal(rejectionResponse.status, 200);
+    assert.equal(rejectionPayload.data.moderationStatus, "rejected");
+    const rejectedPublic = await d1Get<SuccessPayload<Array<{ id: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=10",
+      "anon_d1_field_reporter_two",
+    );
+    assert.equal(rejectedPublic.data.some((report) => report.id === secondReportPayload.data.report.id), false);
+    const rejectedMine = await d1Get<SuccessPayload<Array<{ id: string; moderationStatus: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&mine=1&limit=10",
+      "anon_d1_field_reporter_two",
+    );
+    assert.equal(rejectedMine.data.find((report) => report.id === secondReportPayload.data.report.id)?.moderationStatus, "rejected");
+    const rejectedSignalCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM live_signals WHERE evidence_id = ? AND is_publicly_visible = 1")
+      .bind(secondReportPayload.data.report.id)
+      .first<{ count: number }>();
+    assert.equal(rejectedSignalCount?.count, 0);
+    const rejectionAudit = await db
+      .prepare("SELECT action_type AS actionType, target_type AS targetType, target_id AS targetId FROM admin_actions WHERE target_id = ?")
+      .bind(secondReportPayload.data.report.id)
+      .first<{ actionType: string; targetType: string; targetId: string }>();
+    assert.deepEqual(rejectionAudit, {
+      actionType: "field_report_rejected",
+      targetType: "field_report",
+      targetId: secondReportPayload.data.report.id,
+    });
+
     const rejected = await rawD1Post(db, "https://api.test/api/reports", "anon_d1_field_far", {
       placeId: "busan-gwangalli",
       category: "tourism",
@@ -4511,6 +8183,7 @@ test("D1 field reports store coarse realtime status without client coordinates",
       clientLocation: {
         latitude: 37.5665,
         longitude: 126.978,
+        accuracyM: 18,
       },
     });
     const rejectedPayload = (await rejected.json()) as FailurePayload;
@@ -4522,7 +8195,131 @@ test("D1 field reports store coarse realtime status without client coordinates",
     assert.equal(rejectedSerialized.includes("126.978"), false);
 
     const eventCount = await db.prepare("SELECT COUNT(*) AS count FROM place_events WHERE place_id = ?").bind("busan-gwangalli").first<{ count: number }>();
-    assert.equal(eventCount?.count, 1);
+    assert.equal(eventCount?.count, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 field reports with low or missing accuracy fall back to unverified without blocking the report", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const lowAccuracy = await rawD1Post(db, "https://api.test/api/reports", "anon_low_accuracy_report", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      clientLocation: {
+        latitude: 35.1532,
+        longitude: 129.1186,
+        accuracyM: 250,
+      },
+    });
+    const lowPayload = (await lowAccuracy.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(lowAccuracy.status, 201);
+    assert.equal(lowPayload.data.report.verifiedRadiusM, null);
+    assert.equal(lowPayload.data.report.accuracyBucket, "low");
+    assert.deepEqual(lowPayload.data.credits, []);
+
+    const lowRow = await db
+      .prepare("SELECT verified_radius_m AS verifiedRadiusM, accuracy_bucket AS accuracyBucket FROM place_events WHERE id = ?")
+      .bind(lowPayload.data.report.id)
+      .first<{ verifiedRadiusM: number | null; accuracyBucket: string }>();
+    assert.deepEqual(lowRow, { verifiedRadiusM: null, accuracyBucket: "low" });
+
+    const missingAccuracy = await rawD1Post(db, "https://api.test/api/reports", "anon_missing_accuracy_report", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "normal",
+      clientLocation: {
+        latitude: 35.1532,
+        longitude: 129.1186,
+      },
+    });
+    const missingPayload = (await missingAccuracy.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(missingAccuracy.status, 201);
+    assert.equal(missingPayload.data.report.verifiedRadiusM, null);
+    assert.equal(missingPayload.data.report.accuracyBucket, "unknown");
+
+    const invalidAccuracy = await rawD1Post(db, "https://api.test/api/reports", "anon_invalid_accuracy_report", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "normal",
+      clientLocation: {
+        latitude: 35.1532,
+        longitude: 129.1186,
+        accuracyM: -1,
+      },
+    });
+    const invalidPayload = (await invalidAccuracy.json()) as FailurePayload;
+    assert.equal(invalidAccuracy.status, 400);
+    assert.equal(invalidPayload.error.code, "VALIDATION_ERROR");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 area field reports use polygon verification without persisting raw coordinates", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const polygon = JSON.stringify({
+    type: "Polygon",
+    coordinates: [
+      [
+        [129.1176, 35.1522],
+        [129.1196, 35.1522],
+        [129.1196, 35.1542],
+        [129.1176, 35.1542],
+        [129.1176, 35.1522],
+      ],
+    ],
+  });
+
+  try {
+    await db
+      .prepare(
+        `INSERT INTO place_metadata (place_id, normalized_name, place_kind, geometry_json, verification_radius_m)
+         VALUES (?, ?, 'AREA', ?, NULL)`,
+      )
+      .bind("busan-gwangalli", "광안리해수욕장", polygon)
+      .run();
+
+    const inside = await rawD1Post(db, "https://api.test/api/reports", "anon_polygon_inside", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "normal",
+      clientLocation: {
+        latitude: 35.1532,
+        longitude: 129.1186,
+        accuracyM: 18,
+      },
+    });
+    const insidePayload = (await inside.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(inside.status, 201);
+    assert.equal(insidePayload.data.report.verificationMethod, "polygon");
+    assert.equal(insidePayload.data.report.verifiedRadiusM, null);
+    assert.deepEqual(insidePayload.data.credits, [{ type: "verified_report", amount: 1 }]);
+
+    const event = await db
+      .prepare("SELECT verification_method AS verificationMethod FROM place_events WHERE id = ?")
+      .bind(insidePayload.data.report.id)
+      .first<{ verificationMethod: string }>();
+    assert.deepEqual(event, { verificationMethod: "polygon" });
+
+    const outside = await rawD1Post(db, "https://api.test/api/reports", "anon_polygon_outside", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      clientLocation: {
+        latitude: 35.155,
+        longitude: 129.1186,
+        accuracyM: 18,
+      },
+    });
+    const outsidePayload = (await outside.json()) as FailurePayload;
+    assert.equal(outside.status, 400);
+    assert.equal(outsidePayload.error.code, "LOCATION_NOT_VERIFIED");
+    assert.equal(JSON.stringify(outsidePayload).includes("35.155"), false);
+    assert.equal(JSON.stringify(outsidePayload).includes("129.1186"), false);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -4582,6 +8379,13 @@ test("field report votes reject self and duplicates, then invalidate stale conse
       crowdLevel: "busy",
     });
     const reportPayload = (await reportResponse.json()) as SuccessPayload<FieldReportData>;
+    const approvalResponse = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${reportPayload.data.report.id}/action`,
+      { status: "approved", reason: "투표 fixture 승인" },
+      "test-moderator-token",
+    );
+    assert.equal(approvalResponse.status, 200);
     const voteUrl = `https://api.test/api/reports/${reportPayload.data.report.id}/votes`;
 
     const selfVote = await rawD1Post(db, voteUrl, ownerId, { voteType: "agree" });
@@ -4608,7 +8412,7 @@ test("field report votes reject self and duplicates, then invalidate stale conse
     const changedTwo = await rawD1Post(db, voteUrl, "anon_vote_changed_two", { voteType: "changed" });
     const changedThree = await rawD1Post(db, voteUrl, "anon_vote_changed_three", {
       voteType: "changed",
-      clientLocation: { latitude: 35.1532, longitude: 129.1186 },
+      clientLocation: { latitude: 35.1532, longitude: 129.1186, accuracyM: 18 },
     });
     const changedOnePayload = (await changedOne.json()) as SuccessPayload<{ invalidated: boolean }>;
     const changedTwoPayload = (await changedTwo.json()) as SuccessPayload<{ invalidated: boolean }>;
@@ -4637,6 +8441,7 @@ test("user blocks use content ids, hide the creator across feeds, and never expo
   const { db, tempDir } = createSeededSqliteD1();
 
   try {
+    await enableD1FeatureFlags(db, ["SOCIAL_FEED_ENABLED"]);
     const creatorSession = "anon_block_target_creator";
     const viewerSession = "anon_block_viewer";
     const comment = await d1Post<SuccessPayload<Comment>>(db, "https://api.test/api/comments", creatorSession, {
@@ -4755,6 +8560,17 @@ test("anonymous account deletion purges owned content and rejects future writes"
     const photoPayload = (await photoResponse.json()) as SuccessPayload<PhotoCompleteData>;
     assert.equal(photoResponse.status, 201);
 
+    await d1Post(db, "https://api.test/api/preferences", anonymousId, {
+      kind: "saved_place",
+      key: "busan-gwangalli",
+      enabled: true,
+    });
+    await d1Post(db, "https://api.test/api/preferences", anonymousId, {
+      kind: "followed_topic",
+      key: "삭제 테스트",
+      enabled: true,
+    });
+
     const deletionResponse = await worker.handleRequest(
       new Request("https://api.test/api/account/deletion", {
         method: "POST",
@@ -4782,6 +8598,13 @@ test("anonymous account deletion purges owned content and rejects future writes"
       const count = await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).bind(storedUser?.anonymousUserId ?? "").first<{ count: number }>();
       assert.equal(count?.count, 0, table);
     }
+    for (const table of ["saved_places", "saved_posts", "followed_topics", "notification_subscriptions"]) {
+      const count = await db
+        .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE actor_identity_key = ?`)
+        .bind(`anonymous:${storedUser?.anonymousUserId ?? ""}`)
+        .first<{ count: number }>();
+      assert.equal(count?.count, 0, table);
+    }
     const requestRow = await db
       .prepare("SELECT status FROM account_deletion_requests WHERE anonymous_user_id = ? ORDER BY requested_at DESC LIMIT 1")
       .bind(storedUser?.anonymousUserId ?? "")
@@ -4795,6 +8618,156 @@ test("anonymous account deletion purges owned content and rejects future writes"
     const blockedWritePayload = (await blockedWrite.json()) as FailurePayload;
     assert.equal(blockedWrite.status, 403);
     assert.equal(blockedWritePayload.error.code, "ACCOUNT_DELETED");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("server-bound anonymous sessions reject stolen ids and revoked or rotated proofs", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = { DB: db, SILSIGAN_ANON_SESSION_REQUIRED: "1" };
+
+  try {
+    const missingProductionBinding = await worker.handleRequest(
+      new Request("https://api.test/api/comments", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": "anon_unbound_staging_client",
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", body: "설정 누락 환경의 요청입니다." }),
+      }),
+      { DB: db, ENVIRONMENT: "staging" },
+    );
+    const missingProductionBindingPayload = (await missingProductionBinding.json()) as FailurePayload;
+    assert.equal(missingProductionBinding.status, 401);
+    assert.equal(missingProductionBindingPayload.error.code, "ANONYMOUS_SESSION_PROOF_REQUIRED");
+
+    const issueResponse = await worker.handleRequest(
+      new Request("https://api.test/api/session/anonymous", { method: "POST" }),
+      env,
+    );
+    const issued = (await issueResponse.json()) as SuccessPayload<{
+      anonymousId: string;
+      proof: string;
+      expiresAt: string;
+    }>;
+    assert.equal(issueResponse.status, 201);
+    assert.match(issued.data.anonymousId, /^anon_[0-9a-f-]{36}$/i);
+    assert.match(issued.data.proof, /^[a-zA-Z0-9_-]{43}$/);
+    assert.ok(Date.parse(issued.data.expiresAt) > Date.now());
+    const sessionHash = sha256HexForTest(`silsigan-anon:${issued.data.anonymousId}`);
+    const issuedSession = await db
+      .prepare("SELECT last_seen_at AS lastSeenAt FROM anonymous_sessions WHERE session_hash = ?")
+      .bind(sessionHash)
+      .first<{ lastSeenAt: string }>();
+
+    const legitimateWrite = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/comments", "POST", issued.data, {
+        placeId: "busan-gwangalli",
+        body: "증명된 익명 세션의 댓글입니다.",
+      }),
+      env,
+    );
+    assert.equal(legitimateWrite.status, 201);
+    const recentlyUsedSession = await db
+      .prepare("SELECT last_seen_at AS lastSeenAt FROM anonymous_sessions WHERE session_hash = ?")
+      .bind(sessionHash)
+      .first<{ lastSeenAt: string }>();
+    assert.equal(recentlyUsedSession?.lastSeenAt, issuedSession?.lastSeenAt);
+
+    await db.prepare("UPDATE anonymous_sessions SET last_seen_at = ? WHERE session_hash = ?").bind("2000-01-01T00:00:00.000Z", sessionHash).run();
+    const staleSessionRead = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/preferences", "GET", issued.data),
+      env,
+    );
+    assert.equal(staleSessionRead.status, 200);
+    const refreshedSession = await db
+      .prepare("SELECT last_seen_at AS lastSeenAt FROM anonymous_sessions WHERE session_hash = ?")
+      .bind(sessionHash)
+      .first<{ lastSeenAt: string }>();
+    assert.ok(Date.parse(refreshedSession?.lastSeenAt ?? "") > Date.parse("2000-01-01T00:00:00.000Z"));
+
+    const stolenIdWrite = await worker.handleRequest(
+      new Request("https://api.test/api/comments", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": issued.data.anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", body: "훔친 ID만 사용한 요청입니다." }),
+      }),
+      env,
+    );
+    const stolenIdPayload = (await stolenIdWrite.json()) as FailurePayload;
+    assert.equal(stolenIdWrite.status, 401);
+    assert.equal(stolenIdPayload.error.code, "ANONYMOUS_SESSION_PROOF_REQUIRED");
+
+    const wrongProofWrite = await worker.handleRequest(
+      anonymousSessionRequest(
+        "https://api.test/api/comments",
+        "POST",
+        { anonymousId: issued.data.anonymousId, proof: "A".repeat(43) },
+        { placeId: "busan-gwangalli", body: "틀린 증명값을 사용한 요청입니다." },
+      ),
+      env,
+    );
+    const wrongProofPayload = (await wrongProofWrite.json()) as FailurePayload;
+    assert.equal(wrongProofWrite.status, 403);
+    assert.equal(wrongProofPayload.error.code, "ANONYMOUS_SESSION_PROOF_INVALID");
+
+    const rotateResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/session/anonymous/rotate", "POST", issued.data),
+      env,
+    );
+    const rotated = (await rotateResponse.json()) as SuccessPayload<{ anonymousId: string; proof: string; expiresAt: string }>;
+    assert.equal(rotateResponse.status, 200);
+    assert.equal(rotated.data.anonymousId, issued.data.anonymousId);
+    assert.notEqual(rotated.data.proof, issued.data.proof);
+
+    const oldProofWrite = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/comments", "POST", issued.data, {
+        placeId: "busan-gwangalli",
+        body: "회전 전 증명값을 사용한 요청입니다.",
+      }),
+      env,
+    );
+    const oldProofPayload = (await oldProofWrite.json()) as FailurePayload;
+    assert.equal(oldProofWrite.status, 403);
+    assert.equal(oldProofPayload.error.code, "ANONYMOUS_SESSION_PROOF_INVALID");
+
+    const rotatedWrite = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/comments", "POST", rotated.data, {
+        placeId: "busan-gwangalli",
+        body: "회전된 증명값을 사용한 요청입니다.",
+      }),
+      env,
+    );
+    assert.equal(rotatedWrite.status, 201);
+
+    const revokeResponse = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/session/anonymous", "DELETE", rotated.data),
+      env,
+    );
+    assert.equal(revokeResponse.status, 200);
+
+    const revokedWrite = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/comments", "POST", rotated.data, {
+        placeId: "busan-gwangalli",
+        body: "폐기된 세션의 요청입니다.",
+      }),
+      env,
+    );
+    const revokedPayload = (await revokedWrite.json()) as FailurePayload;
+    assert.equal(revokedWrite.status, 403);
+    assert.equal(revokedPayload.error.code, "ANONYMOUS_SESSION_REVOKED");
+
+    const storedSession = await db
+      .prepare("SELECT proof_hash AS proofHash FROM anonymous_sessions WHERE session_hash = ?")
+      .bind(sessionHash)
+      .first<{ proofHash: string }>();
+    assert.match(storedSession?.proofHash ?? "", /^sha256:[a-f0-9]{64}$/);
+    assert.equal(storedSession?.proofHash.includes(rotated.data.proof), false);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -4898,6 +8871,14 @@ test("D1 place status uses enabled current sources and preserves provider observ
     const reportPayload = (await reportResponse.json()) as SuccessPayload<FieldReportData>;
     assert.equal(reportResponse.status, 201);
 
+    const approvalResponse = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${reportPayload.data.report.id}/action`,
+      { status: "approved", reason: "상태 집계 fixture 승인" },
+      "test-moderator-token",
+    );
+    assert.equal(approvalResponse.status, 200);
+
     const insufficientResponse = await worker.handleRequest(
       new Request("https://api.test/api/places/busan-gwangalli/status"),
       { DB: db, ENVIRONMENT: "staging" },
@@ -4988,16 +8969,18 @@ test("memory fallback field reports can be listed without raw location data", as
     clientLocation: {
       latitude: 35.5486,
       longitude: 129.3005,
+      accuracyM: 18,
     },
   });
-  const list = await get<SuccessPayload<Array<{ id: string; placeId: string; weatherFeel?: string }>>>(
-    "https://api.test/api/reports?placeId=ulsan-taehwagang&limit=5",
+  const list = await get<SuccessPayload<Array<{ id: string; placeId: string; weatherFeel?: string; moderationStatus: string }>>>(
+    "https://api.test/api/reports?placeId=ulsan-taehwagang&mine=1&limit=5",
     anonymousId,
   );
   const serializedList = JSON.stringify(list);
 
   assert.equal(list.meta?.storage, "memory-fallback");
   assert.equal(list.data.some((report) => report.id === created.data.report.id), true);
+  assert.equal(list.data.find((report) => report.id === created.data.report.id)?.moderationStatus, "pending");
   assert.equal(list.data.find((report) => report.id === created.data.report.id)?.weatherFeel, "windy");
   assert.equal(serializedList.includes("35.5486"), false);
   assert.equal(serializedList.includes("129.3005"), false);
@@ -5296,6 +9279,8 @@ test("admin moderation role gates update D1 R2 and CACHE invalidation", { skip: 
     assert.equal(moderatorDelete.status, 403);
     assert.equal(moderatorDeletePayload.error.code, "INSUFFICIENT_ADMIN_ROLE");
 
+    await db.prepare("UPDATE photo_storage_budget SET active_bytes = 200000 WHERE id = 1").run();
+
     const deletedPhoto = await d1AdminPost<SuccessPayload<{ action: string; r2Deleted: boolean }>>(
       db,
       "https://api.test/api/admin/moderation/delete",
@@ -5308,6 +9293,8 @@ test("admin moderation role gates update D1 R2 and CACHE invalidation", { skip: 
     );
     assert.equal(deletedPhoto.data.action, "delete");
     assert.equal(deletedPhoto.data.r2Deleted, true);
+    const budgetAfterDelete = await db.prepare("SELECT active_bytes AS activeBytes FROM photo_storage_budget WHERE id = 1").first<{ activeBytes: number }>();
+    assert.equal(budgetAfterDelete?.activeBytes, 100_000);
     assert.deepEqual(r2.deletedKeys, [photo.data.storageKey]);
     assert.deepEqual(cache.deletedKeys, [
       "rankings:nationwide",
@@ -5325,6 +9312,28 @@ test("admin moderation role gates update D1 R2 and CACHE invalidation", { skip: 
       keys: cache.deletedKeys,
       deletedKeys: cache.deletedKeys,
     });
+
+    const repeatedDelete = await worker.handleRequest(
+      new Request("https://api.test/api/admin/moderation/delete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-admin-token",
+        },
+        body: JSON.stringify({
+          targetType: "photo",
+          targetId: photo.data.photo.id,
+          reason: "동일 사진 삭제 재시도",
+        }),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens, PHOTOS: r2, CACHE: cache },
+    );
+    const repeatedDeletePayload = (await repeatedDelete.json()) as FailurePayload;
+    assert.equal(repeatedDelete.status, 404);
+    assert.equal(repeatedDeletePayload.error.code, "MODERATION_TARGET_NOT_FOUND");
+    const budgetAfterRepeatedDelete = await db.prepare("SELECT active_bytes AS activeBytes FROM photo_storage_budget WHERE id = 1").first<{ activeBytes: number }>();
+    assert.equal(budgetAfterRepeatedDelete?.activeBytes, 100_000);
+    assert.deepEqual(r2.deletedKeys, [photo.data.storageKey]);
 
     const photosAfterDelete = await d1Get<SuccessPayload<Array<{ id: string }>>>(db, "https://api.test/api/photos?placeId=busan-gwangalli", anonymousId);
     assert.equal(photosAfterDelete.data.some((item) => item.id === photo.data.photo.id), false);
@@ -5424,6 +9433,11 @@ test("admin user restrictions block public D1 writes until unrestricted", { skip
       rawD1Post(db, "https://api.test/api/photos/upload-url", anonymousId, {
         placeId: "busan-gwangalli",
         mimeType: "image/webp",
+        byteSize: 100_000,
+        width: 800,
+        height: 600,
+        rightsAttested: true,
+        rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
       }),
       rawD1Post(db, "https://api.test/api/photos/complete", anonymousId, {
         uploadId: "upload_restricted",
@@ -5787,6 +9801,1492 @@ test("photo complete strips GPS EXIF sample before writing to R2", async () => {
   assert.deepEqual(fileBytes, stored);
 });
 
+test("photo upload-ticket accepts multipart binary and sanitizes before R2", async () => {
+  const anonymousId = "anon_photo_multipart_test";
+  const r2 = new FakeR2Bucket();
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 0]);
+
+  const ticketResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload-ticket", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-anon-id": anonymousId,
+      },
+      body: JSON.stringify({
+        placeId: "busan-gwangalli",
+        mimeType: "image/jpeg",
+        byteSize: source.byteLength,
+        width: 1,
+        height: 1,
+        rightsAttested: true,
+        rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+      }),
+    }),
+    { PHOTOS: r2 },
+  );
+  const ticketPayload = (await ticketResponse.json()) as SuccessPayload<{
+    uploadId: string;
+    method: string;
+    uploadUrl: string;
+    storageKey: string;
+  }>;
+
+  assert.equal(ticketResponse.status, 201);
+  assert.equal(ticketPayload.data.method, "POST");
+  assert.equal(ticketPayload.data.uploadUrl, "/api/photos/upload");
+
+  const formData = new FormData();
+  formData.set("uploadId", ticketPayload.data.uploadId);
+  formData.set("placeId", "busan-gwangalli");
+  formData.set("byteSize", String(source.byteLength));
+  formData.set("mimeType", "image/jpeg");
+  formData.set("width", "1");
+  formData.set("height", "1");
+  formData.set("clientReencoded", "true");
+  formData.set("file", new Blob([source], { type: "image/jpeg" }), "camera-name.jpg");
+
+  const uploadResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload", {
+      method: "POST",
+      headers: { "x-silsigan-anon-id": anonymousId },
+      body: formData,
+    }),
+    { PHOTOS: r2 },
+  );
+  const uploadPayload = (await uploadResponse.json()) as SuccessPayload<PhotoCompleteData>;
+
+  assert.equal(uploadResponse.status, 201);
+  assert.equal(r2.putObjects.length, 1);
+  assert.equal(r2.putObjects[0]?.contentType, "image/jpeg");
+  assert.equal(r2.putObjects[0]?.customMetadata?.gpsExifStripped, "true");
+  assert.equal(containsAscii(r2.putObjects[0]?.bytes ?? new Uint8Array(), "GPSLatitude"), false);
+  assert.equal(uploadPayload.data.photo.mimeType, "image/jpeg");
+  assert.equal(uploadPayload.data.photo.byteSize, r2.putObjects[0]?.bytes.byteLength);
+});
+
+test("staging photo upload rejects a forged ticket before R2", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding();
+  const env = securedPhotoEnv(db, r2, limiter);
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 31]);
+
+  try {
+    const response = await completeSecuredPhoto(env, "anon_photo_forged_ticket", source, {
+      uploadId: "upload_00000000-0000-4000-8000-000000000001",
+      ticket: "0".repeat(64),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 403);
+    assert.equal(payload.error.code, "PHOTO_UPLOAD_TICKET_INVALID");
+    assert.equal(r2.putObjects.length, 0);
+    assert.equal(limiter.calls.length, 1);
+    assert.equal(limiter.calls[0]?.includes(testPhotoClientIp), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("photo upload ticket requires the current per-photo rights attestation before abuse controls", async () => {
+  let dbTouched = false;
+  const db = {
+    prepare() {
+      dbTouched = true;
+      throw new Error("D1 must not be reached before rights validation");
+    },
+  };
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload-ticket", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-anon-id": "anon_photo_rights_missing",
+      },
+      body: JSON.stringify({
+        placeId: "busan-gwangalli",
+        mimeType: "image/jpeg",
+        byteSize: 256,
+        width: 1,
+        height: 1,
+        rightsAttested: false,
+        rightsPolicyVersion: "outdated-photo-rights-policy",
+      }),
+    }),
+    {
+      DB: db as never,
+      SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+    },
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 400);
+  assert.equal(payload.error.code, "PHOTO_RIGHTS_ATTESTATION_REQUIRED");
+  assert.equal(dbTouched, false);
+});
+
+test("photo upload ticket records one idempotent versioned community acceptance", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const anonymousId = "anon_photo_rights_recorded";
+  const request = () => new Request("https://api.test/api/photos/upload-ticket", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-silsigan-anon-id": anonymousId,
+    },
+    body: JSON.stringify({
+      placeId: "busan-gwangalli",
+      mimeType: "image/jpeg",
+      byteSize: 256,
+      width: 1,
+      height: 1,
+      rightsAttested: true,
+      rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+    }),
+  });
+
+  try {
+    const firstResponse = await worker.handleRequest(request(), { DB: db });
+    const firstPayload = (await firstResponse.json()) as SuccessPayload<{ rightsPolicyVersion: string }>;
+    const secondResponse = await worker.handleRequest(request(), { DB: db });
+    const acceptances = await db
+      .prepare(
+        `SELECT actor_identity_key AS actorIdentityKey, terms_type AS termsType, version, accepted_at AS acceptedAt, withdrawn_at AS withdrawnAt
+         FROM terms_acceptances`,
+      )
+      .all<{
+        actorIdentityKey: string;
+        termsType: string;
+        version: string;
+        acceptedAt: string;
+        withdrawnAt: string | null;
+      }>();
+
+    assert.equal(firstResponse.status, 201);
+    assert.equal(secondResponse.status, 201);
+    assert.equal(firstPayload.data.rightsPolicyVersion, PHOTO_RIGHTS_TERMS_VERSION);
+    assert.equal(acceptances.results?.length, 1);
+    assert.match(acceptances.results?.[0]?.actorIdentityKey ?? "", /^anonymous:anon_[0-9a-f]{48}$/);
+    assert.equal(acceptances.results?.[0]?.termsType, "community");
+    assert.equal(acceptances.results?.[0]?.version, PHOTO_RIGHTS_TERMS_VERSION);
+    assert.ok(Date.parse(acceptances.results?.[0]?.acceptedAt ?? "") > 0);
+    assert.equal(acceptances.results?.[0]?.withdrawnAt, null);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo ticket rejects a missing Turnstile proof before D1", async () => {
+  let dbTouched = false;
+  const db = {
+    prepare() {
+      dbTouched = true;
+      throw new Error("D1 must not be reached before Turnstile validation");
+    },
+  };
+  const response = await worker.handleRequest(
+    photoTicketRequest("anon_turnstile_missing", undefined, "https://web.example.test"),
+    {
+      DB: db as never,
+      ENVIRONMENT: "staging",
+      SILSIGAN_ANON_SESSION_REQUIRED: "0",
+      SILSIGAN_API_ALLOWED_ORIGINS: "https://web.example.test",
+      SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+      SILSIGAN_TURNSTILE_SITE_KEY: "turnstile-public-site-key",
+      SILSIGAN_TURNSTILE_SECRET_KEY: testTurnstileSecret,
+      PHOTO_UPLOAD_RATE_LIMITER: new FakeRateLimitBinding(),
+    },
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 403);
+  assert.equal(payload.error.code, "PHOTO_TURNSTILE_TOKEN_REQUIRED");
+  assert.equal(dbTouched, false);
+});
+
+test("staging photo ticket validates Turnstile action, hostname, client IP, and one-use token before D1", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const siteverifyRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = String(input);
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    siteverifyRequests.push({ url, body });
+    return Response.json({
+      success: true,
+      hostname: "web.example.test",
+      action: "photo_upload",
+      "error-codes": [],
+    });
+  };
+
+  try {
+    const env = {
+      DB: db,
+      ENVIRONMENT: "staging",
+      SILSIGAN_ANON_SESSION_REQUIRED: "0",
+      SILSIGAN_API_ALLOWED_ORIGINS: "https://web.example.test",
+      SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+      SILSIGAN_TURNSTILE_SITE_KEY: "turnstile-public-site-key",
+      SILSIGAN_TURNSTILE_SECRET_KEY: testTurnstileSecret,
+      SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET: testPhotoUploadSecret,
+      PHOTO_UPLOAD_RATE_LIMITER: new FakeRateLimitBinding(),
+    };
+    const response = await worker.handleRequest(
+      photoTicketRequest("anon_turnstile_valid", "turnstile-one-use-token", "https://web.example.test"),
+      env,
+    );
+    const payload = (await response.json()) as SuccessPayload<PhotoUploadTicketData>;
+
+    assert.equal(response.status, 201);
+    assert.match(payload.data.ticket, /^[0-9a-f]{64}$/i);
+    assert.equal(siteverifyRequests.length, 1);
+    assert.equal(siteverifyRequests[0]?.url, "https://challenges.cloudflare.com/turnstile/v0/siteverify");
+    assert.equal(siteverifyRequests[0]?.body.response, "turnstile-one-use-token");
+    assert.equal(siteverifyRequests[0]?.body.remoteip, testPhotoClientIp);
+    assert.equal(siteverifyRequests[0]?.body.secret, testTurnstileSecret);
+    assert.match(String(siteverifyRequests[0]?.body.idempotency_key), /^[0-9a-f-]{36}$/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo ticket fails closed when Turnstile returns a mismatched action or hostname", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (): Promise<Response> => Response.json({
+    success: true,
+    hostname: "attacker.example.test",
+    action: "different_action",
+    "error-codes": [],
+  });
+
+  try {
+    const response = await worker.handleRequest(
+      photoTicketRequest("anon_turnstile_mismatch", "turnstile-mismatched-token", "https://web.example.test"),
+      {
+        DB: db,
+        ENVIRONMENT: "staging",
+        SILSIGAN_ANON_SESSION_REQUIRED: "0",
+        SILSIGAN_API_ALLOWED_ORIGINS: "https://web.example.test",
+        SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+        SILSIGAN_TURNSTILE_SITE_KEY: "turnstile-public-site-key",
+        SILSIGAN_TURNSTILE_SECRET_KEY: testTurnstileSecret,
+        SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET: testPhotoUploadSecret,
+        PHOTO_UPLOAD_RATE_LIMITER: new FakeRateLimitBinding(),
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 403);
+    assert.equal(payload.error.code, "PHOTO_TURNSTILE_VERIFICATION_FAILED");
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo ticket fails closed before D1 when Turnstile is unavailable", async () => {
+  let dbTouched = false;
+  const db = {
+    prepare() {
+      dbTouched = true;
+      throw new Error("D1 must not be reached when Turnstile is unavailable");
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (): Promise<Response> => {
+    throw new Error("provider unavailable");
+  };
+
+  try {
+    const response = await worker.handleRequest(
+      photoTicketRequest("anon_turnstile_unavailable", "turnstile-provider-down-token", "https://web.example.test"),
+      {
+        DB: db as never,
+        ENVIRONMENT: "staging",
+        SILSIGAN_ANON_SESSION_REQUIRED: "0",
+        SILSIGAN_API_ALLOWED_ORIGINS: "https://web.example.test",
+        SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+        SILSIGAN_TURNSTILE_SITE_KEY: "turnstile-public-site-key",
+        SILSIGAN_TURNSTILE_SECRET_KEY: testTurnstileSecret,
+        PHOTO_UPLOAD_RATE_LIMITER: new FakeRateLimitBinding(),
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "PHOTO_TURNSTILE_UNAVAILABLE");
+    assert.equal(dbTouched, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("staging photo upload accepts one signed ticket and rejects its replay", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding();
+  const env = securedPhotoEnv(db, r2, limiter);
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 32]);
+
+  try {
+    const ticket = await issueSecuredPhotoTicket(env, "anon_photo_ticket_replay", source);
+    const first = await completeSecuredPhoto(env, "anon_photo_ticket_replay", source, ticket);
+    const replay = await completeSecuredPhoto(env, "anon_photo_ticket_replay", source, ticket);
+    const replayPayload = (await replay.json()) as FailurePayload;
+    const claims = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_claims WHERE upload_id = ?").bind(ticket.uploadId).first<{ count: number }>();
+
+    assert.equal(first.status, 201);
+    assert.equal(replay.status, 409);
+    assert.equal(replayPayload.error.code, "PHOTO_UPLOAD_TICKET_REPLAYED");
+    assert.equal(r2.putObjects.length, 1);
+    assert.equal(claims?.count, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare photo rate limiter blocks a write before ticket claim and R2", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding([true, false]);
+  const env = securedPhotoEnv(db, r2, limiter);
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 33]);
+
+  try {
+    const ticket = await issueSecuredPhotoTicket(env, "anon_photo_edge_rate_limit", source);
+    const response = await completeSecuredPhoto(env, "anon_photo_edge_rate_limit", source, ticket);
+    const payload = (await response.json()) as FailurePayload;
+    const claims = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_claims WHERE upload_id = ?").bind(ticket.uploadId).first<{ count: number }>();
+
+    assert.equal(response.status, 429);
+    assert.equal(payload.error.code, "PHOTO_UPLOAD_RATE_LIMITED");
+    assert.equal(claims?.count, 0);
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("daily per-IP photo budget blocks a second upload before image processing and R2", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding();
+  const env = securedPhotoEnv(db, r2, limiter, { SILSIGAN_PHOTO_DAILY_UPLOAD_LIMIT: "1" });
+  const firstSource = new Uint8Array([...jpegWithGpsExifSample(), 34]);
+  const secondSource = new Uint8Array([...jpegWithGpsExifSample(), 35]);
+
+  try {
+    const firstTicket = await issueSecuredPhotoTicket(env, "anon_photo_daily_budget", firstSource);
+    const first = await completeSecuredPhoto(env, "anon_photo_daily_budget", firstSource, firstTicket);
+    const secondTicket = await issueSecuredPhotoTicket(env, "anon_photo_daily_budget", secondSource);
+    const second = await completeSecuredPhoto(env, "anon_photo_daily_budget", secondSource, secondTicket);
+    const payload = (await second.json()) as FailurePayload;
+
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 429);
+    assert.equal(payload.error.code, "PHOTO_DAILY_UPLOAD_LIMIT_EXHAUSTED");
+    assert.equal(r2.putObjects.length, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("photo read rate limiter blocks an R2 Class B read", async () => {
+  const anonymousId = "anon_photo_read_rate_limit";
+  const r2 = new FakeR2Bucket();
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 36]);
+  const complete = await worker.handleRequest(
+    new Request("https://api.test/api/photos/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-silsigan-anon-id": anonymousId },
+      body: JSON.stringify({
+        uploadId: "upload_read_rate_limit",
+        placeId: "busan-gwangalli",
+        byteSize: source.byteLength,
+        mimeType: "image/jpeg",
+        width: 1,
+        height: 1,
+        clientReencoded: true,
+        imageBase64: bytesToBase64(source),
+      }),
+    }),
+    { PHOTOS: r2 },
+  );
+  const completePayload = (await complete.json()) as SuccessPayload<PhotoCompleteData>;
+  const readLimiter = new FakeRateLimitBinding(false);
+  const read = await worker.handleRequest(
+    new Request(`https://api.test/api/photos/${completePayload.data.photo.id}/file`, {
+      headers: { "cf-connecting-ip": testPhotoClientIp },
+    }),
+    { PHOTOS: r2, PHOTO_READ_RATE_LIMITER: readLimiter },
+  );
+  const readPayload = (await read.json()) as FailurePayload;
+
+  assert.equal(complete.status, 201);
+  assert.equal(read.status, 429);
+  assert.equal(readPayload.error.code, "PHOTO_READ_RATE_LIMITED");
+  assert.equal(r2.getKeys.length, 0);
+});
+
+test("canonical photo cache prevents repeated R2 reads and cannot bypass the emergency stop", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const cache = new FakeWorkerCache();
+  const previousCaches = Object.getOwnPropertyDescriptor(globalThis, "caches");
+  Object.defineProperty(globalThis, "caches", {
+    configurable: true,
+    value: { default: cache },
+  });
+  const env = {
+    ...securedPhotoEnv(db, r2, new FakeRateLimitBinding(), { SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT: "5" }),
+    PHOTO_READ_RATE_LIMITER: new FakeRateLimitBinding(),
+  };
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 73]);
+  const waitUntilPromises: Array<Promise<unknown>> = [];
+  const ctx = {
+    waitUntil(promise: Promise<unknown>): void {
+      waitUntilPromises.push(promise);
+    },
+  };
+
+  try {
+    const ticket = await issueSecuredPhotoTicket(env, "anon_photo_cache", source);
+    const complete = await completeSecuredPhoto(env, "anon_photo_cache", source, ticket);
+    const completePayload = (await complete.json()) as SuccessPayload<PhotoCompleteData>;
+    await d1AdminPost(
+      db,
+      `https://api.test/api/admin/photos/${completePayload.data.photo.id}/moderation`,
+      { decision: "approved", reason: "cache safety fixture approved" },
+      { PHOTOS: r2 },
+      "test-moderator-token",
+    );
+
+    const first = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${completePayload.data.photo.id}/file?tracking=first`, {
+        headers: { "cf-connecting-ip": "203.0.113.70" },
+      }),
+      env,
+      ctx,
+    );
+    assert.equal(first.status, 200);
+    await first.arrayBuffer();
+    await Promise.all(waitUntilPromises.splice(0));
+
+    const second = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${completePayload.data.photo.id}/file?tracking=second`, {
+        headers: { "cf-connecting-ip": "203.0.113.70" },
+      }),
+      env,
+      ctx,
+    );
+    assert.equal(second.status, 200);
+    await second.arrayBuffer();
+
+    const budget = await db
+      .prepare("SELECT reads_in_day AS readsInDay FROM photo_read_budget WHERE id = 1")
+      .first<{ readsInDay: number }>();
+    const abuse = await db
+      .prepare("SELECT read_count AS readCount FROM photo_read_abuse_budget")
+      .first<{ readCount: number }>();
+    assert.equal(r2.getKeys.length, 1);
+    assert.equal(budget?.readsInDay, 1);
+    assert.equal(abuse?.readCount, 1);
+    assert.deepEqual(cache.putUrls, [`https://silsigan-photo-cache.invalid/v1/${completePayload.data.photo.id}`]);
+
+    const stop = await worker.handleRequest(
+      new Request("https://api.test/api/admin/photo-cost-guard", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-admin-token",
+          "x-silsigan-admin-subject": "cost-owner@example.test",
+        },
+        body: JSON.stringify({ uploadsEnabled: false, readsEnabled: false, reason: "cache bypass emergency stop" }),
+      }),
+      { ...env, ADMIN_TOKENS: testAdminTokens },
+    );
+    assert.equal(stop.status, 200);
+
+    const blocked = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${completePayload.data.photo.id}/file`, {
+        headers: { "cf-connecting-ip": "203.0.113.70" },
+      }),
+      env,
+      ctx,
+    );
+    const blockedPayload = (await blocked.json()) as FailurePayload;
+    assert.equal(blocked.status, 503);
+    assert.equal(blockedPayload.error.code, "PHOTO_READS_DISABLED");
+    assert.equal(r2.getKeys.length, 1);
+  } finally {
+    if (previousCaches) {
+      Object.defineProperty(globalThis, "caches", previousCaches);
+    } else {
+      Reflect.deleteProperty(globalThis, "caches");
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("per-IP daily photo read guard stops one attacker before the global R2 budget", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const env = {
+    ...securedPhotoEnv(db, r2, new FakeRateLimitBinding(), {
+      SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT: "1",
+      SILSIGAN_PHOTO_MONTHLY_READ_LIMIT: "100",
+      SILSIGAN_PHOTO_DAILY_READ_LIMIT: "100",
+    }),
+    PHOTO_READ_RATE_LIMITER: new FakeRateLimitBinding(),
+  };
+
+  try {
+    const photoIds: string[] = [];
+    for (const [index, suffix] of [74, 75].entries()) {
+      const source = new Uint8Array([...jpegWithGpsExifSample(), suffix]);
+      const ticket = await issueSecuredPhotoTicket(env, `anon_photo_ip_limit_${index}`, source);
+      const complete = await completeSecuredPhoto(env, `anon_photo_ip_limit_${index}`, source, ticket);
+      const payload = (await complete.json()) as SuccessPayload<PhotoCompleteData>;
+      photoIds.push(payload.data.photo.id);
+      await d1AdminPost(
+        db,
+        `https://api.test/api/admin/photos/${payload.data.photo.id}/moderation`,
+        { decision: "approved", reason: `IP budget fixture ${index} approved` },
+        { PHOTOS: r2 },
+        "test-moderator-token",
+      );
+    }
+
+    const first = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${photoIds[0]}/file`, {
+        headers: { "cf-connecting-ip": "203.0.113.71" },
+      }),
+      env,
+    );
+    const blocked = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${photoIds[1]}/file`, {
+        headers: { "cf-connecting-ip": "203.0.113.71" },
+      }),
+      env,
+    );
+    const blockedPayload = (await blocked.json()) as FailurePayload;
+    const budget = await db
+      .prepare("SELECT reads_in_day AS readsInDay FROM photo_read_budget WHERE id = 1")
+      .first<{ readsInDay: number }>();
+    const abuse = await db
+      .prepare("SELECT principal_hash AS principalHash, read_count AS readCount FROM photo_read_abuse_budget")
+      .first<{ principalHash: string; readCount: number }>();
+    const control = await db
+      .prepare("SELECT reads_enabled AS readsEnabled FROM photo_read_control WHERE id = 1")
+      .first<{ readsEnabled: number }>();
+
+    assert.equal(first.status, 200);
+    assert.equal(blocked.status, 429);
+    assert.equal(blockedPayload.error.code, "PHOTO_DAILY_IP_READ_LIMIT_EXHAUSTED");
+    assert.equal(r2.getKeys.length, 1);
+    assert.equal(budget?.readsInDay, 1);
+    assert.equal(abuse?.readCount, 1);
+    assert.match(abuse?.principalHash ?? "", /^hmac-sha256:[a-f0-9]{64}$/);
+    assert.equal(abuse?.principalHash.includes("203.0.113.71"), false);
+    assert.equal(control?.readsEnabled, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo read fails closed before R2 when the per-IP ledger is missing", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const env = {
+    ...securedPhotoEnv(db, r2, new FakeRateLimitBinding()),
+    PHOTO_READ_RATE_LIMITER: new FakeRateLimitBinding(),
+  };
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 76]);
+
+  try {
+    const ticket = await issueSecuredPhotoTicket(env, "anon_photo_missing_read_ledger", source);
+    const complete = await completeSecuredPhoto(env, "anon_photo_missing_read_ledger", source, ticket);
+    const payload = (await complete.json()) as SuccessPayload<PhotoCompleteData>;
+    await d1AdminPost(
+      db,
+      `https://api.test/api/admin/photos/${payload.data.photo.id}/moderation`,
+      { decision: "approved", reason: "missing read ledger fixture approved" },
+      { PHOTOS: r2 },
+      "test-moderator-token",
+    );
+    await db.prepare("DROP TABLE photo_read_abuse_budget").run();
+
+    const response = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${payload.data.photo.id}/file`, {
+        headers: { "cf-connecting-ip": "203.0.113.72" },
+      }),
+      env,
+    );
+    const responsePayload = (await response.json()) as FailurePayload;
+    const budget = await db
+      .prepare("SELECT reads_in_day AS readsInDay FROM photo_read_budget WHERE id = 1")
+      .first<{ readsInDay: number }>();
+
+    assert.equal(response.status, 503);
+    assert.equal(responsePayload.error.code, "PHOTO_READ_ABUSE_GUARD_UNAVAILABLE");
+    assert.equal(r2.getKeys.length, 0);
+    assert.equal(budget?.readsInDay, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global monthly Class B budget stops distributed photo reads at the conservative 80 percent threshold", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding();
+  const env = securedPhotoEnv(db, r2, limiter, {
+    SILSIGAN_PHOTO_MONTHLY_READ_LIMIT: "5",
+    COST_ALERT_WEBHOOK_URL: "https://alerts.example.test/silsigan/cost",
+  });
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 61]);
+  const waitUntilPromises: Array<Promise<unknown>> = [];
+  const sentRequests: Request[] = [];
+  const originalFetch = globalThis.fetch;
+  const ctx = {
+    waitUntil(promise: Promise<unknown>): void {
+      waitUntilPromises.push(promise);
+    },
+  };
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    sentRequests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({ ok: true }, { status: 202 });
+  };
+
+  try {
+    const ticket = await issueSecuredPhotoTicket(env, "anon_photo_global_read_budget", source);
+    const complete = await completeSecuredPhoto(env, "anon_photo_global_read_budget", source, ticket);
+    const completePayload = (await complete.json()) as SuccessPayload<PhotoCompleteData>;
+    await d1AdminPost(
+      db,
+      `https://api.test/api/admin/photos/${completePayload.data.photo.id}/moderation`,
+      { decision: "approved", reason: "read budget fixture approved" },
+      { PHOTOS: r2 },
+      "test-moderator-token",
+    );
+
+    const readEnv = { ...env, PHOTO_READ_RATE_LIMITER: new FakeRateLimitBinding() };
+    for (let index = 0; index < 4; index += 1) {
+      const response = await worker.handleRequest(
+        new Request(`https://api.test/api/photos/${completePayload.data.photo.id}/file`, {
+          headers: { "cf-connecting-ip": `203.0.113.${index + 10}` },
+        }),
+        readEnv,
+        ctx,
+      );
+      assert.equal(response.status, 200);
+    }
+
+    const blocked = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${completePayload.data.photo.id}/file`, {
+        headers: { "cf-connecting-ip": "198.51.100.50" },
+      }),
+      readEnv,
+      ctx,
+    );
+    const blockedPayload = (await blocked.json()) as FailurePayload;
+    await Promise.all(waitUntilPromises);
+    const guard = await worker.handleRequest(
+      new Request("https://api.test/api/admin/photo-cost-guard", {
+        headers: { "x-silsigan-admin-token": "test-admin-token" },
+      }),
+      { ...env, ADMIN_TOKENS: testAdminTokens },
+    );
+    const guardPayload = (await guard.json()) as SuccessPayload<PhotoCostGuardData>;
+
+    assert.equal(blocked.status, 503);
+    assert.equal(blockedPayload.error.code, "PHOTO_READS_DISABLED");
+    assert.equal(r2.getKeys.length, 4);
+    assert.equal(guardPayload.data.readsEnabled, false);
+    assert.equal(guardPayload.data.readsInPeriod, 4);
+    assert.equal(guardPayload.data.monthlyReadStopLimit, 4);
+    assert.equal(sentRequests.length, 1);
+    const alert = (await sentRequests[0]?.json()) as PhotoCostAlertPayload;
+    assert.equal(alert.type, "cost.photo-reads.stopped");
+    assert.equal(alert.reason, "automatic-80-percent-monthly-read-cost-guard");
+    assert.equal(alert.readsInPeriod, 4);
+    assert.equal(alert.monthlyReadStopLimit, 4);
+    assert.equal(JSON.stringify(alert).includes("203.0.113"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("daily D1 write budget stops distributed photo reads before the free daily write allowance", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding();
+  const env = securedPhotoEnv(db, r2, limiter, {
+    SILSIGAN_PHOTO_MONTHLY_READ_LIMIT: "100",
+    SILSIGAN_PHOTO_DAILY_READ_LIMIT: "5",
+    COST_ALERT_WEBHOOK_URL: "https://alerts.example.test/silsigan/cost",
+  });
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 62]);
+  const waitUntilPromises: Array<Promise<unknown>> = [];
+  const sentRequests: Request[] = [];
+  const originalFetch = globalThis.fetch;
+  const ctx = {
+    waitUntil(promise: Promise<unknown>): void {
+      waitUntilPromises.push(promise);
+    },
+  };
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    sentRequests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({ ok: true }, { status: 202 });
+  };
+
+  try {
+    const ticket = await issueSecuredPhotoTicket(env, "anon_photo_daily_read_budget", source);
+    const complete = await completeSecuredPhoto(env, "anon_photo_daily_read_budget", source, ticket);
+    const completePayload = (await complete.json()) as SuccessPayload<PhotoCompleteData>;
+    await d1AdminPost(
+      db,
+      `https://api.test/api/admin/photos/${completePayload.data.photo.id}/moderation`,
+      { decision: "approved", reason: "daily read budget fixture approved" },
+      { PHOTOS: r2 },
+      "test-moderator-token",
+    );
+
+    const readEnv = { ...env, PHOTO_READ_RATE_LIMITER: new FakeRateLimitBinding() };
+    for (let index = 0; index < 4; index += 1) {
+      const response = await worker.handleRequest(
+        new Request(`https://api.test/api/photos/${completePayload.data.photo.id}/file`, {
+          headers: { "cf-connecting-ip": `192.0.2.${index + 20}` },
+        }),
+        readEnv,
+        ctx,
+      );
+      assert.equal(response.status, 200);
+    }
+
+    const blocked = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${completePayload.data.photo.id}/file`, {
+        headers: { "cf-connecting-ip": "198.51.100.60" },
+      }),
+      readEnv,
+      ctx,
+    );
+    const blockedPayload = (await blocked.json()) as FailurePayload;
+    await Promise.all(waitUntilPromises);
+    const guard = await worker.handleRequest(
+      new Request("https://api.test/api/admin/photo-cost-guard", {
+        headers: { "x-silsigan-admin-token": "test-admin-token" },
+      }),
+      { ...env, ADMIN_TOKENS: testAdminTokens },
+    );
+    const guardPayload = (await guard.json()) as SuccessPayload<PhotoCostGuardData>;
+
+    assert.equal(blocked.status, 503);
+    assert.equal(blockedPayload.error.code, "PHOTO_READS_DISABLED");
+    assert.equal(r2.getKeys.length, 4);
+    assert.equal(guardPayload.data.readsEnabled, false);
+    assert.equal(guardPayload.data.readsInDay, 4);
+    assert.equal(guardPayload.data.dailyReadStopLimit, 4);
+    assert.equal(sentRequests.length, 1);
+    const alert = (await sentRequests[0]?.json()) as PhotoCostAlertPayload;
+    assert.equal(alert.type, "cost.photo-reads.stopped");
+    assert.equal(alert.reason, "automatic-80-percent-daily-read-cost-guard");
+    assert.equal(alert.readsInDay, 4);
+    assert.equal(alert.dailyReadStopLimit, 4);
+    assert.equal(JSON.stringify(alert).includes("192.0.2"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard degrades at 70 percent and keeps essential reads on a write-free snapshot", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = {
+    DB: db,
+    SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+    SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100",
+    SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+    SILSIGAN_D1_DAILY_WRITE_LIMIT: "1000",
+  };
+
+  try {
+    for (let index = 0; index < 7; index += 1) {
+      const response = await worker.handleRequest(new Request("https://api.test/api/places?limit=1"), env);
+      assert.equal(response.status, 200);
+    }
+    const control = await db
+      .prepare("SELECT mode, automatic_metric AS automaticMetric FROM api_cost_guard_control WHERE id = 1")
+      .first<{ mode: string; automaticMetric: string }>();
+    assert.deepEqual(control, { mode: "degraded", automaticMetric: "d1_rows_read" });
+
+    const fallbackResponse = await worker.handleRequest(
+      new Request("https://api.test/api/places?limit=1", {
+        headers: {
+          "x-silsigan-anon-id": "anon_invalid_public_header",
+          "x-silsigan-anon-proof": "invalid-proof",
+        },
+      }),
+      env,
+    );
+    const fallbackPayload = (await fallbackResponse.json()) as SuccessPayload<unknown[]>;
+    const dailyAfterFallback = await db
+      .prepare("SELECT reserved_rows_read AS reservedRowsRead FROM api_cost_guard_daily")
+      .first<{ reservedRowsRead: number }>();
+    assert.equal(fallbackResponse.status, 200);
+    assert.equal(fallbackPayload.meta?.storage, "memory-fallback");
+    assert.equal(dailyAfterFallback?.reservedRowsRead, 7000);
+
+    const nonessential = await worker.handleRequest(new Request("https://api.test/api/hashtags"), env);
+    const nonessentialPayload = (await nonessential.json()) as FailurePayload;
+    assert.equal(nonessential.status, 429);
+    assert.equal(nonessentialPayload.error.code, "API_COST_GUARD_DEGRADED");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard emits one redacted warning when usage first reaches 60 percent", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const warningWebhookUrl = "https://alerts.example.test/silsigan/api-cost-warning-fixture";
+  const sentRequests: Request[] = [];
+  const waitUntilPromises: Array<Promise<unknown>> = [];
+  const originalFetch = globalThis.fetch;
+  const ctx = {
+    waitUntil(promise: Promise<unknown>): void {
+      waitUntilPromises.push(promise);
+    },
+  };
+  const env = {
+    DB: db,
+    SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+    SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100",
+    SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+    SILSIGAN_D1_DAILY_WRITE_LIMIT: "1000",
+    COST_ALERT_WEBHOOK_URL: warningWebhookUrl,
+    COST_ALERT_WEBHOOK_TOKEN: "api-cost-alert-token-fixture",
+    ENVIRONMENT: "staging",
+  };
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    sentRequests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({ ok: true }, { status: 202 });
+  };
+
+  try {
+    for (let index = 0; index < 6; index += 1) {
+      const response = await worker.handleRequest(
+        new Request("https://api.test/api/places?limit=1", {
+          headers: { "cf-connecting-ip": `198.51.100.${index + 1}` },
+        }),
+        env,
+        ctx,
+      );
+      assert.equal(response.status, 200);
+    }
+    await Promise.all(waitUntilPromises);
+
+    const control = await db
+      .prepare("SELECT mode, generation FROM api_cost_guard_control WHERE id = 1")
+      .first<{ mode: string; generation: number }>();
+    assert.deepEqual(control, { mode: "running", generation: 1 });
+    const warningRequests = sentRequests.filter((request) => request.url === warningWebhookUrl);
+    const warningPayloads = await Promise.all(warningRequests.map((request) => request.clone().json()));
+    assert.equal(warningRequests.length, 1, JSON.stringify(warningPayloads));
+    assert.equal(warningRequests[0]?.headers.get("authorization"), "Bearer api-cost-alert-token-fixture");
+    const alert = (await warningRequests[0]?.json()) as ApiCostGuardAlertPayload;
+    assert.equal(alert.type, "cost.api-guard.warning");
+    assert.equal(alert.mode, "running");
+    assert.equal(alert.metric, "d1_rows_read");
+    assert.equal(alert.thresholdPercent, 60);
+    assert.equal(alert.generation, 1);
+    assert.equal(alert.environment, "staging");
+    assert.equal(alert.guardPath, "/api/admin/api-cost-guard");
+    assert.equal(JSON.stringify(alert).includes("198.51.100"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard preserves the final reserve for privacy deletion and stops at 80 percent", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const stopWebhookUrl = "https://alerts.example.test/silsigan/api-cost-stop-fixture";
+  const sentRequests: Request[] = [];
+  const waitUntilPromises: Array<Promise<unknown>> = [];
+  const originalFetch = globalThis.fetch;
+  const ctx = {
+    waitUntil(promise: Promise<unknown>): void {
+      waitUntilPromises.push(promise);
+    },
+  };
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    sentRequests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({ ok: true }, { status: 202 });
+  };
+
+  try {
+    const session = await issueVerifiedAnonymousSession(db);
+    const dayUtc = new Date().toISOString().slice(0, 10);
+    await db
+      .prepare(
+        `INSERT INTO api_cost_guard_daily (
+           day_utc, observed_workers_requests, observed_rows_read, observed_rows_written, updated_at
+         ) VALUES (?, 0, 7900, 0, ?)`,
+      )
+      .bind(dayUtc, new Date().toISOString())
+      .run();
+    await db
+      .prepare("UPDATE api_cost_guard_control SET mode = 'degraded', reason = 'test-70-percent', generation = 2 WHERE id = 1")
+      .run();
+    const env = {
+      DB: db,
+      SILSIGAN_ANON_SESSION_REQUIRED: "1",
+      SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+      SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100",
+      SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+      SILSIGAN_D1_DAILY_WRITE_LIMIT: "1000",
+      COST_ALERT_WEBHOOK_URL: stopWebhookUrl,
+      ENVIRONMENT: "staging",
+    };
+    const response = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/account/deletion", "POST", session, { confirmation: "DELETE_MY_ACCOUNT" }),
+      env,
+      ctx,
+    );
+    const payload = (await response.json()) as FailurePayload;
+    await Promise.all(waitUntilPromises);
+    const control = await db
+      .prepare("SELECT mode, automatic_metric AS automaticMetric FROM api_cost_guard_control WHERE id = 1")
+      .first<{ mode: string; automaticMetric: string }>();
+    const deletion = await db.prepare("SELECT COUNT(*) AS count FROM account_deletion_requests").first<{ count: number }>();
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "API_COST_GUARD_80_PERCENT_STOP");
+    assert.deepEqual(control, { mode: "stopped", automaticMetric: "d1_rows_read" });
+    assert.equal(deletion?.count, 0);
+    const stopRequests = sentRequests.filter((request) => request.url === stopWebhookUrl);
+    const stopPayloads = await Promise.all(stopRequests.map((request) => request.clone().json()));
+    assert.equal(stopRequests.length, 1, JSON.stringify(stopPayloads));
+    const alert = (await stopRequests[0]?.json()) as ApiCostGuardAlertPayload;
+    assert.equal(alert.type, "cost.api-guard.changed");
+    assert.equal(alert.mode, "stopped");
+    assert.equal(alert.metric, "d1_rows_read");
+    assert.equal(alert.thresholdPercent, 80);
+    assert.equal(alert.environment, "staging");
+    assert.equal(JSON.stringify(alert).includes(session.anonymousId), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard manual stop is audited and resume requires a fresh low-usage reconciliation", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = {
+    DB: db,
+    ADMIN_TOKENS: testAdminTokens,
+    SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+    SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100",
+    SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+    SILSIGAN_D1_DAILY_WRITE_LIMIT: "1000",
+    ADMIN_API_RATE_LIMITER: new FakeRateLimitBinding(),
+  };
+  const adminHeaders = {
+    "content-type": "application/json",
+    "cf-connecting-ip": "203.0.113.250",
+    "x-silsigan-admin-token": "test-admin-token",
+    "x-silsigan-admin-subject": "cost-owner@example.test",
+  };
+  const patchGuard = (body: Record<string, unknown>) => worker.handleRequest(
+    new Request("https://api.test/api/admin/api-cost-guard", {
+      method: "PATCH",
+      headers: adminHeaders,
+      body: JSON.stringify(body),
+    }),
+    env,
+  );
+
+  try {
+    const stopped = await patchGuard({ mode: "stopped", reason: "운영자 긴급 중단 테스트", expectedGeneration: 1 });
+    const stoppedPayload = (await stopped.json()) as SuccessPayload<{ control: { mode: string; generation: number } }>;
+    assert.equal(stopped.status, 200);
+    assert.deepEqual(stoppedPayload.data.control, {
+      ...stoppedPayload.data.control,
+      mode: "stopped",
+      generation: 2,
+    });
+
+    const prematureResume = await patchGuard({ mode: "running", reason: "사용량 확인 후 재개", expectedGeneration: 2 });
+    const prematurePayload = (await prematureResume.json()) as FailurePayload;
+    assert.equal(prematureResume.status, 409);
+    assert.equal(prematurePayload.error.code, "API_COST_GUARD_RECONCILIATION_REQUIRED");
+
+    const reconciled = await worker.handleRequest(
+      new Request("https://api.test/api/admin/api-cost-guard/reconciliations", {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          observedWorkersRequests: 10,
+          observedD1RowsRead: 1000,
+          observedD1RowsWritten: 100,
+          observedAt: new Date().toISOString(),
+          source: "cloudflare-dashboard",
+          note: "Cloudflare 대시보드 직접 대조",
+        }),
+      }),
+      env,
+    );
+    assert.equal(reconciled.status, 200);
+
+    const resumed = await patchGuard({ mode: "running", reason: "대조 완료 후 안전 재개", expectedGeneration: 2 });
+    const resumedPayload = (await resumed.json()) as SuccessPayload<{ control: { mode: string; generation: number } }>;
+    const audits = await db
+      .prepare("SELECT COUNT(*) AS count FROM admin_actions WHERE action_type = 'api_cost_guard' AND target_id = 'global'")
+      .first<{ count: number }>();
+    assert.equal(resumed.status, 200);
+    assert.equal(resumedPayload.data.control.mode, "running");
+    assert.equal(resumedPayload.data.control.generation, 3);
+    assert.equal(audits?.count, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard rechecks reconciliation and usage atomically when resuming", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const racingDb = new RaceInjectingSqliteD1Database(db);
+  const env = {
+    DB: racingDb,
+    ADMIN_TOKENS: testAdminTokens,
+    SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+    SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100",
+    SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+    SILSIGAN_D1_DAILY_WRITE_LIMIT: "1000",
+    ADMIN_API_RATE_LIMITER: new FakeRateLimitBinding(),
+  };
+  const headers = {
+    "content-type": "application/json",
+    "cf-connecting-ip": "203.0.113.253",
+    "x-silsigan-admin-token": "test-admin-token",
+  };
+  const patchGuard = (body: Record<string, unknown>) => worker.handleRequest(
+    new Request("https://api.test/api/admin/api-cost-guard", {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify(body),
+    }),
+    env,
+  );
+
+  try {
+    assert.equal(
+      (await patchGuard({ mode: "stopped", reason: "경쟁 조건 재현용 중단", expectedGeneration: 1 })).status,
+      200,
+    );
+    assert.equal(
+      (await worker.handleRequest(
+        new Request("https://api.test/api/admin/api-cost-guard/reconciliations", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            observedWorkersRequests: 10,
+            observedD1RowsRead: 1000,
+            observedD1RowsWritten: 100,
+            observedAt: new Date().toISOString(),
+            source: "cloudflare-dashboard",
+            note: "재개 직전 저사용량 대조",
+          }),
+        }),
+        env,
+      )).status,
+      200,
+    );
+
+    racingDb.beforeNextBatch(async () => {
+      await db
+        .prepare(
+          `UPDATE api_cost_guard_daily
+           SET reserved_workers_requests = 70, updated_at = ?
+           WHERE day_utc = ?`,
+        )
+        .bind(new Date().toISOString(), new Date().toISOString().slice(0, 10))
+        .run();
+    });
+    const response = await patchGuard({ mode: "running", reason: "경쟁 조건 안전 재개", expectedGeneration: 2 });
+    const payload = (await response.json()) as FailurePayload;
+    const control = await db
+      .prepare("SELECT mode, generation FROM api_cost_guard_control WHERE id = 1")
+      .first<{ mode: string; generation: number }>();
+
+    assert.equal(response.status, 409);
+    assert.equal(payload.error.code, "API_COST_GUARD_RECONCILIATION_FAILED");
+    assert.deepEqual(control, { mode: "stopped", generation: 2 });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard requires a dedicated edge limiter for high-cost reads", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/rankings/global", { headers: { "cf-connecting-ip": "198.51.100.250" } }),
+      { DB: db, SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1" },
+    );
+    const payload = (await response.json()) as FailurePayload;
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "HIGH_COST_API_RATE_LIMITER_UNAVAILABLE");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard does not let an operator reserve admin-only critical capacity", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/admin/users/restrict", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": "203.0.113.251",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify({ anonymousId: "anon_admin_reserve_fixture", reason: "권한 없는 예약 차단 검증" }),
+      }),
+      {
+        DB: db,
+        ADMIN_TOKENS: testAdminTokens,
+        SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+        ADMIN_API_RATE_LIMITER: new FakeRateLimitBinding(),
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+    const daily = await db.prepare("SELECT COUNT(*) AS count FROM api_cost_guard_daily").first<{ count: number }>();
+
+    assert.equal(response.status, 403);
+    assert.equal(payload.error.code, "INSUFFICIENT_ADMIN_ROLE");
+    assert.equal(daily?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard accounts for a forged anonymous proof before the D1 lookup fails", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/comments", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": "203.0.113.252",
+          "x-silsigan-anon-id": "anon_forged_cost_fixture",
+          "x-silsigan-anon-proof": "a".repeat(43),
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", body: "위조 증명 비용 검증" }),
+      }),
+      {
+        DB: db,
+        SILSIGAN_ANON_SESSION_REQUIRED: "1",
+        SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+    const daily = await db
+      .prepare(
+        `SELECT reserved_workers_requests AS reservedWorkersRequests,
+                reserved_rows_read AS reservedRowsRead,
+                reserved_rows_written AS reservedRowsWritten
+         FROM api_cost_guard_daily`,
+      )
+      .first<{ reservedWorkersRequests: number; reservedRowsRead: number; reservedRowsWritten: number }>();
+
+    assert.equal(response.status, 403);
+    assert.equal(payload.error.code, "ANONYMOUS_SESSION_PROOF_INVALID");
+    assert.equal(daily?.reservedWorkersRequests, 1);
+    assert.ok((daily?.reservedRowsRead ?? 0) >= 1);
+    assert.ok((daily?.reservedRowsWritten ?? 0) >= 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin emergency stop blocks signed uploads before R2 and remains auditable", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const env = securedPhotoEnv(db, r2, new FakeRateLimitBinding());
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 37]);
+
+  try {
+    const ticket = await issueSecuredPhotoTicket(env, "anon_photo_manual_stop", source);
+    const stop = await worker.handleRequest(
+      new Request("https://api.test/api/admin/photo-cost-guard", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-admin-token",
+          "x-silsigan-admin-subject": "cost-owner@example.test",
+        },
+        body: JSON.stringify({ uploadsEnabled: false, reason: "operator emergency stop test" }),
+      }),
+      { ...env, ADMIN_TOKENS: testAdminTokens },
+    );
+    const stopPayload = (await stop.json()) as SuccessPayload<PhotoCostGuardData>;
+    const blocked = await completeSecuredPhoto(env, "anon_photo_manual_stop", source, ticket);
+    const blockedPayload = (await blocked.json()) as FailurePayload;
+    const audit = await db
+      .prepare("SELECT action_type AS actionType, target_id AS targetId FROM admin_actions WHERE action_type = 'photo_cost_guard' ORDER BY created_at DESC LIMIT 1")
+      .first<{ actionType: string; targetId: string }>();
+
+    assert.equal(stop.status, 200);
+    assert.equal(stopPayload.data.uploadsEnabled, false);
+    assert.equal(stopPayload.data.readsEnabled, false);
+    assert.equal(blocked.status, 503);
+    assert.equal(blockedPayload.error.code, "PHOTO_UPLOADS_DISABLED");
+    assert.equal(r2.putObjects.length, 0);
+    assert.deepEqual(audit, { actionType: "photo_cost_guard", targetId: "global" });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin cost guard resume requires reconciliation and refuses counters at the 80 percent stop", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const env = securedPhotoEnv(db, r2, new FakeRateLimitBinding(), {
+    SILSIGAN_PHOTO_STORAGE_MAX_BYTES: "100",
+  });
+  const adminEnv = { ...env, ADMIN_TOKENS: testAdminTokens };
+  const adminHeaders = {
+    "content-type": "application/json",
+    "x-silsigan-admin-token": "test-admin-token",
+    "x-silsigan-admin-subject": "cost-owner@example.test",
+  };
+
+  try {
+    const patchGuard = (body: Record<string, unknown>) => worker.handleRequest(
+      new Request("https://api.test/api/admin/photo-cost-guard", {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify(body),
+      }),
+      adminEnv,
+    );
+
+    const stop = await patchGuard({ uploadsEnabled: false, readsEnabled: false, reason: "reconciliation test stop" });
+    assert.equal(stop.status, 200);
+
+    const missingAcknowledgement = await patchGuard({
+      uploadsEnabled: true,
+      readsEnabled: true,
+      reason: "resume without reconciliation",
+    });
+    const missingPayload = (await missingAcknowledgement.json()) as FailurePayload;
+    assert.equal(missingAcknowledgement.status, 400);
+    assert.equal(missingPayload.error.code, "PHOTO_COST_GUARD_RECONCILIATION_REQUIRED");
+
+    const resumed = await patchGuard({
+      uploadsEnabled: true,
+      readsEnabled: true,
+      reconciliationAcknowledged: true,
+      reason: "reconciled Cloudflare and D1 ledgers",
+    });
+    const resumedPayload = (await resumed.json()) as SuccessPayload<PhotoCostGuardData>;
+    assert.equal(resumed.status, 200);
+    assert.equal(resumedPayload.data.uploadsEnabled, true);
+    assert.equal(resumedPayload.data.readsEnabled, true);
+    const resumeAudit = await db
+      .prepare("SELECT reason FROM admin_actions WHERE action_type = 'photo_cost_guard' ORDER BY created_at DESC LIMIT 1")
+      .first<{ reason: string }>();
+    assert.match(resumeAudit?.reason ?? "", /reconciliation_acknowledged=1/);
+
+    const stoppedAgain = await patchGuard({ uploadsEnabled: false, readsEnabled: false, reason: "threshold refusal fixture stop" });
+    assert.equal(stoppedAgain.status, 200);
+    await db.prepare("UPDATE photo_storage_budget SET active_bytes = 80 WHERE id = 1").run();
+
+    const unsafeResume = await patchGuard({
+      uploadsEnabled: true,
+      readsEnabled: true,
+      reconciliationAcknowledged: true,
+      reason: "attempt resume at safety threshold",
+    });
+    const unsafePayload = (await unsafeResume.json()) as FailurePayload;
+    assert.equal(unsafeResume.status, 409);
+    assert.equal(unsafePayload.error.code, "PHOTO_COST_GUARD_RECONCILIATION_FAILED");
+    assert.deepEqual(unsafePayload.error.details, { blockedDimensions: ["storage"] });
+
+    const state = await worker.handleRequest(
+      new Request("https://api.test/api/admin/photo-cost-guard", {
+        headers: { "x-silsigan-admin-token": "test-admin-token" },
+      }),
+      adminEnv,
+    );
+    const statePayload = (await state.json()) as SuccessPayload<PhotoCostGuardData>;
+    assert.equal(statePayload.data.uploadsEnabled, false);
+    assert.equal(statePayload.data.readsEnabled, false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("80 percent cost guard stops uploads and sends one redacted webhook", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding();
+  const env = securedPhotoEnv(db, r2, limiter, {
+    SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT: "5",
+    COST_ALERT_WEBHOOK_URL: "https://alerts.example.test/silsigan/cost",
+    COST_ALERT_WEBHOOK_TOKEN: "cost-alert-token-fixture",
+  });
+  const originalFetch = globalThis.fetch;
+  const sentRequests: Request[] = [];
+  const waitUntilPromises: Array<Promise<unknown>> = [];
+  const ctx = {
+    waitUntil(promise: Promise<unknown>): void {
+      waitUntilPromises.push(promise);
+    },
+  };
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    sentRequests.push(input instanceof Request ? input : new Request(input, init));
+    return new Response(JSON.stringify({ ok: true }), { status: 202 });
+  };
+
+  try {
+    for (let index = 0; index < 4; index += 1) {
+      const source = new Uint8Array([...jpegWithGpsExifSample(), 40 + index]);
+      const ticket = await issueSecuredPhotoTicket(env, "anon_photo_cost_threshold", source);
+      const response = await completeSecuredPhoto(env, "anon_photo_cost_threshold", source, ticket, ctx);
+      assert.equal(response.status, 201);
+    }
+    await Promise.all(waitUntilPromises);
+
+    const statusResponse = await worker.handleRequest(
+      new Request("https://api.test/api/admin/photo-cost-guard", {
+        headers: { "x-silsigan-admin-token": "test-admin-token" },
+      }),
+      { ...env, ADMIN_TOKENS: testAdminTokens },
+    );
+    const statusPayload = (await statusResponse.json()) as SuccessPayload<PhotoCostGuardData>;
+    const blockedTicketResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-ticket", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": "anon_photo_cost_threshold",
+          "cf-connecting-ip": testPhotoClientIp,
+        },
+        body: JSON.stringify({
+          placeId: "busan-gwangalli",
+          mimeType: "image/jpeg",
+          byteSize: 100,
+          width: 1,
+          height: 1,
+          rightsAttested: true,
+          rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+        }),
+      }),
+      env,
+    );
+    const blockedTicketPayload = (await blockedTicketResponse.json()) as FailurePayload;
+
+    assert.equal(statusPayload.data.uploadsEnabled, false);
+    assert.equal(statusPayload.data.reason, "automatic-80-percent-cost-guard");
+    assert.equal(statusPayload.data.writesInPeriod, 4);
+    assert.equal(statusPayload.data.monthlyWriteStopLimit, 4);
+    assert.equal(blockedTicketResponse.status, 503);
+    assert.equal(blockedTicketPayload.error.code, "PHOTO_UPLOADS_DISABLED");
+    assert.equal(r2.putObjects.length, 4);
+    assert.equal(sentRequests.length, 1);
+    assert.equal(sentRequests[0]?.url, "https://alerts.example.test/silsigan/cost");
+    assert.equal(sentRequests[0]?.headers.get("authorization"), "Bearer cost-alert-token-fixture");
+
+    const alert = (await sentRequests[0]?.json()) as PhotoCostAlertPayload;
+    assert.equal(alert.type, "cost.photo-uploads.stopped");
+    assert.equal(alert.reason, "automatic-80-percent-cost-guard");
+    assert.equal(alert.environment, "staging");
+    assert.equal(alert.stopPercent, 80);
+    assert.equal(alert.writesInPeriod, 4);
+    assert.equal(alert.monthlyWriteStopLimit, 4);
+    assert.equal(alert.guardPath, "/api/admin/photo-cost-guard");
+    assert.equal(JSON.stringify(alert).includes("anon_photo_cost_threshold"), false);
+    assert.equal(JSON.stringify(alert).includes(testPhotoClientIp), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global Images transform budget blocks a pre-issued distributed upload before transformation", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const images = new FakeImagesBinding(jpegServerReencodedSample());
+  const env = {
+    ...securedPhotoEnv(db, r2, new FakeRateLimitBinding(), {
+      SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT: "1",
+    }),
+    IMAGES: images,
+  };
+  const firstSource = new Uint8Array([...jpegWithGpsExifSample(), 70]);
+  const secondSource = new Uint8Array([...jpegWithGpsExifSample(), 71]);
+
+  try {
+    const firstTicket = await issueSecuredPhotoTicket(env, "anon_photo_transform_budget_a", firstSource);
+    const secondTicket = await issueSecuredPhotoTicket(env, "anon_photo_transform_budget_b", secondSource);
+    const first = await completeSecuredPhoto(env, "anon_photo_transform_budget_a", firstSource, firstTicket);
+    const second = await completeSecuredPhoto(env, "anon_photo_transform_budget_b", secondSource, secondTicket);
+    const secondPayload = (await second.json()) as FailurePayload;
+    const guard = await worker.handleRequest(
+      new Request("https://api.test/api/admin/photo-cost-guard", {
+        headers: { "x-silsigan-admin-token": "test-admin-token" },
+      }),
+      { ...env, ADMIN_TOKENS: testAdminTokens },
+    );
+    const guardPayload = (await guard.json()) as SuccessPayload<PhotoCostGuardData>;
+
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 503);
+    assert.equal(secondPayload.error.code, "PHOTO_UPLOADS_DISABLED");
+    assert.equal(images.inputs.length, 1);
+    assert.equal(r2.putObjects.length, 1);
+    assert.equal(guardPayload.data.uploadsEnabled, false);
+    assert.equal(guardPayload.data.transformsInPeriod, 1);
+    assert.equal(guardPayload.data.monthlyTransformStopLimit, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging upload fails closed before Images when the transform ledger is missing", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const images = new FakeImagesBinding(jpegServerReencodedSample());
+  const env = { ...securedPhotoEnv(db, r2, new FakeRateLimitBinding()), IMAGES: images };
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 72]);
+
+  try {
+    const ticket = await issueSecuredPhotoTicket(env, "anon_photo_transform_ledger_missing", source);
+    await db.prepare("DROP TABLE photo_transform_budget").run();
+    const response = await completeSecuredPhoto(env, "anon_photo_transform_ledger_missing", source, ticket);
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "PHOTO_TRANSFORM_COST_GUARD_UNAVAILABLE");
+    assert.equal(images.inputs.length, 0);
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("photo complete reencodes pixels with Cloudflare Images binding before writing to R2", async () => {
   const anonymousId = "anon_photo_images_reencode_test";
   const r2 = new FakeR2Bucket();
@@ -5975,6 +11475,167 @@ test("D1 photo complete rejects duplicate sanitized image content before a secon
   }
 });
 
+test("D1 photo storage budget increments atomically, blocks before R2 writes, and releases bytes on delete", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const firstSource = new Uint8Array([...jpegWithGpsExifSample(), 11]);
+
+  try {
+    const firstResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_budget_first" },
+        body: JSON.stringify({
+          uploadId: "upload_budget_first",
+          placeId: "busan-gwangalli",
+          byteSize: firstSource.byteLength,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(firstSource),
+        }),
+      }),
+      {
+        DB: db,
+        PHOTOS: r2,
+        SILSIGAN_PHOTO_STORAGE_MAX_BYTES: "1000000",
+        SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT: "1",
+      },
+    );
+    const firstPayload = (await firstResponse.json()) as SuccessPayload<PhotoCompleteData>;
+    const firstGuard = firstPayload.meta?.photoCostGuard as
+      | { mode?: string; activeBytes?: number; storageMaxBytes?: number; writesInPeriod?: number; monthlyWriteLimit?: number }
+      | undefined;
+
+    assert.equal(firstResponse.status, 201);
+    assert.equal(r2.putObjects.length, 1);
+    assert.equal(firstGuard?.mode, "d1-atomic-free-tier-safety-ceiling");
+    assert.equal(firstGuard?.activeBytes, firstPayload.data.photo.byteSize);
+    assert.equal(firstGuard?.storageMaxBytes, 1_000_000);
+    assert.equal(firstGuard?.writesInPeriod, 1);
+    assert.equal(firstGuard?.monthlyWriteLimit, 1);
+
+    const afterCreate = await db
+      .prepare("SELECT active_bytes AS activeBytes, writes_in_period AS writesInPeriod FROM photo_storage_budget WHERE id = 1")
+      .first<{ activeBytes: number; writesInPeriod: number }>();
+    assert.equal(afterCreate?.activeBytes, firstPayload.data.photo.byteSize);
+    assert.equal(afterCreate?.writesInPeriod, 1);
+    await db
+      .prepare("UPDATE photo_upload_control SET uploads_enabled = 1, reason = 'test-monthly-hard-cap', updated_by = 'test' WHERE id = 1")
+      .run();
+
+    const secondSource = new Uint8Array([...jpegWithGpsExifSample(), 12]);
+    const monthlyBlocked = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_budget_second" },
+        body: JSON.stringify({
+          uploadId: "upload_budget_second",
+          placeId: "ulsan-taehwagang",
+          byteSize: secondSource.byteLength,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(secondSource),
+        }),
+      }),
+      {
+        DB: db,
+        PHOTOS: r2,
+        SILSIGAN_PHOTO_STORAGE_MAX_BYTES: "1000000",
+        SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT: "1",
+      },
+    );
+    const monthlyPayload = (await monthlyBlocked.json()) as FailurePayload;
+    assert.equal(monthlyBlocked.status, 429);
+    assert.equal(monthlyPayload.error.code, "PHOTO_MONTHLY_WRITE_BUDGET_EXHAUSTED");
+    assert.equal(r2.putObjects.length, 1);
+
+    const deleteResponse = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${firstPayload.data.photo.id}`, {
+        method: "DELETE",
+        headers: { "x-silsigan-anon-id": "anon_photo_budget_first" },
+      }),
+      { DB: db, PHOTOS: r2 },
+    );
+    assert.equal(deleteResponse.status, 200);
+    const afterDelete = await db
+      .prepare("SELECT active_bytes AS activeBytes, writes_in_period AS writesInPeriod FROM photo_storage_budget WHERE id = 1")
+      .first<{ activeBytes: number; writesInPeriod: number }>();
+    assert.equal(afterDelete?.activeBytes, 0);
+    assert.equal(afterDelete?.writesInPeriod, 1);
+    await db
+      .prepare("UPDATE photo_upload_control SET uploads_enabled = 1, reason = 'test-storage-hard-cap', updated_by = 'test' WHERE id = 1")
+      .run();
+
+    const storageBlockedSource = new Uint8Array([...jpegWithGpsExifSample(), 13]);
+    const storageBlocked = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_budget_storage" },
+        body: JSON.stringify({
+          uploadId: "upload_budget_storage",
+          placeId: "busan-gwangalli",
+          byteSize: storageBlockedSource.byteLength,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(storageBlockedSource),
+        }),
+      }),
+      {
+        DB: db,
+        PHOTOS: r2,
+        SILSIGAN_PHOTO_STORAGE_MAX_BYTES: "0",
+        SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT: "20000",
+      },
+    );
+    const storagePayload = (await storageBlocked.json()) as FailurePayload;
+    assert.equal(storageBlocked.status, 429);
+    assert.equal(storagePayload.error.code, "PHOTO_STORAGE_BUDGET_EXHAUSTED");
+    assert.equal(r2.putObjects.length, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo upload fails closed before R2 when the cost ledger migration is missing", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 21]);
+
+  try {
+    await db.prepare("DROP TABLE photo_storage_budget").run();
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_budget_missing" },
+        body: JSON.stringify({
+          uploadId: "upload_budget_missing",
+          placeId: "busan-gwangalli",
+          byteSize: source.byteLength,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(source),
+        }),
+      }),
+      { DB: db, PHOTOS: r2 },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "PHOTO_COST_GUARD_UNAVAILABLE");
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("worker generic errors do not echo secrets or raw sensitive values", async () => {
   const leakText = "fixture-token-leakySecretForTestOnly anon_sensitive_test real-camera-name.jpg 35.1532,129.1186";
   const response = await worker.handleRequest(
@@ -6010,13 +11671,22 @@ test("worker generic errors do not echo secrets or raw sensitive values", async 
 
 test("photo upload-url, list, and delete routes enforce anonymous ownership", async () => {
   const anonymousId = "anon_photo_routes_test";
-  const upload = await post<SuccessPayload<{ uploadId: string; storageKey: string }>>("https://api.test/api/photos/upload-url", anonymousId, {
+  const uploadResponse = await rawPost("https://api.test/api/photos/upload-url", anonymousId, {
     placeId: "busan-gwangalli",
     mimeType: "image/webp",
+    byteSize: 100_000,
+    width: 800,
+    height: 600,
+    rightsAttested: true,
+    rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
   });
+  assert.equal(uploadResponse.headers.get("deprecation"), "true");
+  assert.equal(uploadResponse.headers.get("x-silsigan-photo-contract"), "legacy");
+  assert.equal(uploadResponse.headers.get("link"), '</api/photos/upload-ticket>; rel="successor-version"');
+  const upload = (await uploadResponse.json()) as SuccessPayload<{ uploadId: string; storageKey: string }>;
   assert.match(upload.data.storageKey, /^photos\/busan\/busan-gwangalli\/\d{4}\/\d{2}\/.+\.webp$/);
 
-  const complete = await post<SuccessPayload<PhotoCompleteData>>("https://api.test/api/photos/complete", anonymousId, {
+  const completeResponse = await rawPost("https://api.test/api/photos/complete", anonymousId, {
     uploadId: upload.data.uploadId,
     placeId: "busan-gwangalli",
     byteSize: 100_000,
@@ -6025,6 +11695,10 @@ test("photo upload-url, list, and delete routes enforce anonymous ownership", as
     height: 600,
     clientReencoded: true,
   });
+  assert.equal(completeResponse.headers.get("deprecation"), "true");
+  assert.equal(completeResponse.headers.get("x-silsigan-photo-contract"), "legacy");
+  assert.equal(completeResponse.headers.get("link"), '</api/photos/upload>; rel="successor-version"');
+  const complete = (await completeResponse.json()) as SuccessPayload<PhotoCompleteData>;
   const photos = await get<SuccessPayload<Array<{ id: string }>>>("https://api.test/api/photos?placeId=busan-gwangalli", anonymousId);
   assert.ok(photos.data.some((photo) => photo.id === complete.data.photo.id));
 
@@ -6036,6 +11710,111 @@ test("photo upload-url, list, and delete routes enforce anonymous ownership", as
 
   const photosAfterDelete = await get<SuccessPayload<Array<{ id: string }>>>("https://api.test/api/photos?placeId=busan-gwangalli", anonymousId);
   assert.equal(photosAfterDelete.data.some((photo) => photo.id === complete.data.photo.id), false);
+});
+
+test("D1 photo deletion hides the row and deletes its R2 object", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_photo_delete_r2_test";
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 1]);
+
+  try {
+    const createResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": anonymousId },
+        body: JSON.stringify({
+          uploadId: "upload_delete_r2",
+          placeId: "busan-gwangalli",
+          byteSize: source.byteLength,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(source),
+        }),
+      }),
+      { DB: db, PHOTOS: r2 },
+    );
+    const created = (await createResponse.json()) as SuccessPayload<PhotoCompleteData>;
+    const deleteResponse = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${created.data.photo.id}`, {
+        method: "DELETE",
+        headers: { "x-silsigan-anon-id": anonymousId },
+      }),
+      { DB: db, PHOTOS: r2 },
+    );
+    const deletePayload = (await deleteResponse.json()) as SuccessPayload<{ deleted: boolean; storageDeleted: boolean; cleanupQueued: boolean }>;
+
+    assert.equal(deleteResponse.status, 200);
+    assert.equal(deletePayload.data.deleted, true);
+    assert.equal(deletePayload.data.storageDeleted, true);
+    assert.equal(deletePayload.data.cleanupQueued, false);
+    assert.ok(r2.deletedKeys.includes(created.data.storageKey));
+
+    const fileResponse = await worker.handleRequest(
+      new Request(`https://api.test/api/photos/${created.data.photo.id}/file`),
+      { DB: db, PHOTOS: r2 },
+    );
+    assert.equal(fileResponse.status, 404);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent owner photo deletes release one R2 object and one storage budget entry", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_concurrent_photo_delete";
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 2]);
+
+  try {
+    const createResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": anonymousId },
+        body: JSON.stringify({
+          uploadId: "upload_concurrent_delete",
+          placeId: "busan-gwangalli",
+          byteSize: source.byteLength,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(source),
+        }),
+      }),
+      { DB: db, PHOTOS: r2 },
+    );
+    const created = (await createResponse.json()) as SuccessPayload<PhotoCompleteData>;
+    const storedByteSize = created.data.photo.byteSize;
+    await db.prepare("UPDATE photo_storage_budget SET active_bytes = ? WHERE id = 1").bind(storedByteSize * 2).run();
+
+    const responses = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        worker.handleRequest(
+          new Request(`https://api.test/api/photos/${created.data.photo.id}`, {
+            method: "DELETE",
+            headers: { "x-silsigan-anon-id": anonymousId },
+          }),
+          { DB: db, PHOTOS: r2 },
+        )),
+    );
+    const statuses = responses.map((response) => response.status);
+    const budget = await db.prepare("SELECT active_bytes AS activeBytes FROM photo_storage_budget WHERE id = 1").first<{ activeBytes: number }>();
+    const releases = await db
+      .prepare("SELECT storage_key AS storageKey, byte_size AS byteSize FROM photo_storage_releases WHERE storage_key = ?")
+      .bind(created.data.storageKey)
+      .all<{ storageKey: string; byteSize: number }>();
+
+    assert.equal(statuses.filter((status) => status === 200).length, 1);
+    assert.equal(statuses.filter((status) => status === 404).length, 19);
+    assert.deepEqual(r2.deletedKeys, [created.data.storageKey]);
+    assert.equal(budget?.activeBytes, storedByteSize);
+    assert.deepEqual(releases.results, [{ storageKey: created.data.storageKey, byteSize: storedByteSize }]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("comment delete and realtime path aliases are available", async () => {
@@ -6144,6 +11923,18 @@ test("Durable Object realtime WebSocket connections receive broadcast events", a
     assert.equal(response.status, 101);
     assert.equal(websocketResponse.webSocket, pairs[0]?.client);
 
+    const namespace = new FakeDurableObjectNamespace(() => new worker.PlaceRoom());
+    const routedResponse = await worker.handleRequest(
+      new Request("https://api.test/api/realtime/place/busan-gwangalli", {
+        headers: { Upgrade: "websocket" },
+      }),
+      { PLACE_ROOM: namespace },
+    );
+    const routedWebSocketResponse = routedResponse as Response & { webSocket?: FakeWorkerWebSocket };
+    assert.equal(routedResponse.status, 101);
+    assert.equal(routedWebSocketResponse.webSocket, pairs[1]?.client);
+    assert.match(routedResponse.headers.get("x-silsigan-anon-id") ?? "", /^anon_[a-f0-9-]{36}$/);
+
     const broadcast = await room.fetch(
       new Request("https://api.test/api/realtime/broadcast?roomId=busan-gwangalli", {
         method: "POST",
@@ -6169,6 +11960,9 @@ test("Durable Object realtime WebSocket connections receive broadcast events", a
       payload: { id: "comment_ws_1", placeId: "busan-gwangalli" },
       createdAt: "2026-06-24T00:00:00.000Z",
     });
+    pairs[0]?.server.emitMessage("attacker-broadcast-attempt");
+    assert.equal(pairs[0]?.server.readyState, 3);
+    assert.equal(pairs[0]?.client.receivedMessages.length, 1);
   } finally {
     if (hadWebSocketPair) {
       Object.defineProperty(globalThis, "WebSocketPair", {
@@ -6179,6 +11973,217 @@ test("Durable Object realtime WebSocket connections receive broadcast events", a
       Reflect.deleteProperty(globalThis, "WebSocketPair");
     }
   }
+});
+
+test("Durable Object realtime WebSockets use hibernation state and reject client frames", async () => {
+  const previousWebSocketPair = Reflect.get(globalThis, "WebSocketPair");
+  const hadWebSocketPair = Object.prototype.hasOwnProperty.call(globalThis, "WebSocketPair");
+  const pairs: FakeWebSocketPair[] = [];
+  class TestWebSocketPair extends FakeWebSocketPair {
+    constructor() {
+      super();
+      pairs.push(this);
+    }
+  }
+
+  Object.defineProperty(globalThis, "WebSocketPair", {
+    configurable: true,
+    value: TestWebSocketPair,
+  });
+
+  try {
+    const state = new FakeDurableObjectState();
+    const room = new worker.PlaceRoom(state);
+    const response = await room.fetch(
+      new Request("https://api.test/api/realtime/place/busan-gwangalli?roomId=busan-gwangalli", {
+        headers: { Upgrade: "websocket" },
+      }),
+    );
+
+    assert.equal(response.status, 101);
+    assert.equal(state.acceptedSockets.length, 1);
+    assert.equal(state.acceptedSockets[0], pairs[0]?.server);
+
+    const broadcast = await room.fetch(
+      new Request("https://api.test/api/realtime/broadcast?roomId=busan-gwangalli", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "photo.ready",
+          scope: "place",
+          roomId: "busan-gwangalli",
+          payload: { id: "photo_hibernation_1", placeId: "busan-gwangalli" },
+          createdAt: "2026-07-19T00:00:00.000Z",
+        }),
+      }),
+    );
+    const payload = (await broadcast.json()) as SuccessPayload<{ delivered: number }>;
+
+    assert.equal(payload.data.delivered, 1);
+    assert.equal(pairs[0]?.client.receivedMessages.length, 1);
+
+    room.webSocketMessage(pairs[0]!.server);
+    assert.deepEqual(pairs[0]?.server.closeCalls, [{ code: 1008, reason: "read-only-channel" }]);
+    assert.equal(state.getWebSockets().length, 0);
+  } finally {
+    if (hadWebSocketPair) {
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: previousWebSocketPair,
+      });
+    } else {
+      Reflect.deleteProperty(globalThis, "WebSocketPair");
+    }
+  }
+});
+
+test("Durable Object realtime polling survives hibernation reinitialization", async () => {
+  const storage = new FakeDurableObjectStorage();
+  const writer = new worker.PlaceRoom(new FakeDurableObjectState(storage));
+  const createdAt = new Date().toISOString();
+  const broadcast = await writer.fetch(
+    new Request("https://api.test/api/realtime/broadcast?roomId=busan-gwangalli", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "report.created",
+        scope: "place",
+        roomId: "busan-gwangalli",
+        payload: { reportId: "report_hibernation_1", placeId: "busan-gwangalli" },
+        createdAt,
+      }),
+    }),
+  );
+  assert.equal(broadcast.status, 200);
+  assert.deepEqual(storage.putKeys, ["recent-events:v1"]);
+  assert.ok(storage.alarmAt && storage.alarmAt > Date.now());
+
+  const rehydrated = new worker.PlaceRoom(new FakeDurableObjectState(storage));
+  const polling = await rehydrated.fetch(
+    new Request("https://api.test/api/realtime/place/busan-gwangalli?roomId=busan-gwangalli"),
+  );
+  const payload = (await polling.json()) as SuccessPayload<{
+    mode: string;
+    events: Array<{ type: string; payload: { reportId?: string } }>;
+  }>;
+
+  assert.equal(payload.data.mode, "durable-object-polling");
+  assert.equal(payload.data.events.length, 1);
+  assert.equal(payload.data.events[0]?.type, "report.created");
+  assert.equal(payload.data.events[0]?.payload.reportId, "report_hibernation_1");
+});
+
+test("Durable Object realtime alarm removes retained polling events", async () => {
+  const storage = new FakeDurableObjectStorage();
+  const writer = new worker.PlaceRoom(new FakeDurableObjectState(storage));
+  const broadcast = await writer.fetch(
+    new Request("https://api.test/api/realtime/broadcast?roomId=busan-gwangalli", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "heartbeat",
+        scope: "place",
+        roomId: "busan-gwangalli",
+        payload: { placeId: "busan-gwangalli" },
+        createdAt: new Date().toISOString(),
+      }),
+    }),
+  );
+  assert.equal(broadcast.status, 200);
+
+  await writer.alarm();
+  assert.deepEqual(storage.deleteKeys, ["recent-events:v1"]);
+
+  const rehydrated = new worker.PlaceRoom(new FakeDurableObjectState(storage));
+  const polling = await rehydrated.fetch(
+    new Request("https://api.test/api/realtime/place/busan-gwangalli?roomId=busan-gwangalli"),
+  );
+  const payload = (await polling.json()) as SuccessPayload<{ events: unknown[] }>;
+  assert.deepEqual(payload.data.events, []);
+});
+
+test("Durable Object realtime persistence rejects oversized events before storage", async () => {
+  const storage = new FakeDurableObjectStorage();
+  const room = new worker.PlaceRoom(new FakeDurableObjectState(storage));
+
+  await assert.rejects(
+    () => room.fetch(
+      new Request("https://api.test/api/realtime/broadcast?roomId=busan-gwangalli", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "heartbeat",
+          scope: "place",
+          roomId: "busan-gwangalli",
+          payload: { padding: "x".repeat(17 * 1024) },
+          createdAt: "2026-07-19T00:00:00.000Z",
+        }),
+      }),
+    ),
+    /실시간 이벤트 크기가 허용 범위를 초과했습니다/,
+  );
+  assert.deepEqual(storage.putKeys, []);
+});
+
+test("Durable Object realtime rooms cap concurrent sockets before allocating another connection", async () => {
+  const previousWebSocketPair = Reflect.get(globalThis, "WebSocketPair");
+  const hadWebSocketPair = Object.prototype.hasOwnProperty.call(globalThis, "WebSocketPair");
+  Object.defineProperty(globalThis, "WebSocketPair", {
+    configurable: true,
+    value: FakeWebSocketPair,
+  });
+
+  try {
+    const room = new worker.PlaceRoom();
+    for (let index = 0; index < 100; index += 1) {
+      const response = await room.fetch(
+        new Request("https://api.test/api/realtime/place/busan-gwangalli?roomId=busan-gwangalli", {
+          headers: { Upgrade: "websocket" },
+        }),
+      );
+      assert.equal(response.status, 101);
+    }
+
+    const rejected = await room.fetch(
+      new Request("https://api.test/api/realtime/place/busan-gwangalli?roomId=busan-gwangalli", {
+        headers: { Upgrade: "websocket" },
+      }),
+    );
+    const payload = (await rejected.json()) as FailurePayload;
+    assert.equal(rejected.status, 429);
+    assert.equal(payload.error.code, "REALTIME_ROOM_CAPACITY_REACHED");
+  } finally {
+    if (hadWebSocketPair) {
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: previousWebSocketPair,
+      });
+    } else {
+      Reflect.deleteProperty(globalThis, "WebSocketPair");
+    }
+  }
+});
+
+test("realtime routing rejects unregistered room ids before allocating Durable Objects", async () => {
+  const namespace = new FakeDurableObjectNamespace(() => new worker.PlaceRoom());
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/realtime/place/attacker-created-room"),
+    { PLACE_ROOM: namespace },
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 404);
+  assert.equal(payload.error.code, "PLACE_NOT_FOUND");
+  assert.equal(namespace.roomCount, 0);
+
+  const malformedGlobal = await worker.handleRequest(
+    new Request("https://api.test/api/realtime/global/attacker-created-room"),
+    { GLOBAL_ROOM: namespace },
+  );
+  const malformedGlobalPayload = (await malformedGlobal.json()) as FailurePayload;
+  assert.equal(malformedGlobal.status, 404);
+  assert.equal(malformedGlobalPayload.error.code, "ROOM_NOT_FOUND");
+  assert.equal(namespace.roomCount, 0);
 });
 
 test("place like broadcasts a realtime room event", async () => {
@@ -6330,6 +12335,79 @@ test("Cloudflare API client sends moderation reports to the Worker moderation en
   assert.deepEqual(requestedUrls, ["https://api.test/api/moderation/reports"]);
 });
 
+test("Cloudflare API client uses the binary upload-ticket contract", async () => {
+  const requests: Array<{ path: string; method: string; contentType: string | null; isFormData: boolean }> = [];
+  const client = createCloudflareApiClient({
+    baseUrl: "https://api.test",
+    anonymousId: "anon_client_photo_test",
+    fetcher: async (input, init) => {
+      const url = new URL(input.toString());
+      requests.push({
+        path: url.pathname,
+        method: init?.method ?? "GET",
+        contentType: new Headers(init?.headers).get("content-type"),
+        isFormData: init?.body instanceof FormData,
+      });
+
+      if (url.pathname === "/api/photos/upload-ticket") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              uploadId: "upload_client_photo",
+              method: "POST",
+              uploadUrl: "/api/photos/upload",
+              storageKey: "photos/opaque-key",
+              rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+            },
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            photo: {
+              id: "photo_client_binary",
+              placeId: "busan-gwangalli",
+              previewUrl: null,
+              mimeType: "image/jpeg",
+              byteSize: 3,
+              width: 1,
+              height: 1,
+              clickCount: 0,
+              status: "pending",
+              createdAt: "2026-07-14T00:00:00.000Z",
+            },
+            storageKey: "photos/opaque-key",
+          },
+        }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const result = await client.uploadPhoto({
+    placeId: "busan-gwangalli",
+    byteSize: 3,
+    mimeType: "image/jpeg",
+    width: 1,
+    height: 1,
+    clientReencoded: true,
+    rightsAttested: true,
+    rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+    blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }),
+  });
+
+  assert.equal(result.data.photo.id, "photo_client_binary");
+  assert.deepEqual(requests, [
+    { path: "/api/photos/upload-ticket", method: "POST", contentType: "application/json", isFormData: false },
+    { path: "/api/photos/upload", method: "POST", contentType: null, isFormData: true },
+  ]);
+});
+
 test("Cloudflare API client supports scoped ranking query params", async () => {
   const requestedUrls: string[] = [];
   const client = createCloudflareApiClient({
@@ -6362,6 +12440,45 @@ test("Cloudflare API client supports scoped ranking query params", async () => {
   assert.equal(requestedUrl.searchParams.get("areaId"), "busan-suyeong");
   assert.equal(requestedUrl.searchParams.get("categoryId"), "tourism");
   assert.equal(requestedUrl.searchParams.get("bbox"), "129.0,35.0,129.2,35.2");
+});
+
+test("Cloudflare API client supports scoped hashtag photo media pagination", async () => {
+  const requestedUrls: string[] = [];
+  const client = createCloudflareApiClient({
+    baseUrl: "https://api.test",
+    fetcher: async (input) => {
+      requestedUrls.push(input.toString());
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: [],
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  await client.listHashtags({
+    name: "광안리지금",
+    regionId: "busan",
+    placeId: "busan-gwangalli",
+    hasPhoto: true,
+    activeOnly: true,
+    sort: "recent",
+    cursor: "2026-07-19T00:00:00.000Z|field_report_100",
+    limit: 100,
+  });
+
+  const requestedUrl = new URL(requestedUrls[0] ?? "");
+  assert.equal(requestedUrl.pathname, "/api/hashtags");
+  assert.equal(requestedUrl.searchParams.get("name"), "광안리지금");
+  assert.equal(requestedUrl.searchParams.get("regionId"), "busan");
+  assert.equal(requestedUrl.searchParams.get("placeId"), "busan-gwangalli");
+  assert.equal(requestedUrl.searchParams.get("hasPhoto"), "true");
+  assert.equal(requestedUrl.searchParams.get("activeOnly"), "true");
+  assert.equal(requestedUrl.searchParams.get("sort"), "recent");
+  assert.equal(requestedUrl.searchParams.get("cursor"), "2026-07-19T00:00:00.000Z|field_report_100");
+  assert.equal(requestedUrl.searchParams.get("limit"), "100");
 });
 
 test("Cloudflare API client supports place like and realtime room endpoints", async () => {
@@ -6498,6 +12615,122 @@ function rawPost(url: string, anonymousId: string, body: Record<string, unknown>
   );
 }
 
+function photoTicketRequest(anonymousId: string, turnstileToken?: string, origin?: string): Request {
+  return new Request("https://api.test/api/photos/upload-ticket", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-silsigan-anon-id": anonymousId,
+      "cf-connecting-ip": testPhotoClientIp,
+      ...(origin ? { origin } : {}),
+    },
+    body: JSON.stringify({
+      placeId: "busan-gwangalli",
+      mimeType: "image/jpeg",
+      byteSize: 256,
+      width: 1,
+      height: 1,
+      rightsAttested: true,
+      rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+      ...(turnstileToken ? { turnstileToken } : {}),
+    }),
+  });
+}
+
+function securedPhotoEnv(
+  db: SqliteD1Database,
+  r2: FakeR2Bucket,
+  limiter: FakeRateLimitBinding,
+  overrides: Partial<{
+    SILSIGAN_PHOTO_DAILY_UPLOAD_LIMIT: string;
+    SILSIGAN_PHOTO_DAILY_BYTES_LIMIT: string;
+    SILSIGAN_PHOTO_STORAGE_MAX_BYTES: string;
+    SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT: string;
+    SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT: string;
+    SILSIGAN_PHOTO_MONTHLY_READ_LIMIT: string;
+    SILSIGAN_PHOTO_DAILY_READ_LIMIT: string;
+    SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT: string;
+    COST_ALERT_WEBHOOK_URL: string;
+    COST_ALERT_WEBHOOK_TOKEN: string;
+  }> = {},
+) {
+  return {
+    DB: db,
+    PHOTOS: r2,
+    ENVIRONMENT: "staging",
+    SILSIGAN_ANON_SESSION_REQUIRED: "0",
+    SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET: testPhotoUploadSecret,
+    PHOTO_UPLOAD_RATE_LIMITER: limiter,
+    ...overrides,
+  };
+}
+
+async function issueSecuredPhotoTicket(
+  env: ReturnType<typeof securedPhotoEnv>,
+  anonymousId: string,
+  source: Uint8Array,
+): Promise<PhotoUploadTicketData> {
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload-ticket", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-anon-id": anonymousId,
+        "cf-connecting-ip": testPhotoClientIp,
+      },
+      body: JSON.stringify({
+        placeId: "busan-gwangalli",
+        mimeType: "image/jpeg",
+        byteSize: source.byteLength,
+        width: 1,
+        height: 1,
+        rightsAttested: true,
+        rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+      }),
+    }),
+    env,
+  );
+  assert.equal(response.status, 201);
+  const payload = (await response.json()) as SuccessPayload<PhotoUploadTicketData>;
+  assert.match(payload.data.uploadId, /^upload_[0-9a-f-]{36}$/i);
+  assert.match(payload.data.ticket, /^[0-9a-f]{64}$/i);
+  assert.ok(Date.parse(payload.data.expiresAt) > Date.now());
+  return payload.data;
+}
+
+function completeSecuredPhoto(
+  env: ReturnType<typeof securedPhotoEnv>,
+  anonymousId: string,
+  source: Uint8Array,
+  ticket: PhotoUploadTicketData,
+  ctx?: { waitUntil: (promise: Promise<unknown>) => void },
+): Promise<Response> {
+  return worker.handleRequest(
+    new Request("https://api.test/api/photos/complete", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-anon-id": anonymousId,
+        "cf-connecting-ip": testPhotoClientIp,
+      },
+      body: JSON.stringify({
+        uploadId: ticket.uploadId,
+        ticket: ticket.ticket,
+        ticketExpiresAt: ticket.expiresAt,
+        placeId: "busan-gwangalli",
+        byteSize: source.byteLength,
+        mimeType: "image/jpeg",
+        width: 1,
+        height: 1,
+        clientReencoded: true,
+        imageBase64: bytesToBase64(source),
+      }),
+    }),
+    env,
+    ctx,
+  );
+}
+
 function createSeededSqliteD1(): { db: SqliteD1Database; tempDir: string } {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-worker-"));
   const dbPath = join(tempDir, "worker.db");
@@ -6509,6 +12742,24 @@ function createSeededSqliteD1(): { db: SqliteD1Database; tempDir: string } {
   });
 
   return { db: new SqliteD1Database(dbPath), tempDir };
+}
+
+async function enableD1FeatureFlags(
+  db: SqliteD1Database,
+  flags: readonly string[],
+  scopeType: "global" | "region" = "global",
+  scopeKey = "*",
+): Promise<void> {
+  for (const flag of flags) {
+    await db
+      .prepare(
+        `INSERT INTO feature_flags (scope_type, scope_key, flag_key, enabled)
+         VALUES (?, ?, ?, 1)
+         ON CONFLICT(scope_type, scope_key, flag_key) DO UPDATE SET enabled = 1`,
+      )
+      .bind(scopeType, scopeKey, flag)
+      .run();
+  }
 }
 
 async function d1Post<TPayload>(
@@ -6571,6 +12822,43 @@ function rawD1Delete(db: SqliteD1Database, url: string, anonymousId: string): Pr
     }),
     { DB: db },
   );
+}
+
+function anonymousSessionRequest(
+  url: string,
+  method: "GET" | "POST" | "DELETE",
+  session: { anonymousId: string; proof: string },
+  body?: Record<string, unknown>,
+): Request {
+  return new Request(url, {
+    method,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      "x-silsigan-anon-id": session.anonymousId,
+      "x-silsigan-anon-proof": session.proof,
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+}
+
+let verifiedSessionTestClientSequence = 0;
+
+async function issueVerifiedAnonymousSession(db: SqliteD1Database): Promise<{ anonymousId: string; proof: string }> {
+  verifiedSessionTestClientSequence += 1;
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/session/anonymous", {
+      method: "POST",
+      headers: { "cf-connecting-ip": `2001:db8::${verifiedSessionTestClientSequence}` },
+    }),
+    { DB: db, SILSIGAN_ANON_SESSION_REQUIRED: "1" },
+  );
+  assert.equal(response.status, 201);
+  const payload = (await response.json()) as SuccessPayload<{ anonymousId: string; proof: string }>;
+  return payload.data;
+}
+
+function sha256HexForTest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function d1AdminGet<TPayload>(db: SqliteD1Database, url: string): Promise<TPayload> {
@@ -6640,6 +12928,7 @@ async function d1AdminPost<TPayload>(
 
 class FakeR2Bucket {
   readonly deletedKeys: string[] = [];
+  readonly getKeys: string[] = [];
   readonly putObjects: Array<{
     key: string;
     bytes: Uint8Array;
@@ -6686,6 +12975,7 @@ class FakeR2Bucket {
   }
 
   async get(key: string) {
+    this.getKeys.push(key);
     const object = this.putObjects.find((candidate) => candidate.key === key);
     if (!object) {
       return null;
@@ -6702,6 +12992,53 @@ class FakeR2Bucket {
         contentType: object.contentType,
       },
     };
+  }
+}
+
+class FakeWorkerCache {
+  readonly matchedUrls: string[] = [];
+  readonly putUrls: string[] = [];
+  private readonly entries = new Map<
+    string,
+    { body: Uint8Array; headers: Array<[string, string]>; status: number; statusText: string }
+  >();
+
+  async match(request: Request): Promise<Response | undefined> {
+    this.matchedUrls.push(request.url);
+    const entry = this.entries.get(request.url);
+    if (!entry) {
+      return undefined;
+    }
+    return new Response(entry.body.slice(), {
+      status: entry.status,
+      statusText: entry.statusText,
+      headers: entry.headers,
+    });
+  }
+
+  async put(request: Request, response: Response): Promise<void> {
+    this.putUrls.push(request.url);
+    this.entries.set(request.url, {
+      body: new Uint8Array(await response.arrayBuffer()),
+      headers: Array.from(response.headers.entries()),
+      status: response.status,
+      statusText: response.statusText,
+    });
+  }
+}
+
+class FakeRateLimitBinding {
+  readonly calls: string[] = [];
+  private readonly results: boolean[];
+
+  constructor(results: boolean | boolean[] = true) {
+    this.results = Array.isArray(results) ? [...results] : [results];
+  }
+
+  async limit({ key }: { key: string }): Promise<{ success: boolean }> {
+    this.calls.push(key);
+    const success = this.results.length > 1 ? this.results.shift() : this.results[0];
+    return { success: success ?? true };
   }
 }
 
@@ -6888,6 +13225,10 @@ class FakeDurableObjectNamespace {
     this.roomFactory = roomFactory;
   }
 
+  get roomCount(): number {
+    return this.rooms.size;
+  }
+
   idFromName(name: string): FakeDurableObjectId {
     return new FakeDurableObjectId(name);
   }
@@ -6907,8 +13248,51 @@ class FakeDurableObjectNamespace {
 
 type FakeWebSocketListener = (event: { data: string | ArrayBuffer }) => void;
 
+class FakeDurableObjectStorage {
+  readonly values = new Map<string, unknown>();
+  readonly putKeys: string[] = [];
+  readonly deleteKeys: string[] = [];
+  alarmAt: number | null = null;
+
+  async get<TValue = unknown>(key: string): Promise<TValue | undefined> {
+    return this.values.get(key) as TValue | undefined;
+  }
+
+  async put<TValue>(key: string, value: TValue): Promise<void> {
+    this.values.set(key, value);
+    this.putKeys.push(key);
+  }
+
+  async delete(key: string): Promise<boolean> {
+    this.deleteKeys.push(key);
+    return this.values.delete(key);
+  }
+
+  async setAlarm(scheduledTime: number | Date): Promise<void> {
+    this.alarmAt = scheduledTime instanceof Date ? scheduledTime.getTime() : scheduledTime;
+  }
+}
+
+class FakeDurableObjectState {
+  readonly acceptedSockets: FakeWorkerWebSocket[] = [];
+  readonly storage: FakeDurableObjectStorage;
+
+  constructor(storage = new FakeDurableObjectStorage()) {
+    this.storage = storage;
+  }
+
+  acceptWebSocket(socket: { readyState: number }): void {
+    this.acceptedSockets.push(socket as FakeWorkerWebSocket);
+  }
+
+  getWebSockets(): FakeWorkerWebSocket[] {
+    return this.acceptedSockets.filter((socket) => socket.readyState !== 3);
+  }
+}
+
 class FakeWorkerWebSocket {
   readonly receivedMessages: string[] = [];
+  readonly closeCalls: Array<{ code?: number; reason?: string }> = [];
   readyState = 1;
   peer: FakeWorkerWebSocket | null = null;
   private readonly listeners = new Map<"message" | "close" | "error", FakeWebSocketListener>();
@@ -6919,7 +13303,8 @@ class FakeWorkerWebSocket {
     this.peer?.receivedMessages.push(message);
   }
 
-  close(): void {
+  close(code?: number, reason?: string): void {
+    this.closeCalls.push({ code, reason });
     this.readyState = 3;
     this.listeners.get("close")?.({ data: "" });
   }
@@ -6979,6 +13364,46 @@ class SqliteD1Database {
   prepare(query: string): SqliteD1PreparedStatement {
     return new SqliteD1PreparedStatement(this.dbPath, query);
   }
+
+  async batch(statements: worker.D1PreparedStatement[]): Promise<unknown[]> {
+    const sqlStatements = statements.map((statement) => {
+      if (!statement.toSql) {
+        throw new Error("SQLite D1 batch requires serializable prepared statements.");
+      }
+      return `${statement.toSql()};`;
+    });
+    execFileSync("sqlite3", [this.dbPath], {
+      encoding: "utf8",
+      input: `.bail on\nBEGIN IMMEDIATE;\n${sqlStatements.join("\n")}\nCOMMIT;`,
+    });
+    return statements.map(() => ({ success: true }));
+  }
+}
+
+class RaceInjectingSqliteD1Database {
+  private readonly inner: SqliteD1Database;
+  private pendingInjection: (() => Promise<void>) | null = null;
+
+  constructor(inner: SqliteD1Database) {
+    this.inner = inner;
+  }
+
+  prepare(query: string): SqliteD1PreparedStatement {
+    return this.inner.prepare(query);
+  }
+
+  beforeNextBatch(injection: () => Promise<void>): void {
+    this.pendingInjection = injection;
+  }
+
+  async batch(statements: worker.D1PreparedStatement[]): Promise<unknown[]> {
+    const injection = this.pendingInjection;
+    this.pendingInjection = null;
+    if (injection) {
+      await injection();
+    }
+    return this.inner.batch(statements);
+  }
 }
 
 class SqliteD1PreparedStatement {
@@ -7007,8 +13432,12 @@ class SqliteD1PreparedStatement {
   }
 
   async run(): Promise<unknown> {
-    execFileSync("sqlite3", [this.dbPath, substituteSqliteParams(this.query, this.values)], { encoding: "utf8" });
+    execFileSync("sqlite3", [this.dbPath, this.toSql()], { encoding: "utf8" });
     return { success: true };
+  }
+
+  toSql(): string {
+    return substituteSqliteParams(this.query, this.values);
   }
 }
 
@@ -7091,6 +13520,9 @@ function sqlite3Available(): boolean {
     execFileSync("sqlite3", ["-version"], { stdio: "ignore" });
     return true;
   } catch {
+    if (process.env.SILSIGAN_REQUIRE_SQLITE_TESTS === "1") {
+      throw new Error("SQLite is required for D1 coverage in this verification environment.");
+    }
     return false;
   }
 }

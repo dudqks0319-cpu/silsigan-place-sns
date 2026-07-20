@@ -13,6 +13,7 @@ import {
 export const coordinateSchema = z.object({
   latitude: z.number().min(33).max(39),
   longitude: z.number().min(124).max(132),
+  accuracyM: z.number().finite().min(0).max(10_000).optional(),
 });
 
 const publicHttpUrlSchema = z
@@ -107,7 +108,6 @@ export const createQuestionSchema = z.object({
   placeId: z.string().min(1).max(80),
   questionType: z.enum(questionTypes),
   body: z.string().trim().min(4).max(160),
-  availableCredits: z.number().int().min(0).max(999).default(3),
 });
 
 export type CreateQuestionInput = z.infer<typeof createQuestionSchema>;

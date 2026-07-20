@@ -1,0 +1,98 @@
+.page {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+  background: #f7f8fa;
+  color: #111827;
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", sans-serif;
+}
+
+.card {
+  width: min(100%, 420px);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 24px;
+  padding: 28px;
+  background: #ffffff;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+  text-align: center;
+}
+
+.card > span {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  margin: 0 auto 14px;
+  place-items: center;
+  border-radius: 50%;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.card p,
+.card h1,
+.card strong {
+  margin: 0;
+}
+
+.card p {
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.card h1 {
+  margin-top: 7px;
+  font-size: 24px;
+}
+
+.card strong {
+  display: block;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.actions button,
+.actions a {
+  display: grid;
+  min-height: 46px;
+  place-items: center;
+  border: 0;
+  border-radius: 14px;
+  font: inherit;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.actions button {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.actions a {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.actions button:focus-visible,
+.actions a:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.3);
+  outline-offset: 2px;
+}
+
+@media (max-width: 420px) {
+  .actions {
+    grid-template-columns: 1fr;
+  }
+}

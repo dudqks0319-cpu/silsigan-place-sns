@@ -52,10 +52,10 @@
 
 ## TestFlight 전 기술 위험
 
-1. iPhone 기본 사진 포맷인 HEIC/HEIF를 현재 업로드가 받지 않는다. 사용자가 수동 변환해야 하는 흐름은 사진 중심 앱의 핵심 실패 지점이다.
+1. HEIC/HEIF는 로컬 네이티브 경로에서 bounded JPEG로 자동 변환하고 JPEG magic byte까지 확인하도록 해결했다. 실제 iPhone 사진 보관함·카메라 회귀 증거는 staging 실기기 QA에서 아직 필요하다.
 2. 글·사진·신고 제한이 브라우저가 보내는 익명 ID에 크게 의존한다. ID 교체만으로 제한을 우회하지 못하도록 Worker 발급 세션, 서명 쿠키, IP/Turnstile 기반 제한을 추가해야 한다.
-3. 사진은 현재 직접 R2 전송이 아니라 base64 JSON으로 Worker에 전달된다. 3MB 사진은 전송량이 커지므로 staging과 실기기에서 요청 본문 한계와 처리 시간을 검증하거나 직접 업로드로 전환해야 한다.
-4. 네이버 외부 검색 결과는 좌표 변환/검증 전에는 지도 핀으로 바로 표시되지 않는다. 검색 결과를 내부 장소와 연결하는 좌표 검증 경로가 필요하다.
+3. 사진은 현재 `upload-ticket` 발급 후 multipart binary로 Worker에 전달하는 로컬 계약으로 전환됐다. 기존 `/api/photos/complete` base64 경로는 호환 테스트와 이전 클라이언트 추적용으로 남아 있으므로, staging에서 새 binary 경로를 우선 검증하고 legacy 경로의 폐기 시점을 별도로 결정해야 한다.
+4. 네이버 외부 검색 결과는 저장하지 않고, 별도 수동 입력만 비공개 장소 추가 요청 큐에 접수한다. 요청은 자동 공개되지 않으며 운영자의 주소·좌표 검증과 수동 import 절차가 staging에서 필요하다.
 5. Worker CORS와 realtime heartbeat는 운영 도메인 제한과 abuse rate limit을 다시 점검해야 한다.
 
 ## 다음 실행 순서

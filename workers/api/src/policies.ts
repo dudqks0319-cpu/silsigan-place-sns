@@ -283,6 +283,60 @@ export function applySlidingWindowRateLimit(
   };
 }
 
+export function applyBoundedSlidingWindowRateLimit({
+  buckets,
+  key,
+  nowMs,
+  limit,
+  windowMs,
+  capacity,
+}: {
+  buckets: Map<string, RateLimitState>;
+  key: string;
+  nowMs: number;
+  limit: number;
+  windowMs: number;
+  capacity: number;
+}): {
+  result: RateLimitResult;
+  capacityExceeded: boolean;
+} {
+  const current = buckets.get(key);
+  if (current && current.resetsAt > nowMs) {
+    const { state, result } = applySlidingWindowRateLimit(current, nowMs, limit, windowMs);
+    buckets.set(key, state);
+    return { result, capacityExceeded: false };
+  }
+
+  if (current) {
+    buckets.delete(key);
+  }
+
+  if (buckets.size >= capacity) {
+    for (const [candidateKey, bucket] of buckets) {
+      if (bucket.resetsAt <= nowMs) {
+        buckets.delete(candidateKey);
+      }
+    }
+  }
+
+  if (buckets.size >= capacity) {
+    const nextResetAt = Math.min(...[...buckets.values()].map((bucket) => bucket.resetsAt));
+    return {
+      result: {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((nextResetAt - nowMs) / 1_000)),
+        resetsAt: nextResetAt,
+      },
+      capacityExceeded: true,
+    };
+  }
+
+  const { state, result } = applySlidingWindowRateLimit(undefined, nowMs, limit, windowMs);
+  buckets.set(key, state);
+  return { result, capacityExceeded: false };
+}
+
 export function registerUniqueCommentLike(state: LikePolicyState, commentId: string): boolean {
   if (state.likedCommentIds.has(commentId)) {
     return false;

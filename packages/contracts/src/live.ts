@@ -60,11 +60,12 @@ export function validateLiveSignal(input: unknown): LiveSignal {
   const observedAt = requireTimestamp(candidate.observedAt, "observedAt");
   requireTimestamp(candidate.fetchedAt, "fetchedAt");
 
-  if (candidate.expiresAt) {
-    const expiresAt = requireTimestamp(candidate.expiresAt, "expiresAt");
-    if (expiresAt.getTime() <= observedAt.getTime()) {
-      throw new Error("expiresAt must be later than observedAt");
-    }
+  if (!candidate.expiresAt) {
+    throw new Error("expiresAt is required");
+  }
+  const expiresAt = requireTimestamp(candidate.expiresAt, "expiresAt");
+  if (expiresAt.getTime() <= observedAt.getTime()) {
+    throw new Error("expiresAt must be later than observedAt");
   }
 
   if (
@@ -102,7 +103,7 @@ export function isLiveSignalCurrent(signal: unknown, now: Date = new Date()): si
   if (new Date(current.observedAt).getTime() > now.getTime()) {
     return false;
   }
-  return current.expiresAt ? new Date(current.expiresAt).getTime() > now.getTime() : true;
+  return new Date(current.expiresAt).getTime() > now.getTime();
 }
 
 export function resolveSignalExpiry(input: {

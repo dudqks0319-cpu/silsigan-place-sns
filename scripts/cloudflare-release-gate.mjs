@@ -10,7 +10,25 @@ const RELEASE_CANDIDATE_REQUIRED_URL_ENV_KEYS = ["SILSIGAN_STAGING_PAGES_URL", "
 const PRODUCTION_CANDIDATE_REQUIRED_URL_ENV_KEYS = ["SILSIGAN_PRODUCTION_PAGES_URL", "SILSIGAN_PRODUCTION_API_BASE_URL"];
 const NAVER_MAP_CLIENT_ID_KEY = "NEXT_PUBLIC_NAVER_MAP_CLIENT_ID";
 const NAVER_MAP_ALLOWED_ORIGINS_KEY = "SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS";
+const NAVER_MAP_REGISTERED_DOMAIN_KEY = "SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN";
 const NAVER_MAP_WEB_MAPS_CONFIRMED_KEY = "SILSIGAN_NAVER_MAP_WEB_MAPS_CONFIRMED";
+const NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED_KEY = "SILSIGAN_NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED";
+const NAVER_MAP_MONTHLY_HARD_LIMIT_KEY = "SILSIGAN_NAVER_MAP_MONTHLY_HARD_LIMIT";
+const NAVER_MAP_DAILY_HARD_LIMIT_KEY = "SILSIGAN_NAVER_MAP_DAILY_HARD_LIMIT";
+const NAVER_MAP_ALERT_THRESHOLD_PERCENT_KEY = "SILSIGAN_NAVER_MAP_ALERT_THRESHOLD_PERCENT";
+const NAVER_MAP_ALERT_RECIPIENT_CONFIRMED_KEY = "SILSIGAN_NAVER_MAP_ALERT_RECIPIENT_CONFIRMED";
+const NAVER_MAP_MONTHLY_HARD_LIMIT_MAX = 4_800_000;
+const NAVER_MAP_DAILY_HARD_LIMIT_MAX = 160_000;
+const NAVER_MAP_ALERT_THRESHOLD_PERCENT_MAX = 70;
+const NAVER_MAP_SHARED_HOSTING_DOMAINS = [
+  "workers.dev",
+  "pages.dev",
+  "vercel.app",
+  "netlify.app",
+  "github.io",
+  "web.app",
+  "firebaseapp.com",
+];
 const COORDINATE_STATUS_REQUIRED_ENV_KEYS = [
   "SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID",
   "SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE",
@@ -172,6 +190,10 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
 
   if (tailFile) {
     steps.push(step("workers.tail.redaction", ["smoke:tail-redaction", "--", `--tail-file=${tailFile}`], ["SILSIGAN_STAGING_TAIL_LOG_FILE"]));
+  }
+
+  if (releaseCandidate || productionCandidate) {
+    steps.push(step("release.provenance", ["release:provenance"]));
   }
 
   steps.push(step("release.status.strict", ["release:status", "--", "--strict"]));
@@ -407,14 +429,22 @@ function extractTextBlockers(...values) {
   return blockers;
 }
 
-function collectPayloadBlockers(payload, blockers) {
-  if (!isRecord(payload)) {
+function collectPayloadBlockers(payload, blockers, depth = 0, seen = new Set()) {
+  if (depth > 8 || payload === null || typeof payload !== "object" || seen.has(payload)) {
+    return;
+  }
+  seen.add(payload);
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      collectPayloadBlockers(item, blockers, depth + 1, seen);
+    }
     return;
   }
 
   if (payload.status === "fail") {
-    const messageCode = extractMessageCode(payload.message);
-    collectBlockerCode(blockers, messageCode ?? payload.code ?? blockerNameFromCheck(payload));
+    const nestedCheck = isRecord(payload.check) && payload.check.status === "fail" ? payload.check : null;
+    collectBlockerCode(blockers, blockerCodeFromCheck(nestedCheck ?? payload));
   }
 
   if (Array.isArray(payload.blockers)) {
@@ -423,16 +453,21 @@ function collectPayloadBlockers(payload, blockers) {
     }
   }
 
-  if (Array.isArray(payload.checks)) {
-    for (const check of payload.checks) {
-      if (!isRecord(check) || check.status !== "fail") {
-        continue;
-      }
-
-      const messageCode = extractMessageCode(check.message);
-      collectBlockerCode(blockers, messageCode ?? check.code ?? blockerNameFromCheck(check));
+  for (const key of ["check", "checks", "results", "targets"]) {
+    const nested = payload[key];
+    if (Array.isArray(nested) || isRecord(nested)) {
+      collectPayloadBlockers(nested, blockers, depth + 1, seen);
     }
   }
+}
+
+function blockerCodeFromCheck(check) {
+  if (!isRecord(check)) {
+    return null;
+  }
+
+  const messageCode = extractMessageCode(check.message);
+  return messageCode ?? check.code ?? blockerNameFromCheck(check);
 }
 
 function blockerNameFromCheck(check) {
@@ -622,6 +657,39 @@ export function collectNaverMapReleaseErrors(errors, pagesUrlKeys, env) {
     });
   }
 
+  collectNaverMapCostProtectionErrors(errors, env);
+
+  const rawRegisteredDomain = env[NAVER_MAP_REGISTERED_DOMAIN_KEY]?.trim() ?? "";
+  const registeredDomain = normalizeNaverRegisteredDomain(rawRegisteredDomain);
+  if (!rawRegisteredDomain) {
+    errors.push({
+      code: `${NAVER_MAP_REGISTERED_DOMAIN_KEY}_REQUIRED`,
+      message: `${NAVER_MAP_REGISTERED_DOMAIN_KEY} 이 필요합니다.`,
+    });
+  } else if (!registeredDomain) {
+    errors.push({
+      code: `${NAVER_MAP_REGISTERED_DOMAIN_KEY}_INVALID`,
+      message: `${NAVER_MAP_REGISTERED_DOMAIN_KEY} 은 scheme, port, path가 없는 소유 도메인이어야 합니다.`,
+    });
+  } else if (isNaverSharedHostingDomain(registeredDomain)) {
+    errors.push({
+      code: `${NAVER_MAP_REGISTERED_DOMAIN_KEY}_SHARED_HOSTING`,
+      message: `${NAVER_MAP_REGISTERED_DOMAIN_KEY} 은 공유 호스팅 도메인을 사용할 수 없습니다.`,
+    });
+  }
+
+  if (registeredDomain) {
+    for (const pagesUrlKey of pagesUrlKeys) {
+      const pagesOrigin = normalizeHttpsOrigin(env[pagesUrlKey]);
+      if (pagesOrigin && !isHostnameWithinDomain(new URL(pagesOrigin).hostname, registeredDomain)) {
+        errors.push({
+          code: `${NAVER_MAP_REGISTERED_DOMAIN_KEY}_MISSING_${pagesUrlKey}`,
+          message: `${NAVER_MAP_REGISTERED_DOMAIN_KEY} 은 ${pagesUrlKey}의 소유 도메인을 포함해야 합니다.`,
+        });
+      }
+    }
+  }
+
   const rawAllowedOrigins = env[NAVER_MAP_ALLOWED_ORIGINS_KEY]?.trim() ?? "";
   if (!rawAllowedOrigins) {
     errors.push({
@@ -653,6 +721,93 @@ export function collectNaverMapReleaseErrors(errors, pagesUrlKeys, env) {
       });
     }
   }
+}
+
+function collectNaverMapCostProtectionErrors(errors, env) {
+  if (env[NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED_KEY]?.trim() !== "1") {
+    errors.push({
+      code: `${NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED_KEY}_REQUIRED`,
+      message: `${NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED_KEY}=1 확인이 필요합니다.`,
+    });
+  }
+
+  collectNaverMapBoundedIntegerError(
+    errors,
+    env,
+    NAVER_MAP_MONTHLY_HARD_LIMIT_KEY,
+    NAVER_MAP_MONTHLY_HARD_LIMIT_MAX,
+  );
+  collectNaverMapBoundedIntegerError(
+    errors,
+    env,
+    NAVER_MAP_DAILY_HARD_LIMIT_KEY,
+    NAVER_MAP_DAILY_HARD_LIMIT_MAX,
+  );
+  collectNaverMapBoundedIntegerError(
+    errors,
+    env,
+    NAVER_MAP_ALERT_THRESHOLD_PERCENT_KEY,
+    NAVER_MAP_ALERT_THRESHOLD_PERCENT_MAX,
+  );
+
+  if (env[NAVER_MAP_ALERT_RECIPIENT_CONFIRMED_KEY]?.trim() !== "1") {
+    errors.push({
+      code: `${NAVER_MAP_ALERT_RECIPIENT_CONFIRMED_KEY}_REQUIRED`,
+      message: `${NAVER_MAP_ALERT_RECIPIENT_CONFIRMED_KEY}=1 확인이 필요합니다.`,
+    });
+  }
+}
+
+function collectNaverMapBoundedIntegerError(errors, env, key, maximum) {
+  const rawValue = env[key]?.trim() ?? "";
+  if (!rawValue) {
+    errors.push({
+      code: `${key}_REQUIRED`,
+      message: `${key} 이 필요합니다.`,
+    });
+    return;
+  }
+
+  if (!/^\d+$/.test(rawValue) || Number(rawValue) < 1) {
+    errors.push({
+      code: `${key}_INVALID`,
+      message: `${key} 은 1 이상의 정수여야 합니다.`,
+    });
+    return;
+  }
+
+  if (Number(rawValue) > maximum) {
+    errors.push({
+      code: `${key}_ABOVE_SAFE_MAXIMUM`,
+      message: `${key} 은 무료 사용량 보호 상한 이하여야 합니다.`,
+    });
+  }
+}
+
+function normalizeNaverRegisteredDomain(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const normalized = value.trim().toLowerCase().replace(/\.$/, "");
+  if (!normalized.includes(".") || normalized.includes(":") || normalized.includes("/") || normalized.includes("@")) {
+    return null;
+  }
+
+  try {
+    const url = new URL(`https://${normalized}`);
+    if (url.hostname !== normalized || url.port || url.pathname !== "/" || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized)) {
+      return null;
+    }
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+function isNaverSharedHostingDomain(domain) {
+  return NAVER_MAP_SHARED_HOSTING_DOMAINS.some((sharedDomain) => domain === sharedDomain || domain.endsWith(`.${sharedDomain}`));
+}
+
+function isHostnameWithinDomain(hostname, domain) {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
 }
 
 function normalizeHttpsOrigin(value) {

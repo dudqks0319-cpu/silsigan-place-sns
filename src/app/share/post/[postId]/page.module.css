@@ -17,7 +17,7 @@
   border-radius: 28px;
   padding: 22px;
   display: grid;
-  grid-template-rows: auto 1fr auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto auto;
   gap: 16px;
   background: #ffffff;
   box-shadow: 0 32px 80px rgba(15, 23, 42, 0.16);
@@ -47,6 +47,7 @@
 }
 
 .hero {
+  position: relative;
   min-height: 0;
   border-radius: 24px;
   padding: 20px;
@@ -57,6 +58,16 @@
   background:
     radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.28), transparent 24%),
     linear-gradient(135deg, #16a34a, #f97316);
+  overflow: hidden;
+}
+
+.heroThumbnail {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: brightness(0.58);
 }
 
 .avoid {
@@ -87,6 +98,19 @@
   background:
     radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.26), transparent 24%),
     linear-gradient(135deg, #0f766e, #38bdf8);
+}
+
+.neutral {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.34), transparent 24%),
+    linear-gradient(135deg, #2563eb, #64748b);
+}
+
+.hero span,
+.hero h1,
+.hero p {
+  position: relative;
+  z-index: 1;
 }
 
 .hero span {
@@ -129,6 +153,34 @@
   text-align: center;
 }
 
+.currentStatus {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dbeafe;
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.currentStatus strong,
+.currentStatus span {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.currentStatus small {
+  color: #475569;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.reportLabel {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .hashtags {
   display: flex;
   flex-wrap: wrap;
@@ -157,8 +209,16 @@
   overflow-wrap: anywhere;
 }
 
-.card footer strong {
+.cta {
   flex: 0 0 auto;
   color: #0f172a;
   font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.cta:hover,
+.cta:focus-visible {
+  color: #15803d;
+  text-decoration: underline;
 }

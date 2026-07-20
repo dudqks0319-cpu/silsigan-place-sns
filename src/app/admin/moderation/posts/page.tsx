@@ -2,8 +2,19 @@ import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { adminCookieName, isAdminTokenValid } from "@/lib/admin-auth";
 import { store } from "@/lib/store";
-import { listWorkerModerationReports, workerAdminApiConfigured, type WorkerModerationReportSummary } from "@/lib/worker-admin-api";
+import {
+  listWorkerFieldReports,
+  listWorkerModerationReports,
+  listWorkerPlaceAdditionRequests,
+  workerAdminApiConfigured,
+  type WorkerFieldReportSummary,
+  type WorkerModerationReportSummary,
+  type WorkerPlaceAdditionRequestSummary,
+} from "@/lib/worker-admin-api";
 import { ModerationQueueClient } from "./ModerationQueueClient";
+import { PhotoCostGuardPanel } from "./PhotoCostGuardPanel";
+import { ApiCostGuardPanel } from "./ApiCostGuardPanel";
+import { BetaKpiPanel } from "./BetaKpiPanel";
 import styles from "./page.module.css";
 
 export const dynamic = "force-dynamic";
@@ -20,13 +31,22 @@ export default async function PostModerationPage() {
 
   const queue = await store.listPostModerationQueue();
   const activationRows = await store.listRegionActivationDashboard();
-  const { state: workerQueueState, reports: workerReports } = await loadWorkerReports();
+  const {
+    state: workerQueueState,
+    reports: workerReports,
+    fieldReportState,
+    fieldReports,
+    placeRequestState,
+    placeRequests,
+  } = await loadWorkerQueues();
   const hiddenCount = queue.filter((item) => item.hidden).length;
   const sensitiveCount = queue.filter((item) =>
     item.flagReasons.some((reason) => ["privacy_face", "privacy_plate", "sensitive_info"].includes(reason)),
   ).length;
   const activatableCount = activationRows.filter((row) => row.status.canActivate).length;
   const workerOpenCount = workerReports.length;
+  const pendingFieldReportCount = fieldReports.length;
+  const placeRequestCount = placeRequests.length;
 
   return (
     <main className={styles.page}>
@@ -57,7 +77,19 @@ export default async function PostModerationPage() {
           <strong>{activatableCount}</strong>
           <span>활성화 가능 area</span>
         </div>
+        <div>
+          <strong>{pendingFieldReportCount}</strong>
+          <span>현장 제보 검수 대기</span>
+        </div>
+        <div>
+          <strong>{placeRequestCount}</strong>
+          <span>장소 추가 요청</span>
+        </div>
       </section>
+
+      <ApiCostGuardPanel />
+      <PhotoCostGuardPanel />
+      <BetaKpiPanel />
 
       <section className={styles.activationPanel} aria-labelledby="activation-heading">
         <div className={styles.sectionHeader}>
@@ -98,24 +130,52 @@ export default async function PostModerationPage() {
         </div>
       </section>
 
-      <ModerationQueueClient initialItems={queue} initialWorkerReports={workerReports} workerQueueState={workerQueueState} />
+      <ModerationQueueClient
+        initialItems={queue}
+        initialWorkerReports={workerReports}
+        workerQueueState={workerQueueState}
+        initialFieldReports={fieldReports}
+        fieldReportQueueState={fieldReportState}
+        initialPlaceRequests={placeRequests}
+        placeRequestQueueState={placeRequestState}
+      />
     </main>
   );
 }
 
-async function loadWorkerReports(): Promise<{ state: "connected" | "not_configured" | "unavailable"; reports: WorkerModerationReportSummary[] }> {
+async function loadWorkerQueues(): Promise<{
+  state: "connected" | "not_configured" | "unavailable";
+  reports: WorkerModerationReportSummary[];
+  fieldReportState: "connected" | "not_configured" | "unavailable";
+  fieldReports: WorkerFieldReportSummary[];
+  placeRequestState: "connected" | "not_configured" | "unavailable";
+  placeRequests: WorkerPlaceAdditionRequestSummary[];
+}> {
   if (!workerAdminApiConfigured()) {
-    return { state: "not_configured", reports: [] };
+    return {
+      state: "not_configured",
+      reports: [],
+      fieldReportState: "not_configured",
+      fieldReports: [],
+      placeRequestState: "not_configured",
+      placeRequests: [],
+    };
   }
 
-  try {
-    return {
-      state: "connected",
-      reports: await listWorkerModerationReports({ status: "open", limit: 20 }),
-    };
-  } catch {
-    return { state: "unavailable", reports: [] };
-  }
+  const [workerReportResult, fieldReportResult, placeRequestResult] = await Promise.allSettled([
+    listWorkerModerationReports({ status: "open", limit: 20 }),
+    listWorkerFieldReports({ status: "pending", limit: 20 }),
+    listWorkerPlaceAdditionRequests({ limit: 50 }),
+  ]);
+
+  return {
+    state: workerReportResult.status === "fulfilled" ? "connected" : "unavailable",
+    reports: workerReportResult.status === "fulfilled" ? workerReportResult.value : [],
+    fieldReportState: fieldReportResult.status === "fulfilled" ? "connected" : "unavailable",
+    fieldReports: fieldReportResult.status === "fulfilled" ? fieldReportResult.value : [],
+    placeRequestState: placeRequestResult.status === "fulfilled" ? "connected" : "unavailable",
+    placeRequests: placeRequestResult.status === "fulfilled" ? placeRequestResult.value : [],
+  };
 }
 
 function formatActivationValue(value: number | boolean) {

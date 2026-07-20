@@ -4,6 +4,7 @@ cloudflare-env.d.ts
 worker-configuration.d.ts
 node_modules
 .vercel
+.wrangler/
 .env
 .env.local
 .env.*.local

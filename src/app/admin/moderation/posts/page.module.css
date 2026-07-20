@@ -8,6 +8,7 @@
 
 .hero,
 .metrics div,
+.costGuardPanel,
 .activationPanel,
 .workerQueuePanel,
 .activationItem,
@@ -52,7 +53,7 @@
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
   margin: 16px 0;
 }
@@ -70,6 +71,290 @@
   color: #64748b;
   font-size: 13px;
   font-weight: 800;
+}
+
+.costGuardPanel {
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.betaKpiPanel {
+  margin-bottom: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  padding: 20px;
+  background: #ffffff;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+}
+
+.kpiWindowTabs {
+  display: flex;
+  gap: 6px;
+}
+
+.kpiWindowTabs button {
+  min-width: 54px;
+  min-height: 40px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 900;
+}
+
+.kpiWindowTabs button[aria-pressed="true"] {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.kpiWindowTabs button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.3);
+  outline-offset: 2px;
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.kpiCard {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 15px;
+  padding: 15px;
+  background: #f8fafc;
+}
+
+.kpiCard span,
+.kpiCard small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.kpiCard strong {
+  color: #0f172a;
+  font-size: 23px;
+  line-height: 1.2;
+}
+
+.kpiPass {
+  border-color: rgba(22, 163, 74, 0.3);
+  background: #f0fdf4;
+}
+
+.kpiHold {
+  border-color: rgba(217, 119, 6, 0.3);
+  background: #fffbeb;
+}
+
+.kpiPrivacyNote,
+.kpiUnavailable,
+.kpiNotice {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.kpiPrivacyNote {
+  display: grid;
+  gap: 3px;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.kpiUnavailable,
+.kpiNotice {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.costGuardStopped {
+  border-color: rgba(220, 38, 38, 0.24);
+  box-shadow: 0 14px 32px rgba(220, 38, 38, 0.08);
+}
+
+.runningBadge,
+.stoppedBadge {
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.runningBadge {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.stoppedBadge {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.costGuardGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.usageMeter {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px;
+  background: #f8fafc;
+}
+
+.usageMeter > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usageMeter span,
+.usageMeter strong,
+.usageMeter small {
+  font-weight: 850;
+}
+
+.usageMeter > span,
+.usageMeter small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.usageTrack {
+  position: relative;
+  height: 10px;
+  margin: 10px 0 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.usageTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #16a34a, #f59e0b);
+}
+
+.usageTrack i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 80%;
+  width: 2px;
+  background: #dc2626;
+}
+
+.costGuardPolicy,
+.costGuardUnavailable,
+.costGuardReason,
+.costGuardNotice {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.costGuardPolicy {
+  display: grid;
+  gap: 3px;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.costGuardUnavailable,
+.costGuardReason,
+.costGuardNotice {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.reasonField {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.reasonField input {
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 0 13px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+}
+
+.reasonField input:focus-visible,
+.resumeCheck input:focus-visible,
+.costGuardActions button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.3);
+  outline-offset: 2px;
+}
+
+.resumeCheck {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.resumeCheck input {
+  width: 20px;
+  height: 20px;
+}
+
+.costGuardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.costGuardActions button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 950;
+}
+
+.dangerButton {
+  background: #b91c1c;
+  color: #ffffff;
+}
+
+.resumeButton {
+  background: #166534;
+  color: #ffffff;
+}
+
+.refreshButton {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.costGuardActions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
 }
 
 .activationPanel {
@@ -121,6 +406,16 @@
   font-size: 12px;
   font-weight: 950;
   white-space: nowrap;
+}
+
+.sectionHeader > .runningBadge {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.sectionHeader > .stoppedBadge {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .activationGrid {
@@ -367,6 +662,84 @@
   font-weight: 900;
 }
 
+.fieldReportMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.fieldReportMeta span {
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 6px 9px;
+}
+
+.placeRequestReview {
+  margin: 6px 0 0;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.placeRequestForm {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 14px;
+}
+
+.placeRequestForm label {
+  display: grid;
+  gap: 6px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.placeRequestForm input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+}
+
+.placeRequestForm input:focus-visible,
+.placeRequestActions button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.3);
+  outline-offset: 2px;
+}
+
+.placeRequestActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.placeRequestActions button {
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 9px 13px;
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 900;
+}
+
+.placeRequestActions button:disabled,
+.placeRequestForm input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .actionRow {
   margin-top: 12px;
 }
@@ -397,8 +770,14 @@
   }
 
   .metrics,
-  .activationGrid {
+  .activationGrid,
+  .costGuardGrid,
+  .kpiGrid {
     grid-template-columns: 1fr;
+  }
+
+  .kpiWindowTabs {
+    margin-top: 12px;
   }
 
   .sectionHeader,

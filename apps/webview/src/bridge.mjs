@@ -28,6 +28,7 @@ export function createWebViewBridge(options = {}) {
   const firstPartyOrigins = Object.freeze([...(options.firstPartyOrigins ?? [])]);
   const loadPlugin = options.loadPlugin ?? loadAllowlistedPlugin;
   const isNative = options.isNative ?? Boolean(globalThis.Capacitor?.isNativePlatform?.());
+  const platform = normalizePushPlatform(options.nativePlatform ?? globalThis.Capacitor?.getPlatform?.());
 
   async function plugin(specifier, exportName) {
     if (!isNative) return null;
@@ -96,6 +97,8 @@ export function createWebViewBridge(options = {}) {
       source: source === "camera" ? cameraPlugin.CameraSource.Camera : cameraPlugin.CameraSource.Photos,
       resultType: cameraPlugin.CameraResultType.Uri,
       quality: 85,
+      width: 1280,
+      height: 1280,
       allowEditing: false,
       saveToGallery: false,
       correctOrientation: true,
@@ -163,7 +166,13 @@ export function createWebViewBridge(options = {}) {
       removers.push(await addListener(Network, "networkStatusChange", ({ connected, connectionType }) => emit("network", { connected, connectionType })));
       removers.push(await addListener(Keyboard, "keyboardWillShow", ({ keyboardHeight }) => emit("keyboard", { visible: true, height: keyboardHeight })));
       removers.push(await addListener(Keyboard, "keyboardWillHide", () => emit("keyboard", { visible: false, height: 0 })));
-      removers.push(await addListener(PushNotifications, "registration", ({ value }) => emit("push-token", { token: value })));
+      removers.push(await addListener(PushNotifications, "registration", ({ value }) => {
+        if (!platform) {
+          emit("push-error", { code: "PLATFORM_UNAVAILABLE" });
+          return;
+        }
+        emit("push-token", { platform, token: value });
+      }));
       removers.push(await addListener(PushNotifications, "registrationError", () => emit("push-error", { code: "REGISTRATION_FAILED" })));
       const status = await Network.getStatus();
       emit("network", { connected: status.connected, connectionType: status.connectionType });
@@ -188,6 +197,7 @@ export function createWebViewBridge(options = {}) {
   return Object.freeze({
     schema: WEBVIEW_BRIDGE_SCHEMA,
     version: WEBVIEW_BRIDGE_VERSION,
+    platform,
     commands: WEBVIEW_BRIDGE_COMMANDS,
     invoke,
     classifyNavigation: (url) => classifyNavigation(url, firstPartyOrigins),
@@ -196,6 +206,10 @@ export function createWebViewBridge(options = {}) {
     installNativeEventSeams,
     installDocumentNavigationGuard,
   });
+}
+
+function normalizePushPlatform(value) {
+  return value === "ios" || value === "android" ? value : null;
 }
 
 async function loadAllowlistedPlugin(specifier) {
@@ -312,9 +326,23 @@ function browserPhoto(source, maxBytes, document) {
 async function checkedPhoto(url, format, maxBytes, fetch) {
   if (!fetch) throw unsupported("Photo size validation is unavailable");
   const response = await fetch(url);
+  if (!response.ok) throw unsupported("Selected photo could not be read");
   const blob = await response.blob();
   if (blob.size > maxBytes) throw Object.assign(new Error("Photo exceeds maxBytes"), { code: "PHOTO_TOO_LARGE" });
-  return { url, format: blob.type || format, bytes: blob.size };
+  const signature = new Uint8Array(await blob.slice(0, 3).arrayBuffer());
+  const hasJpegSignature = signature.length === 3
+    && signature[0] === 0xff
+    && signature[1] === 0xd8
+    && signature[2] === 0xff;
+  if (!isJpegFormat(blob.type || format) || !hasJpegSignature) {
+    throw Object.assign(new Error("Native photo conversion did not return JPEG"), { code: "PHOTO_FORMAT_UNSUPPORTED" });
+  }
+  return { url, format: "image/jpeg", bytes: blob.size };
+}
+
+function isJpegFormat(value) {
+  const normalized = String(value ?? "").trim().toLowerCase().split(";", 1)[0];
+  return normalized === "image/jpeg" || normalized === "image/jpg" || normalized === "jpeg" || normalized === "jpg";
 }
 
 function accuracyToBucket(value) {

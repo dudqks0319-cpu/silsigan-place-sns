@@ -3,8 +3,8 @@ import { NativeBridgeBootstrap } from "@/components/silsigan/NativeBridgeBootstr
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "#실시간 - 현장 상황 지도",
-  description: "출발 전 10초, 지금 거기 상황을 사진과 위치 인증으로 확인하세요.",
+  title: "#실시간 - 지금 현장 사진",
+  description: "가기 전, 최근 현장 사진과 관측시각으로 지금 분위기를 확인하세요.",
   applicationName: "#실시간",
   icons: {
     icon: "/favicon.svg"

@@ -1,4 +1,4 @@
-import { assertAdminRequest } from "@/lib/admin-auth";
+import { assertAdminMutationOrigin, assertAdminRequest } from "@/lib/admin-auth";
 import { fail, ok } from "@/lib/api";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { assertLocalDemoApiAvailable } from "@/lib/runtime-data-mode";
@@ -20,6 +20,7 @@ export async function POST(request: Request) {
   try {
     assertLocalDemoApiAvailable();
     assertAdminRequest(request);
+    assertAdminMutationOrigin(request);
     assertRateLimit({ key: rateLimitKey(request, "admin-moderate-post"), limit: 30, windowMs: 60_000 });
     const input = moderatePostSchema.parse(await request.json());
 

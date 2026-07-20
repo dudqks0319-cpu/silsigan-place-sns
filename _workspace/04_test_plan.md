@@ -18,6 +18,13 @@
 
 ## 3. P0 기능 테스트
 
+### 3.0 V2 API gate/판정 경계
+
+- `SOCIAL_FEED_ENABLED=false`에서 `/api/posts`, `/api/hashtags`, `/api/share/posts/:postId` 직접 호출은 `404 FEATURE_DISABLED`여야 한다.
+- `QNA_ENABLED=false` 또는 `REWARDS_ENABLED=false`에서 질문 생성/조회는 차단되어야 하며, client body의 `availableCredits`는 잔액 검증에 사용되지 않아야 한다.
+- `live_signals.expires_at`이 없는 새 row는 거부되고, 만료/정적/관측시각 없는 신호는 현재 집계·공유·OG에 포함되지 않아야 한다.
+- 공유/OG는 개별 제보의 상태값을 방문 판단으로 승격하지 않고, 현재 승인된 `AggregatedPlaceStatus` 또는 `현재 정보 부족`만 표시해야 한다.
+
 ### 3.1 홈/지도/장소 상세
 
 - 사용자가 위치 권한을 거부해도 홈과 검색이 동작한다.
@@ -78,12 +85,15 @@
 
 - 업로드 전/서버 저장 전 EXIF가 제거되는지 샘플 이미지로 검증한다.
 - GPS EXIF가 포함된 사진을 업로드해도 저장본과 썸네일에서 GPS 메타데이터가 제거되어야 한다.
-- 브라우저는 JPEG/WebP 파일을 1280px 이하 캔버스 이미지로 재인코딩한 뒤 Worker 완료 API에 전달한다.
+- 브라우저는 JPEG/WebP 파일을 1280px 이하 캔버스 이미지로 재인코딩한 뒤 upload-ticket을 발급받고 multipart binary upload로 전달한다.
 - Worker는 R2 저장 전 EXIF/GPS metadata를 제거하고, `IMAGES` binding이 있으면 서버 픽셀 재인코딩 결과만 저장하며, 원본 파일명을 저장/노출하지 않는다.
-- Playwright smoke는 사진 제보 버튼, 파일 선택, Worker upload-url/complete 201, D1 ready 사진 생성, 상세 시트 사진 카운트 증가를 확인한다.
+- 모바일 smoke는 사진 제보 버튼, 파일 선택, Worker upload-ticket 201, multipart upload 201, D1 pending/approved 사진 상태, 상세 시트 사진 카운트 증가를 확인한다. legacy upload-url/complete 경로는 호환성 회귀 테스트와 폐기 전 접근 로그 확인 대상으로 분리한다.
 - 서버 픽셀 재인코딩 파이프라인은 fake `IMAGES` binding 단위 테스트와 Cloudflare staging smoke로 검증한다.
+- staging/production 업로드는 5분 HMAC 티켓, D1 one-use claim, trusted Cloudflare IP, upload rate binding, IP HMAC 일일 20회/60 MiB ledger를 모두 요구하고 하나라도 없으면 R2 전에 fail closed해야 한다.
+- 공개 사진 조회 폭주는 별도 read rate binding과 분산 IP 전역 원장이 `R2.get` 전에 차단하는지 검증한다.
+- 약 3.2 GiB/12,800 writes/4,000 monthly Images transformations/800,000 monthly Class B reads/16,000 daily D1-tracked reads에서 자동 중단되고, pre-issued 분산 업로드도 Images/R2 전에 차단되는지 검증한다.
 - SVG, HTML, 스크립트 포함 파일, polyglot 파일, MIME 위장 파일 업로드를 차단한다.
-- public bucket을 쓰더라도 경로 추측이 어렵고 삭제/비공개 전환 절차가 있어야 한다.
+- R2 bucket은 private으로 유지하고 `r2.dev`, public custom domain, client credential을 허용하지 않는다.
 
 ### 4.4 민감정보 제한
 

@@ -134,7 +134,11 @@
 
 ## 8. 사진 중복/도용 탐지
 
-- Worker는 `/api/photos/complete`에서 EXIF/XMP 제거와 선택적 Cloudflare Images 재인코딩을 끝낸 최종 이미지 바이트로 SHA-256 fingerprint를 계산한다.
+- 사진 선택은 매 업로드마다 “직접 촬영했거나 게시 권한이 있음”과 공개 전 안전 검수를 명시적으로 확인한 뒤에만 활성화한다.
+- Worker는 `rightsAttested=true`와 현재 `PHOTO_RIGHTS_TERMS_VERSION`이 모두 없는 업로드 티켓을 Turnstile·D1·R2보다 먼저 `400 PHOTO_RIGHTS_ATTESTATION_REQUIRED`로 거부한다.
+- D1은 기존 `terms_acceptances`에 `anonymous:<hashed-user-id>`, `terms_type=community`, 정책 버전을 중복 없이 기록한다. 원본 파일명, 사진 내용, IP, 좌표는 이 기록에 넣지 않는다.
+- 이 확인과 exact fingerprint는 실제 저작권 보유를 자동 증명하지 않는다. 도용 의심 신고는 공개 중단·운영자 검토·권리자 삭제 요청 절차로 처리한다.
+- Worker는 binary `/api/photos/upload`에서 EXIF/XMP 제거와 선택적 Cloudflare Images 재인코딩을 끝낸 최종 이미지 바이트로 SHA-256 fingerprint를 계산한다. `/api/photos/complete`는 legacy 호환 경로이며 새 클라이언트의 운영 계약이 아니다.
 - fingerprint는 D1 `photos.image_hash`에만 저장한다. public API 응답, R2 object key, R2 custom metadata, 로그에는 노출하지 않는다.
 - 삭제되지 않은 기존 사진과 같은 fingerprint가 있으면 `409 PHOTO_DUPLICATE`로 거부하고 새 R2 object를 쓰지 않는다.
 - D1은 `image_hash` partial unique index로 동시성 상황에서도 삭제되지 않은 exact duplicate를 차단한다.

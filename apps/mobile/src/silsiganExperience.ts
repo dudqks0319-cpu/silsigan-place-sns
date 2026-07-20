@@ -50,8 +50,8 @@ export type QuestionControlShape = {
 };
 
 export const serviceScope = {
-  label: "전국 실시간",
-  shortCopy: "전국 주요 장소의 혼잡, 줄, 주차, 현장 사진을 출발 전 바로 확인하세요.",
+  label: "전국 검색 베타",
+  shortCopy: "전국에서 장소를 검색하고 제보할 수 있어요. 최신 제보가 있는 장소만 현재 상태로 표시합니다.",
   regions: ["서울", "경기", "인천", "부산", "대구", "대전", "광주", "울산", "강원", "제주"] satisfies RegionName[],
 } as const;
 

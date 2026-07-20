@@ -49,6 +49,26 @@ CREATE TABLE IF NOT EXISTS anonymous_users (
   last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS anonymous_sessions (
+  session_hash TEXT PRIMARY KEY,
+  proof_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  rotated_at TEXT,
+  revoked_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_anonymous_sessions_status_expiry
+  ON anonymous_sessions(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS anonymous_session_issuance_budget (
+  day_utc TEXT PRIMARY KEY,
+  issue_count INTEGER NOT NULL DEFAULT 0 CHECK (issue_count >= 0),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 CREATE TABLE IF NOT EXISTS place_events (
   id TEXT PRIMARY KEY,
   place_id TEXT NOT NULL REFERENCES places(id) ON DELETE CASCADE,
@@ -62,6 +82,9 @@ CREATE TABLE IF NOT EXISTS place_events (
   line_status TEXT CHECK (line_status IN ('none', 'short', 'medium', 'long')),
   parking_status TEXT CHECK (parking_status IN ('available', 'limited', 'full', 'unknown')),
   verified_radius_m INTEGER CHECK (verified_radius_m IN (50, 150, 300)),
+  accuracy_bucket TEXT NOT NULL DEFAULT 'unknown' CHECK (accuracy_bucket IN ('high', 'medium', 'low', 'unknown')),
+  verification_method TEXT NOT NULL DEFAULT 'none' CHECK (verification_method IN ('none', 'radius', 'polygon')),
+  moderation_status TEXT NOT NULL DEFAULT 'approved' CHECK (moderation_status IN ('pending', 'approved', 'rejected', 'hidden')),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   expires_at TEXT
 );
@@ -219,9 +242,187 @@ CREATE TABLE IF NOT EXISTS admin_actions (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS place_addition_request_daily_budget (
+  day_utc TEXT PRIMARY KEY CHECK (day_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 1600),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS place_addition_requests (
+  id TEXT PRIMARY KEY,
+  anonymous_user_id TEXT NOT NULL REFERENCES anonymous_users(id) ON DELETE CASCADE,
+  client_request_id TEXT NOT NULL CHECK (length(client_request_id) BETWEEN 8 AND 100),
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+  address TEXT NOT NULL CHECK (length(address) BETWEEN 1 AND 240),
+  category TEXT NOT NULL CHECK (length(category) BETWEEN 1 AND 80),
+  status TEXT NOT NULL DEFAULT 'needs_verification'
+    CHECK (status IN ('needs_verification', 'ready_for_manual_import', 'duplicate', 'rejected')),
+  review_reason TEXT CHECK (review_reason IS NULL OR length(review_reason) BETWEEN 5 AND 300),
+  matched_place_id TEXT REFERENCES places(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  reviewed_at TEXT,
+  CHECK (
+    (status = 'duplicate' AND matched_place_id IS NOT NULL) OR
+    (status != 'duplicate' AND matched_place_id IS NULL)
+  ),
+  UNIQUE (anonymous_user_id, client_request_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_place_addition_requests_owner_created
+  ON place_addition_requests(anonymous_user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_place_addition_requests_queue
+  ON place_addition_requests(status, created_at ASC);
+
+CREATE TRIGGER IF NOT EXISTS trg_place_addition_requests_daily_guard
+BEFORE INSERT ON place_addition_requests
+BEGIN
+  SELECT CASE WHEN (
+    SELECT COUNT(*)
+    FROM place_addition_requests
+    WHERE anonymous_user_id = NEW.anonymous_user_id
+      AND created_at >= strftime('%Y-%m-%dT00:00:00.000Z', 'now')
+      AND created_at < strftime('%Y-%m-%dT00:00:00.000Z', 'now', '+1 day')
+  ) >= 3 THEN RAISE(ABORT, 'PLACE_REQUEST_SESSION_DAILY_LIMIT') END;
+
+  INSERT INTO place_addition_request_daily_budget (day_utc, request_count, updated_at)
+  VALUES (strftime('%Y-%m-%d', 'now'), 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  ON CONFLICT(day_utc) DO UPDATE SET
+    request_count = place_addition_request_daily_budget.request_count + 1,
+    updated_at = excluded.updated_at
+  WHERE place_addition_request_daily_budget.request_count < 1600;
+
+  SELECT CASE WHEN changes() != 1
+    THEN RAISE(ABORT, 'PLACE_REQUEST_DAILY_BUDGET_80_PERCENT_STOP')
+  END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_place_addition_requests_terminal_status
+BEFORE UPDATE OF status ON place_addition_requests
+WHEN OLD.status IN ('duplicate', 'rejected') AND NEW.status != OLD.status
+BEGIN
+  SELECT RAISE(ABORT, 'PLACE_REQUEST_TERMINAL_STATUS');
+END;
+
+CREATE TABLE IF NOT EXISTS api_cost_guard_control (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  mode TEXT NOT NULL DEFAULT 'running' CHECK (mode IN ('running', 'degraded', 'stopped')),
+  reason TEXT NOT NULL DEFAULT 'initial-enabled' CHECK (length(reason) BETWEEN 1 AND 300),
+  generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1),
+  automatic_metric TEXT CHECK (
+    automatic_metric IS NULL OR automatic_metric IN ('workers_requests', 'd1_rows_read', 'd1_rows_written', 'manual')
+  ),
+  updated_by TEXT NOT NULL DEFAULT 'migration',
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+INSERT OR IGNORE INTO api_cost_guard_control
+  (id, mode, reason, generation, automatic_metric, updated_by, updated_at)
+VALUES
+  (1, 'running', 'initial-enabled', 1, NULL, 'migration', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+CREATE TABLE IF NOT EXISTS api_cost_guard_daily (
+  day_utc TEXT PRIMARY KEY CHECK (day_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  admitted_requests INTEGER NOT NULL DEFAULT 0 CHECK (admitted_requests >= 0),
+  reserved_workers_requests INTEGER NOT NULL DEFAULT 0 CHECK (reserved_workers_requests >= 0),
+  reserved_rows_read INTEGER NOT NULL DEFAULT 0 CHECK (reserved_rows_read >= 0),
+  reserved_rows_written INTEGER NOT NULL DEFAULT 0 CHECK (reserved_rows_written >= 0),
+  critical_requests INTEGER NOT NULL DEFAULT 0 CHECK (critical_requests >= 0),
+  critical_rows_read INTEGER NOT NULL DEFAULT 0 CHECK (critical_rows_read >= 0),
+  critical_rows_written INTEGER NOT NULL DEFAULT 0 CHECK (critical_rows_written >= 0),
+  high_cost_requests INTEGER NOT NULL DEFAULT 0 CHECK (high_cost_requests >= 0),
+  mutation_requests INTEGER NOT NULL DEFAULT 0 CHECK (mutation_requests >= 0),
+  observed_workers_requests INTEGER NOT NULL DEFAULT 0 CHECK (observed_workers_requests >= 0),
+  observed_rows_read INTEGER NOT NULL DEFAULT 0 CHECK (observed_rows_read >= 0),
+  observed_rows_written INTEGER NOT NULL DEFAULT 0 CHECK (observed_rows_written >= 0),
+  warned_percent INTEGER NOT NULL DEFAULT 0 CHECK (warned_percent BETWEEN 0 AND 100),
+  warned_metric TEXT CHECK (
+    warned_metric IS NULL OR warned_metric IN ('workers_requests', 'd1_rows_read', 'd1_rows_written')
+  ),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS api_cost_guard_reconciliations (
+  id TEXT PRIMARY KEY,
+  day_utc TEXT NOT NULL,
+  observed_workers_requests INTEGER NOT NULL CHECK (observed_workers_requests >= 0),
+  observed_d1_rows_read INTEGER NOT NULL CHECK (observed_d1_rows_read >= 0),
+  observed_d1_rows_written INTEGER NOT NULL CHECK (observed_d1_rows_written >= 0),
+  observed_at TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('cloudflare-dashboard', 'graphql-api')),
+  admin_subject TEXT NOT NULL,
+  note TEXT NOT NULL CHECK (length(note) BETWEEN 5 AND 300),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_cost_guard_reconcile_day
+  ON api_cost_guard_reconciliations(day_utc, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS field_report_publications (
+  report_id TEXT PRIMARY KEY REFERENCES place_events(id) ON DELETE CASCADE,
+  place_id TEXT NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+  anonymous_user_id TEXT NOT NULL REFERENCES anonymous_users(id) ON DELETE RESTRICT,
+  client_request_id TEXT,
+  comment TEXT CHECK (comment IS NULL OR length(comment) <= 120),
+  response_json TEXT NOT NULL,
+  moderation_status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (moderation_status IN ('pending', 'approved', 'rejected', 'hidden')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS field_report_media (
+  report_id TEXT NOT NULL REFERENCES field_report_publications(report_id) ON DELETE CASCADE,
+  photo_id TEXT NOT NULL REFERENCES photos(id) ON DELETE RESTRICT,
+  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 3),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (report_id, photo_id),
+  UNIQUE (photo_id)
+);
+
+CREATE TABLE IF NOT EXISTS hashtags (
+  name TEXT PRIMARY KEY,
+  tag_type TEXT NOT NULL CHECK (tag_type IN ('place', 'status', 'purpose', 'time', 'region')),
+  moderation_status TEXT NOT NULL DEFAULT 'approved'
+    CHECK (moderation_status IN ('pending', 'approved', 'rejected', 'hidden')),
+  post_count INTEGER NOT NULL DEFAULT 0 CHECK (post_count >= 0),
+  last_post_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS field_report_hashtags (
+  report_id TEXT NOT NULL REFERENCES field_report_publications(report_id) ON DELETE CASCADE,
+  hashtag_name TEXT NOT NULL REFERENCES hashtags(name) ON DELETE RESTRICT,
+  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 4),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (report_id, hashtag_name)
+);
+
+CREATE TABLE IF NOT EXISTS publication_outbox (
+  id TEXT PRIMARY KEY,
+  aggregate_type TEXT NOT NULL CHECK (aggregate_type = 'field_report'),
+  aggregate_id TEXT NOT NULL REFERENCES field_report_publications(report_id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'published', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  available_at TEXT NOT NULL,
+  lease_token TEXT,
+  lease_expires_at TEXT,
+  last_error_code TEXT,
+  published_at TEXT,
+  dead_lettered_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_places_region ON places(region_id, is_active, coordinate_status);
 CREATE INDEX IF NOT EXISTS idx_places_bbox ON places(latitude, longitude);
 CREATE INDEX IF NOT EXISTS idx_place_events_place_created ON place_events(place_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_place_events_field_report_moderation
+  ON place_events(event_type, source, moderation_status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_place_event_hourly_place_hour ON place_event_hourly(place_id, hour_bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_rankings_region_window ON place_rankings(region_id, window_hours, rank);
 CREATE INDEX IF NOT EXISTS idx_comments_place_created ON comments(place_id, created_at DESC);
@@ -238,6 +439,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_open_unique_anon_target_reason
   ON reports(anonymous_user_id, target_type, target_id, reason)
   WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS idx_moderation_reports_decision ON moderation_reports(decision, priority, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_field_report_publications_request
+  ON field_report_publications(anonymous_user_id, client_request_id)
+  WHERE client_request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_field_report_publications_place_created
+  ON field_report_publications(place_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_field_report_hashtags_name_report
+  ON field_report_hashtags(hashtag_name, report_id);
+CREATE INDEX IF NOT EXISTS idx_publication_outbox_status_available
+  ON publication_outbox(status, available_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_publication_outbox_delivery
+  ON publication_outbox(status, available_at, lease_expires_at, created_at);
 
 PRAGMA foreign_keys = ON;
 
@@ -369,6 +581,42 @@ CREATE TABLE IF NOT EXISTS api_ingestion_runs (
   finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS source_ingestion_targets (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+  place_id TEXT NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+  adapter_config_json TEXT NOT NULL CHECK (
+    json_valid(adapter_config_json)
+    AND json_type(adapter_config_json) = 'object'
+    AND json_extract(adapter_config_json, '$.serviceKey') IS NULL
+    AND json_extract(adapter_config_json, '$.apiKey') IS NULL
+    AND json_extract(adapter_config_json, '$.token') IS NULL
+  ),
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  refresh_interval_seconds INTEGER NOT NULL CHECK (refresh_interval_seconds BETWEEN 300 AND 86400),
+  next_run_at TEXT NOT NULL,
+  lease_token TEXT,
+  lease_until TEXT,
+  last_started_at TEXT,
+  last_succeeded_at TEXT,
+  last_failed_at TEXT,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+  last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) BETWEEN 3 AND 80),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  CHECK (
+    (lease_token IS NULL AND lease_until IS NULL)
+    OR (lease_token IS NOT NULL AND lease_until IS NOT NULL)
+  ),
+  UNIQUE (source_id, place_id, adapter_config_json)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_ingestion_targets_due
+  ON source_ingestion_targets (enabled, next_run_at, id);
+
+CREATE INDEX IF NOT EXISTS idx_source_ingestion_targets_lease
+  ON source_ingestion_targets (lease_until, id);
+
 CREATE TABLE IF NOT EXISTS dimension_settings (
   setting_key TEXT PRIMARY KEY,
   dimension TEXT CHECK (dimension IS NULL OR dimension IN (
@@ -499,7 +747,7 @@ SET
   commercial_use_status = 'allowed_with_attribution',
   attribution_text = '기상청',
   refresh_interval_seconds = 3600,
-  default_ttl_seconds = 1800,
+  default_ttl_seconds = 7200,
   owner_contact = 'data-operations',
   last_terms_checked_at = '2026-07-10T00:00:00.000Z',
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -598,7 +846,7 @@ CREATE TABLE IF NOT EXISTS live_signals (
   attribution_text TEXT,
   observed_at TEXT NOT NULL,
   fetched_at TEXT NOT NULL,
-  expires_at TEXT,
+  expires_at TEXT NOT NULL,
   confidence_score REAL NOT NULL CHECK (confidence_score BETWEEN 0 AND 1),
   is_estimated INTEGER NOT NULL DEFAULT 0 CHECK (is_estimated IN (0, 1)),
   is_publicly_visible INTEGER NOT NULL DEFAULT 0 CHECK (is_publicly_visible IN (0, 1)),
@@ -616,7 +864,7 @@ CREATE TABLE IF NOT EXISTS live_signals (
   idempotency_key TEXT,
   metadata_json TEXT CHECK (metadata_json IS NULL OR json_valid(metadata_json)),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  CHECK (expires_at IS NULL OR expires_at > observed_at),
+  CHECK (expires_at > observed_at),
   CHECK (
     (actor_type = 'system' AND actor_id IS NULL) OR
     (actor_type IN ('anonymous', 'member') AND actor_id IS NOT NULL)
@@ -752,3 +1000,218 @@ CREATE INDEX IF NOT EXISTS idx_photo_moderation_status ON photo_moderation_state
 CREATE INDEX IF NOT EXISTS idx_report_votes_report ON report_votes(report_id, vote_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker ON user_blocks(blocker_anonymous_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_account_deletion_actor ON account_deletion_requests(actor_type, anonymous_user_id, profile_id, requested_at DESC);
+
+CREATE TABLE IF NOT EXISTS saved_places (
+  actor_identity_key TEXT NOT NULL,
+  place_id TEXT NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (actor_identity_key, place_id)
+);
+
+CREATE TABLE IF NOT EXISTS saved_posts (
+  actor_identity_key TEXT NOT NULL,
+  post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (actor_identity_key, post_id)
+);
+
+CREATE TABLE IF NOT EXISTS followed_topics (
+  actor_identity_key TEXT NOT NULL,
+  topic_name TEXT NOT NULL CHECK (length(topic_name) BETWEEN 1 AND 80),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (actor_identity_key, topic_name)
+);
+
+CREATE TABLE IF NOT EXISTS notification_subscriptions (
+  id TEXT PRIMARY KEY,
+  actor_identity_key TEXT NOT NULL,
+  push_token_hash TEXT CHECK (push_token_hash IS NULL OR push_token_hash GLOB 'sha256:*'),
+  platform TEXT NOT NULL CHECK (platform IN ('webview', 'ios', 'android', 'web')),
+  enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE (actor_identity_key, platform)
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_places_actor ON saved_places(actor_identity_key, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_saved_posts_actor ON saved_posts(actor_identity_key, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_followed_topics_actor ON followed_topics(actor_identity_key, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_subscriptions_actor ON notification_subscriptions(actor_identity_key, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id TEXT PRIMARY KEY,
+  event_name TEXT NOT NULL CHECK (length(event_name) BETWEEN 1 AND 64),
+  actor_identity_key TEXT NOT NULL CHECK (actor_identity_key GLOB 'analytics:*'),
+  properties_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(properties_json)),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_analytics_events_name_created
+  ON analytics_events(event_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_actor_created
+  ON analytics_events(actor_identity_key, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS photo_cleanup_jobs (
+  id TEXT PRIMARY KEY,
+  photo_id TEXT REFERENCES photos(id) ON DELETE SET NULL,
+  storage_key TEXT NOT NULL,
+  byte_size INTEGER NOT NULL DEFAULT 0 CHECK (byte_size >= 0),
+  reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 120),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  next_attempt_at TEXT NOT NULL,
+  last_error_code TEXT,
+  lease_token TEXT,
+  lease_expires_at TEXT,
+  budget_released_at TEXT,
+  completed_at TEXT,
+  dead_lettered_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_cleanup_jobs_pending
+  ON photo_cleanup_jobs(status, next_attempt_at, lease_expires_at, created_at);
+
+CREATE TABLE IF NOT EXISTS photo_storage_budget (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  active_bytes INTEGER NOT NULL DEFAULT 0 CHECK (active_bytes >= 0),
+  period_utc TEXT NOT NULL CHECK (period_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'),
+  writes_in_period INTEGER NOT NULL DEFAULT 0 CHECK (writes_in_period >= 0),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+INSERT OR IGNORE INTO photo_storage_budget (id, active_bytes, period_utc, writes_in_period, updated_at)
+SELECT
+  1,
+  COALESCE(SUM(CASE WHEN deleted_at IS NULL AND status <> 'rejected' THEN byte_size ELSE 0 END), 0),
+  strftime('%Y-%m', 'now'),
+  COALESCE(SUM(CASE WHEN strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END), 0),
+  strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+FROM photos;
+
+CREATE TABLE IF NOT EXISTS photo_storage_releases (
+  storage_key TEXT PRIMARY KEY,
+  byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+  release_token TEXT NOT NULL UNIQUE,
+  released_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_storage_releases_released
+  ON photo_storage_releases(released_at DESC);
+
+INSERT OR IGNORE INTO photo_storage_releases (storage_key, byte_size, release_token, released_at)
+SELECT
+  storage_key,
+  byte_size,
+  'schema-bootstrap-' || id,
+  COALESCE(budget_released_at, completed_at, updated_at)
+FROM photo_cleanup_jobs
+WHERE budget_released_at IS NOT NULL;
+
+UPDATE photo_storage_budget
+SET active_bytes = MAX(
+      active_bytes,
+      COALESCE((
+        SELECT SUM(byte_size)
+        FROM photos
+        WHERE deleted_at IS NULL AND status <> 'rejected'
+      ), 0)
+      + COALESCE((
+        SELECT SUM(byte_size)
+        FROM (
+          SELECT storage_key, MAX(byte_size) AS byte_size
+          FROM photo_cleanup_jobs
+          WHERE budget_released_at IS NULL
+            AND status IN ('pending', 'processing', 'failed')
+          GROUP BY storage_key
+        ) pending_cleanup
+      ), 0)
+    ),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE id = 1;
+
+CREATE TABLE IF NOT EXISTS photo_upload_claims (
+  upload_id TEXT PRIMARY KEY,
+  anonymous_user_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_upload_claims_consumed
+  ON photo_upload_claims(consumed_at);
+
+CREATE TABLE IF NOT EXISTS photo_abuse_budget (
+  principal_hash TEXT NOT NULL,
+  day_utc TEXT NOT NULL,
+  upload_count INTEGER NOT NULL DEFAULT 0 CHECK (upload_count >= 0),
+  bytes_in_period INTEGER NOT NULL DEFAULT 0 CHECK (bytes_in_period >= 0),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (principal_hash, day_utc)
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_abuse_budget_updated
+  ON photo_abuse_budget(updated_at);
+
+CREATE TABLE IF NOT EXISTS photo_upload_control (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  uploads_enabled INTEGER NOT NULL DEFAULT 1 CHECK (uploads_enabled IN (0, 1)),
+  reason TEXT,
+  updated_by TEXT NOT NULL DEFAULT 'migration',
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+INSERT OR IGNORE INTO photo_upload_control (id, uploads_enabled, reason, updated_by, updated_at)
+VALUES (1, 1, 'initial-enabled', 'migration', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+CREATE TABLE IF NOT EXISTS photo_read_budget (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  period_utc TEXT NOT NULL CHECK (period_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'),
+  reads_in_period INTEGER NOT NULL DEFAULT 0 CHECK (reads_in_period >= 0),
+  day_utc TEXT NOT NULL CHECK (day_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  reads_in_day INTEGER NOT NULL DEFAULT 0 CHECK (reads_in_day >= 0),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+INSERT OR IGNORE INTO photo_read_budget (id, period_utc, reads_in_period, day_utc, reads_in_day, updated_at)
+VALUES (1, strftime('%Y-%m', 'now'), 0, strftime('%Y-%m-%d', 'now'), 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+CREATE TABLE IF NOT EXISTS photo_read_control (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  reads_enabled INTEGER NOT NULL DEFAULT 1 CHECK (reads_enabled IN (0, 1)),
+  reason TEXT,
+  updated_by TEXT NOT NULL DEFAULT 'migration',
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+INSERT OR IGNORE INTO photo_read_control (id, reads_enabled, reason, updated_by, updated_at)
+VALUES (1, 1, 'initial-enabled', 'migration', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+CREATE TABLE IF NOT EXISTS photo_read_abuse_budget (
+  principal_hash TEXT NOT NULL,
+  day_utc TEXT NOT NULL,
+  read_count INTEGER NOT NULL DEFAULT 0 CHECK (read_count >= 0),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (principal_hash, day_utc)
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_read_abuse_budget_updated
+  ON photo_read_abuse_budget(updated_at);
+
+CREATE TABLE IF NOT EXISTS photo_transform_budget (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  period_utc TEXT NOT NULL CHECK (period_utc GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'),
+  transforms_in_period INTEGER NOT NULL DEFAULT 0 CHECK (transforms_in_period >= 0),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+INSERT OR IGNORE INTO photo_transform_budget (id, period_utc, transforms_in_period, updated_at)
+SELECT
+  1,
+  strftime('%Y-%m', 'now'),
+  COALESCE(SUM(CASE WHEN strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now') THEN 1 ELSE 0 END), 0),
+  strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+FROM photos;

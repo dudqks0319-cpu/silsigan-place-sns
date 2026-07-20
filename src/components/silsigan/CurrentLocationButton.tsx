@@ -8,6 +8,7 @@ export type LocationPermissionState = "idle" | "requesting" | "granted" | "denie
 export type UiLocation = {
   latitude: number;
   longitude: number;
+  accuracyM?: number;
 };
 
 export function CurrentLocationButton({
@@ -32,6 +33,7 @@ export function CurrentLocationButton({
         onLocation({
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
+          accuracyM: position.coords.accuracy,
         });
         onPermissionChange("granted");
       },

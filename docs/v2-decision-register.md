@@ -11,7 +11,7 @@ Updated: 2026-07-10
 | 번호 | 권장 결정 | 로컬 적용 | 외부 완료 조건 |
 | --- | --- | --- | --- |
 | 1 | NAVER Cloud의 **Web Maps** 애플리케이션을 사용하고 staging/production HTTPS origin만 등록한다. 키 누락·인증·SDK·타임아웃·리소스 실패를 서로 다른 상태로 표시한다. | `NaverMap.tsx`가 실패 원인을 구분하고 목록 fallback과 재시도를 제공한다. | NAVER Cloud Console에서 Web Maps 활성화, 실제 staging/production origin 등록, 키 제한 확인, 두 배포 URL에서 지도 또는 명시적 fallback 증거 캡처. 담당: release-operator. |
-| 2 | 기존 Cloudflare D1을 유지한다. Supabase로 회귀하거나 V2 패치의 Supabase migration을 적용하지 않는다. | Worker/D1/R2/KV/Durable Objects 구조와 additive `0004`~`0006` migration을 유지한다. | staging에서 migration 적용·읽기 검증 후 production 별도 승인. 담당: data-operations. |
+| 2 | 기존 Cloudflare D1을 유지한다. Supabase로 회귀하거나 V2 패치의 Supabase migration을 적용하지 않는다. | Worker/D1/R2/KV/Durable Objects 구조와 additive `0004`~`0015` migration chain을 유지한다. | staging에서 migration 적용·읽기 검증 후 production 별도 승인. 담당: data-operations. |
 | 3 | production에서 Worker API URL이나 D1이 없으면 즉시 실패한다. mock/demo로 자동 전환하지 않는다. | production demo 차단, Worker 미설정 fail-closed, D1 미설정 `503` 계약과 테스트가 있다. | 실제 production URL에서 demo/mock 응답이 없음을 smoke로 확인. 담당: release-operator. |
 | 4 | SNS 홈 피드와 공개 운영 요약은 기본 비활성화한다. 운영 화면은 역할 기반 관리자만 접근한다. | `SOCIAL_FEED_ENABLED=false`; 사용자 홈은 방문 판단 중심이며 관리자 API는 operator/moderator/admin 권한을 요구한다. | staging 관리자 계정별 허용·거부 증거. 담당: trust-safety. |
 | 5 | CCTV·YouTube·외부 이미지/영상은 권리 확인 전 비활성화한다. CCTV는 메타데이터만 처리하고 영상 URL 저장·노출·중계는 금지한다. | 출처 레지스트리가 권리·health·활성화 조건을 모두 통과해야 수집한다. CCTV는 `official_static`, `video_use_allowed=0`, `agreement_required=1`; `LIVE_STREAMS_ENABLED=false`다. | 제공기관 약관, 상업 이용, 표시 문구, 임베드 조건, 채널/영상 권리 소유자를 문서화하고 legal-safety 승인. |

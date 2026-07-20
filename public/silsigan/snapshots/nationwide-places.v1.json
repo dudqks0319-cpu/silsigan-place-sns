@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "silsigan-nationwide-place-directory/v1",
+  "catalogVersion": "core-seed-2026-07-20",
+  "catalogGeneratedAt": "2026-07-20T00:00:00.000Z",
+  "truthPolicy": "verified-place-directory-only-no-live-status",
+  "places": [
+    {
+      "id": "busan-gwangalli",
+      "name": "광안리해수욕장",
+      "address": "부산 수영구 광안해변로",
+      "categoryId": "tourism",
+      "areaId": "busan-suyeong",
+      "regionId": "busan",
+      "latitude": 35.1532,
+      "longitude": 129.1186,
+      "launchStage": "active",
+      "coordinateStatus": "verified"
+    },
+    {
+      "id": "ulsan-taehwagang",
+      "name": "태화강 국가정원",
+      "address": "울산 중구 태화강국가정원길",
+      "categoryId": "tourism",
+      "areaId": "ulsan-jung",
+      "regionId": "ulsan",
+      "latitude": 35.5486,
+      "longitude": 129.3005,
+      "launchStage": "active",
+      "coordinateStatus": "verified"
+    },
+    {
+      "id": "gyeongju-hwangridan",
+      "name": "황리단길",
+      "address": "경북 경주시 포석로",
+      "categoryId": "restaurant_cafe",
+      "areaId": "gyeongju-hwango",
+      "regionId": "gyeongju",
+      "latitude": 35.8382,
+      "longitude": 129.2098,
+      "launchStage": "active",
+      "coordinateStatus": "verified"
+    },
+    {
+      "id": "ulsan-city-hall",
+      "name": "울산광역시청",
+      "address": "울산 남구 중앙로 201",
+      "categoryId": "public_office",
+      "areaId": "ulsan-nam",
+      "regionId": "ulsan",
+      "latitude": 35.5396,
+      "longitude": 129.3114,
+      "launchStage": "beta",
+      "coordinateStatus": "verified"
+    },
+    {
+      "id": "seoul-yeouido",
+      "name": "여의도 한강공원",
+      "address": "서울 영등포구 여의동로 330",
+      "categoryId": "tourism",
+      "areaId": "seoul-yeongdeungpo",
+      "regionId": "seoul",
+      "latitude": 37.5265,
+      "longitude": 126.9349,
+      "launchStage": "beta",
+      "coordinateStatus": "verified"
+    }
+  ]
+}

@@ -20,6 +20,7 @@ declare global {
   interface Window {
     Capacitor?: {
       isNativePlatform?: () => boolean;
+      getPlatform?: () => string;
       Plugins?: {
         SilsiganShell?: {
           openSettings?: (input: { section: string }) => Promise<unknown>;
@@ -37,6 +38,11 @@ export function NativeBridgeBootstrap() {
     const bridge = createWebViewBridge({
       firstPartyOrigins: [window.location.origin],
       isNative: true,
+      nativePlatform: window.Capacitor?.getPlatform?.() === "ios"
+        ? "ios"
+        : window.Capacitor?.getPlatform?.() === "android"
+          ? "android"
+          : undefined,
       loadPlugin: async (specifier) => {
         const load = pluginLoaders[specifier];
         if (!load) throw unsupported("Native plugin is not allowlisted");
@@ -46,6 +52,11 @@ export function NativeBridgeBootstrap() {
         const nativeSettings = window.Capacitor?.Plugins?.SilsiganShell?.openSettings;
         if (!nativeSettings) throw unsupported("Native app settings adapter is unavailable");
         await nativeSettings({ section });
+      },
+      registerPushToken: async ({ platform, token }) => {
+        window.dispatchEvent(new CustomEvent("silsigan:push-token", {
+          detail: { platform, token },
+        }));
       },
     });
 

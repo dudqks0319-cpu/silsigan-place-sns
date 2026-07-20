@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { adminCookieName, isAdminTokenValid } from "@/lib/admin-auth";
+import { adminCookieName, assertAdminMutationOrigin, isAdminTokenValid } from "@/lib/admin-auth";
 import { fail, ApiError } from "@/lib/api";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   try {
+    assertAdminMutationOrigin(request);
     assertRateLimit({ key: rateLimitKey(request, "admin-login"), limit: 5, windowMs: 60_000 });
     const contentType = request.headers.get("content-type") ?? "";
     const payload = contentType.includes("application/json")
@@ -32,15 +33,20 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE() {
-  const response = NextResponse.json({ success: true, data: { ok: true } });
-  response.cookies.set(adminCookieName, "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 0,
-  });
+export async function DELETE(request: Request) {
+  try {
+    assertAdminMutationOrigin(request);
+    const response = NextResponse.json({ success: true, data: { ok: true } });
+    response.cookies.set(adminCookieName, "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 0,
+    });
 
-  return response;
+    return response;
+  } catch (error) {
+    return fail(error);
+  }
 }

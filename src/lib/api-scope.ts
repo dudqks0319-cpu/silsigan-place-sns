@@ -5,6 +5,7 @@ export type ScopedApiPathOptions = {
   q?: string | null;
   bbox?: string | null;
   limit?: number | null;
+  mine?: boolean;
 };
 
 const maxApiLimit = 200;
@@ -57,6 +58,10 @@ export function buildScopedApiPath(path: string, options: ScopedApiPathOptions =
 
   if (options.limit !== undefined && options.limit !== null) {
     params.set("limit", String(clampApiLimit(options.limit)));
+  }
+
+  if (options.mine) {
+    params.set("mine", "1");
   }
 
   const queryString = params.toString();

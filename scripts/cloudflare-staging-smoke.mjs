@@ -23,8 +23,6 @@ const baseUrlInput = options.get("base-url") ?? process.env.SILSIGAN_STAGING_API
 const tailFile = options.get("tail-file") ?? process.env.SILSIGAN_STAGING_TAIL_LOG_FILE;
 const anonymousId = options.get("anon-id") ?? process.env.SILSIGAN_STAGING_ANON_ID ?? (mutating ? `anon_staging_smoke_${Date.now()}` : DEFAULT_ANON_ID);
 const adminToken = options.get("admin-token") ?? process.env.SILSIGAN_STAGING_ADMIN_TOKEN;
-const restrictionAnonymousId =
-  options.get("restriction-anon-id") ?? process.env.SILSIGAN_STAGING_RESTRICTION_ANON_ID ?? `anon_staging_restrict_${Date.now()}`;
 const coordinateStatusSmokeEnabled = flags.has("coordinate-status") || process.env.SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE === "1";
 const coordinateSmokePlaceId = options.get("coordinate-place-id") ?? process.env.SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID;
 const coordinateSmokeLatitude = options.get("coordinate-latitude") ?? process.env.SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE;
@@ -33,6 +31,8 @@ const coordinateSmokeSource = options.get("coordinate-source") ?? process.env.SI
 const coordinateSmokeReason = options.get("coordinate-reason") ?? process.env.SILSIGAN_STAGING_COORDINATE_SMOKE_REASON ?? "staging smoke verified coordinate";
 
 const checks = [];
+let anonymousSession = null;
+let restrictionAnonymousSession = null;
 
 try {
   if (tailFile) {
@@ -53,11 +53,18 @@ try {
     const baseUrl = normalizeBaseUrl(baseUrlInput);
     const selectedPlace = await runReadOnlySmoke(baseUrl);
     if (mutating) {
-      await runPhotoMutationSmoke(baseUrl, selectedPlace.id);
-      await runInteractionMutationSmoke(baseUrl, selectedPlace.id);
-      await runModerationMutationSmoke(baseUrl, selectedPlace.id);
-      await runUserRestrictionMutationSmoke(baseUrl, selectedPlace.id);
-      await runCoordinateStatusMutationSmoke(baseUrl);
+      try {
+        anonymousSession = await issueAnonymousSession(baseUrl, "anonymousSession.primaryIssue");
+        restrictionAnonymousSession = await issueAnonymousSession(baseUrl, "anonymousSession.restrictionIssue");
+        await runAnonymousSessionLifecycleSmoke(baseUrl);
+        await runPhotoMutationSmoke(baseUrl, selectedPlace.id);
+        await runInteractionMutationSmoke(baseUrl, selectedPlace.id);
+        await runModerationMutationSmoke(baseUrl, selectedPlace.id);
+        await runUserRestrictionMutationSmoke(baseUrl, selectedPlace.id);
+        await runCoordinateStatusMutationSmoke(baseUrl);
+      } finally {
+        await revokeMutationSessions(baseUrl);
+      }
     } else {
       record("photos.images.mutation", "skip", "실제 사진/R2/Images smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
       record("interactions.mutation", "skip", "실제 댓글/좋아요 mutation smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
@@ -172,6 +179,62 @@ async function runReadOnlySmoke(baseUrl) {
   });
 
   return selectedPlace;
+}
+
+async function issueAnonymousSession(baseUrl, checkName) {
+  const response = await requestJsonAs(baseUrl, "/api/session/anonymous", null, { method: "POST" });
+  const credential = expectAnonymousSessionCredential(checkName, response, 201);
+  record(checkName, "pass", "서버 결합 익명 세션을 발급했습니다.");
+  return credential;
+}
+
+async function runAnonymousSessionLifecycleSmoke(baseUrl) {
+  const issued = await issueAnonymousSession(baseUrl, "anonymousSession.lifecycleIssue");
+  const forged = await requestJsonAs(baseUrl, "/api/preferences", { ...issued, proof: "W".repeat(43) });
+  expectAnonymousSessionFailure("anonymousSession.forgedProof", forged, "ANONYMOUS_SESSION_PROOF_INVALID");
+  record("anonymousSession.forgedProof", "pass", "탈취한 세션 ID와 위조 증명값 조합을 차단했습니다.");
+
+  const rotateResponse = await requestJsonAs(baseUrl, "/api/session/anonymous/rotate", issued, { method: "POST" });
+  const rotated = expectAnonymousSessionCredential("anonymousSession.rotate", rotateResponse, 200);
+  assert(rotated.anonymousId === issued.anonymousId, "anonymousSession.rotate", "회전 후 익명 세션 ID가 변경됐습니다.");
+  assert(rotated.proof !== issued.proof, "anonymousSession.rotate", "회전 후 익명 세션 증명값이 변경되지 않았습니다.");
+
+  const oldProof = await requestJsonAs(baseUrl, "/api/preferences", issued);
+  expectAnonymousSessionFailure("anonymousSession.oldProofRejected", oldProof, "ANONYMOUS_SESSION_PROOF_INVALID");
+
+  const activeProof = await requestJsonAs(baseUrl, "/api/preferences", rotated);
+  expectSuccess("anonymousSession.rotatedProofAccepted", activeProof, 200);
+
+  const revokeResponse = await requestJsonAs(baseUrl, "/api/session/anonymous", rotated, { method: "DELETE" });
+  const revoked = expectSuccess("anonymousSession.revoke", revokeResponse, 200);
+  assert(revoked.revoked === true, "anonymousSession.revoke", "익명 세션 폐기 응답 revoked가 true가 아닙니다.");
+
+  const revokedProof = await requestJsonAs(baseUrl, "/api/preferences", rotated);
+  expectAnonymousSessionFailure("anonymousSession.revokedProofRejected", revokedProof, "ANONYMOUS_SESSION_REVOKED");
+  record("anonymousSession.lifecycle", "pass", "증명 회전, 이전 증명 거부, 폐기 후 재사용 거부를 확인했습니다.");
+}
+
+async function revokeMutationSessions(baseUrl) {
+  const sessions = [anonymousSession, restrictionAnonymousSession].filter(Boolean);
+  const failures = [];
+
+  for (const session of sessions) {
+    try {
+      const response = await requestJsonAs(baseUrl, "/api/session/anonymous", session, { method: "DELETE" });
+      if (response.status !== 200 || response.payload?.success !== true || response.payload?.data?.revoked !== true) {
+        failures.push(response.status);
+      }
+    } catch {
+      failures.push("network");
+    }
+  }
+
+  anonymousSession = null;
+  restrictionAnonymousSession = null;
+  assert(failures.length === 0, "anonymousSession.cleanup", "mutation smoke 익명 세션 폐기에 실패했습니다.");
+  if (sessions.length > 0) {
+    record("anonymousSession.cleanup", "pass", "mutation smoke 익명 세션을 폐기했습니다.", { count: sessions.length });
+  }
 }
 
 async function runPhotoMutationSmoke(baseUrl, placeId) {
@@ -385,7 +448,7 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
   let unrestricted = false;
 
   try {
-    const seedCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousId, {
+    const seedCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousSession, {
       method: "POST",
       body: JSON.stringify({
         placeId,
@@ -416,7 +479,7 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
       blockedUntil,
     });
 
-    const blockedCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousId, {
+    const blockedCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousSession, {
       method: "POST",
       body: JSON.stringify({
         placeId,
@@ -449,7 +512,7 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
     unrestricted = true;
     record("users.unrestrict", "pass", "전용 smoke 익명 사용자의 제한을 해제했습니다.");
 
-    const restoredCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousId, {
+    const restoredCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousSession, {
       method: "POST",
       body: JSON.stringify({
         placeId,
@@ -474,7 +537,7 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
 
     let deleted = 0;
     for (const commentId of cleanupCommentIds) {
-      const deleteResponse = await requestJsonAs(baseUrl, `/api/comments/${encodeURIComponent(commentId)}`, restrictionAnonymousId, { method: "DELETE" });
+      const deleteResponse = await requestJsonAs(baseUrl, `/api/comments/${encodeURIComponent(commentId)}`, restrictionAnonymousSession, { method: "DELETE" });
       expectSuccess("users.restrictionCleanup", deleteResponse, 200);
       deleted += 1;
     }
@@ -544,7 +607,7 @@ async function validateTailLogFile(filePath) {
     return;
   }
 
-  record("tail.redaction", "pass", "captured tail log에서 raw token/coordinate/anon id/original filename 패턴이 발견되지 않았습니다.", {
+  record("tail.redaction", "pass", "captured tail log에서 raw token/anonymous proof/coordinate/anon id/original filename 패턴이 발견되지 않았습니다.", {
     file: filePath,
   });
 }
@@ -555,6 +618,7 @@ export function findSensitiveTailLogFindings(text) {
     { label: "assigned_secret", regex: /\b(?:ADMIN_TOKEN|ADMIN_TOKENS|CLOUDFLARE_API_TOKEN)\b\s*[:=]\s*["']?(?!\[redacted\]|redacted)[^"'\s]{6,}/gi },
     { label: "admin_token_header", regex: /\bx-silsigan-admin-token\b["']?\s*[:=]\s*["']?(?!\[redacted\]|redacted)[A-Za-z0-9._~+/=-]{8,}/gi },
     { label: "bearer_token", regex: /\bBearer\s+(?!\[redacted\]|redacted)[A-Za-z0-9._~+/=-]{16,}/gi },
+    { label: "anonymous_session_proof", regex: /(?:\bx-silsigan-anon-proof\b|\bproof\b)(?:\\?["'])?\s*[:=]\s*(?:\\?["'])?(?!\[redacted\]|redacted)[A-Za-z0-9_-]{43}\b/gi },
     { label: "anonymous_id", regex: /\banon_[A-Za-z0-9_-]{8,}\b/gi },
     { label: "email", regex: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi },
     { label: "raw_latitude", regex: /\b(?:latitude|lat)\b["']?\s*[:=]\s*"?-?\d{1,2}\.\d{4,}/gi },
@@ -570,13 +634,13 @@ export function findSensitiveTailLogFindings(text) {
 }
 
 async function requestJson(baseUrl, path, init = {}) {
-  return requestJsonAs(baseUrl, path, anonymousId, init);
+  return requestJsonAs(baseUrl, path, anonymousSession ?? anonymousId, init);
 }
 
 async function requestBytes(baseUrl, path, init = {}) {
   const url = new URL(path, baseUrl);
   const headers = new Headers(init.headers ?? {});
-  headers.set("x-silsigan-anon-id", anonymousId);
+  applyAnonymousSessionHeaders(headers, anonymousSession ?? anonymousId);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -599,10 +663,10 @@ async function requestBytes(baseUrl, path, init = {}) {
   };
 }
 
-async function requestJsonAs(baseUrl, path, requestAnonymousId, init = {}) {
+async function requestJsonAs(baseUrl, path, requestAnonymousSession, init = {}) {
   const url = new URL(path, baseUrl);
   const headers = new Headers(init.headers ?? {});
-  headers.set("x-silsigan-anon-id", requestAnonymousId);
+  applyAnonymousSessionHeaders(headers, requestAnonymousSession);
   if (init.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
@@ -634,6 +698,18 @@ async function requestJsonAs(baseUrl, path, requestAnonymousId, init = {}) {
   return { status: response.status, payload };
 }
 
+function applyAnonymousSessionHeaders(headers, session) {
+  if (typeof session === "string") {
+    headers.set("x-silsigan-anon-id", session);
+    return;
+  }
+
+  if (isRecord(session)) {
+    headers.set("x-silsigan-anon-id", session.anonymousId);
+    headers.set("x-silsigan-anon-proof", session.proof);
+  }
+}
+
 function parseCoordinateOption(value, code, label) {
   if (value === undefined || value === null || value === "") {
     throw new SmokeError(code, `${label} 값이 필요합니다.`);
@@ -659,6 +735,21 @@ function expectSuccess(name, response, expectedStatus) {
   assert(isRecord(response.payload), name, `${name} 응답 body가 객체가 아닙니다.`);
   assert(response.payload.success === true, name, `${name} 응답 success가 true가 아닙니다.`);
   return response.payload.data;
+}
+
+function expectAnonymousSessionCredential(name, response, expectedStatus) {
+  const credential = expectSuccess(name, response, expectedStatus);
+  assert(isRecord(credential), name, `${name} 응답 data가 객체가 아닙니다.`);
+  assert(typeof credential.anonymousId === "string" && /^[a-zA-Z0-9_-]{12,80}$/.test(credential.anonymousId), name, `${name} anonymousId 형식이 올바르지 않습니다.`);
+  assert(typeof credential.proof === "string" && /^[a-zA-Z0-9_-]{43}$/.test(credential.proof), name, `${name} proof 형식이 올바르지 않습니다.`);
+  assert(typeof credential.expiresAt === "string" && Date.parse(credential.expiresAt) > Date.now(), name, `${name} expiresAt이 유효하지 않습니다.`);
+  return credential;
+}
+
+function expectAnonymousSessionFailure(name, response, code) {
+  assert(response.status === 403, name, `${name} 상태가 403이 아니라 ${response.status}입니다.`);
+  assert(response.payload?.success === false, name, `${name} 응답 success가 false가 아닙니다.`);
+  assert(response.payload?.error?.code === code, name, `${name} 오류 code가 ${code}가 아닙니다.`);
 }
 
 function isPublicCoordinatePlace(place) {

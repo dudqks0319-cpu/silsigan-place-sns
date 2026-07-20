@@ -50,7 +50,7 @@ export type LiveSignal = {
   attributionText?: string;
   observedAt: string;
   fetchedAt: string;
-  expiresAt?: string;
+  expiresAt: string;
   confidenceScore: number;
   isEstimated: boolean;
   isPubliclyVisible: boolean;
@@ -156,3 +156,38 @@ export type DataSource = {
 export type ActorIdentity =
   | { kind: "anonymous"; anonymousId: string }
   | { kind: "member"; profileId: string };
+
+export type HashtagRecentMedia = {
+  id: string;
+  placeId: string;
+  category: string;
+  moderationStatus: "approved";
+  photoIds: string[];
+  hashtagNames: string[];
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type HashtagSummary = {
+  id: string;
+  name: string;
+  tagType: "place" | "status" | "purpose" | "time" | "region";
+  postCount: number;
+  createdAt: string;
+  latestObservedAt: string | null;
+  activePlaceCount: number;
+  recentPhotoCount: number;
+  recentMedia: HashtagRecentMedia[];
+  nextCursor: string | null;
+};
+
+export type ListHashtagParams = {
+  name?: string;
+  regionId?: string;
+  placeId?: string;
+  hasPhoto?: boolean;
+  activeOnly?: boolean;
+  sort?: "recent";
+  cursor?: string;
+  limit?: number;
+};

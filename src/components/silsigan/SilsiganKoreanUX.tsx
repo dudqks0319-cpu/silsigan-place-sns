@@ -363,101 +363,14 @@ const places: Place[] = [
   },
 ];
 
-const posts: Post[] = [
-  {
-    id: "post-gwangalli-1",
-    placeId: "busan-gwangalli",
-    author: "부산 해변러",
-    badge: "광안리 현장 인증 10회",
-    caption: "주차 만차입니다. 근처 공영주차장도 거의 찼어요. 민락 쪽 우회 추천해요.",
-    minutesAgo: 12,
-    verified: true,
-    photo: true,
-    helpful: 32,
-    tags: ["광안리주차", "주차만차", "부산", "지금"],
-    tone: "avoid",
-  },
-  {
-    id: "post-taehwa-1",
-    placeId: "ulsan-taehwagang",
-    author: "울산 산책러",
-    badge: "태화강 제보왕",
-    caption: "산책로는 여유 있고 노을 쪽 사진 찍기 좋아요. 주차도 아직 여유 있습니다.",
-    minutesAgo: 18,
-    verified: true,
-    photo: true,
-    helpful: 21,
-    tags: ["태화강산책", "울산", "한산함", "사진스팟"],
-    tone: "good",
-  },
-  {
-    id: "post-hwang-1",
-    placeId: "gyeongju-hwangridan",
-    author: "경주 골목러",
-    badge: "웨이팅 답변왕",
-    caption: "메인 골목은 붐비지만 카페 대기는 20분 안쪽이에요. 주차는 어렵습니다.",
-    minutesAgo: 24,
-    verified: false,
-    photo: true,
-    helpful: 18,
-    tags: ["황리단길웨이팅", "경주", "사람많음"],
-    tone: "caution",
-  },
-];
+// This legacy surface is kept only for historical reference. It must not expose
+// static social or Q&A content if it is mounted by an old route.
+const posts: Post[] = [];
+const questions: Question[] = [];
 
-const questions: Question[] = [
-  { id: "q1", placeId: "busan-gwangalli", text: "지금 주차 자리 있나요?", type: "주차", minutesAgo: 10, reward: "+1" },
-  { id: "q2", placeId: "gyeongju-hwangridan", text: "줄 많이 긴가요?", type: "줄", minutesAgo: 15, reward: "+1" },
-  { id: "q3", placeId: "ulsan-taehwagang", text: "사진으로 볼 수 있나요?", type: "사진", minutesAgo: 20, reward: "+2" },
-  { id: "q4", placeId: "busan-haeundae", text: "아이랑 가도 괜찮나요?", type: "아이랑", minutesAgo: 30, reward: "+1" },
-];
-
-const challenges: Challenge[] = [
-  {
-    id: "challenge-gwangalli-parking",
-    regionId: "busan",
-    title: "광안리 주차 살려줘",
-    hashtagName: "광안리주차살려줘",
-    description: "광안리 주변 주차 상황만 알려줘도 헛걸음을 줄일 수 있어요.",
-    rewardBadge: "부산 주차 도우미",
-    startsAt: "2026-05-25",
-    endsAt: "2026-06-02",
-    isActive: true,
-  },
-  {
-    id: "challenge-hwangridan-waiting",
-    regionId: "gyeongju",
-    title: "황리단길 웨이팅 제보",
-    hashtagName: "황리단길웨이팅",
-    description: "카페와 맛집 줄 길이를 10초 제보로 모읍니다.",
-    rewardBadge: "경주 웨이팅 답변왕",
-    startsAt: "2026-05-25",
-    endsAt: "2026-06-02",
-    isActive: true,
-  },
-  {
-    id: "challenge-taehwagang-walk",
-    regionId: "ulsan",
-    title: "태화강 산책 타이밍",
-    hashtagName: "태화강산책",
-    description: "산책로, 주차, 사진스팟 상태를 알려주세요.",
-    rewardBadge: "태화강 제보왕",
-    startsAt: "2026-05-25",
-    endsAt: "2026-06-02",
-    isActive: true,
-  },
-  {
-    id: "challenge-seongsu-line",
-    regionId: "seoul",
-    title: "성수 카페 줄 확인",
-    hashtagName: "성수카페줄",
-    description: "전국 베타 seed 챌린지입니다. 제보가 쌓이면 추천 지역으로 승격됩니다.",
-    rewardBadge: "서울 베타 제보자",
-    startsAt: "2026-05-25",
-    endsAt: "2026-06-02",
-    isActive: false,
-  },
-];
+// This legacy surface is not the current app entry point. Keep its campaign list
+// empty until a server-backed campaign registry provides an approved active period.
+const challenges: Challenge[] = [];
 
 const navItems: Array<{ id: View; label: string; icon: LucideIcon }> = [
   { id: "home", label: "홈", icon: Home },

@@ -11,8 +11,32 @@ const {
   resolveSignalExpiry,
   validateLiveSignal,
 } = await import(new URL("../packages/contracts/src/index.ts", import.meta.url).href);
+const { applyBoundedSlidingWindowRateLimit } = await import(new URL("../workers/api/src/policies.ts", import.meta.url).href);
 
 const now = new Date("2026-07-10T00:30:00.000Z");
+
+test("Worker fallback limiter bounds memory and reclaims expired identities", () => {
+  const buckets = new Map();
+  const options = {
+    buckets,
+    limit: 2,
+    windowMs: 60_000,
+    capacity: 2,
+  };
+
+  assert.equal(applyBoundedSlidingWindowRateLimit({ ...options, key: "first", nowMs: 1_000 }).result.allowed, true);
+  assert.equal(applyBoundedSlidingWindowRateLimit({ ...options, key: "second", nowMs: 1_000 }).result.allowed, true);
+
+  const capacityStop = applyBoundedSlidingWindowRateLimit({ ...options, key: "third", nowMs: 1_000 });
+  assert.equal(capacityStop.result.allowed, false);
+  assert.equal(capacityStop.capacityExceeded, true);
+  assert.equal(buckets.size, 2);
+
+  const afterExpiry = applyBoundedSlidingWindowRateLimit({ ...options, key: "third", nowMs: 61_001 });
+  assert.equal(afterExpiry.result.allowed, true);
+  assert.equal(afterExpiry.capacityExceeded, false);
+  assert.equal(buckets.size, 1);
+});
 
 function signal(overrides: Record<string, unknown> = {}) {
   return {
@@ -72,6 +96,11 @@ test("live signals require a real provider observation timestamp", () => {
       ),
     /observedAt/,
   );
+});
+
+test("live signals require an explicit expiry timestamp", () => {
+  assert.throws(() => validateLiveSignal(signal({ expiresAt: undefined })), /expiresAt is required/);
+  assert.equal(isLiveSignalCurrent(signal({ expiresAt: undefined }), now), false);
 });
 
 test("expired and official static signals never count as current state", () => {

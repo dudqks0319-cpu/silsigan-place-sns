@@ -34,9 +34,12 @@ type NaverMapProps<TPlace extends MapPlace> = {
   places: TPlace[];
   compact?: boolean;
   currentLocation?: ClientLocation | null;
+  providerEnabled?: boolean;
   showTraffic?: boolean;
   onBoundsChange?: (bounds: MapBounds) => void;
   onMapInteraction?: () => void;
+  onMapFailure?: (reason: MapFailureReason) => void;
+  onMapReady?: () => void;
   onSelectPlace: (place: TPlace) => void;
 };
 
@@ -47,22 +50,27 @@ const naverMapRenderCheckTimeoutMs = 2_500;
 const naverMapRenderCheckIntervalMs = 250;
 const naverMapAutomaticRetryDelayMs = 900;
 
-type MapFailureReason = "missing_key" | "auth" | "sdk" | "resource" | "timeout";
+export type MapFailureReason = "missing_key" | "auth" | "sdk" | "resource" | "timeout";
 const transientMapFailureReasons = new Set<MapFailureReason>(["sdk", "resource", "timeout"]);
 
 export function NaverMap<TPlace extends MapPlace>({
   places,
   compact = false,
   currentLocation = null,
+  providerEnabled = true,
   showTraffic = false,
   onBoundsChange,
   onMapInteraction,
+  onMapFailure,
+  onMapReady,
   onSelectPlace,
 }: NaverMapProps<TPlace>) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<unknown>(null);
   const onBoundsChangeRef = useRef(onBoundsChange);
   const onMapInteractionRef = useRef(onMapInteraction);
+  const onMapFailureRef = useRef(onMapFailure);
+  const onMapReadyRef = useRef(onMapReady);
   const onSelectPlaceRef = useRef(onSelectPlace);
   const currentLocationRef = useRef(currentLocation);
   const visiblePlacesRef = useRef<TPlace[]>([]);
@@ -70,6 +78,7 @@ export function NaverMap<TPlace extends MapPlace>({
   const [mapHealthy, setMapHealthy] = useState(false);
   const [failureReason, setFailureReason] = useState<MapFailureReason | null>(null);
   const automaticRetryUsedRef = useRef(false);
+  const mapReadyReportedRef = useRef(false);
   const visiblePlaces = useMemo(() => places.slice(0, maxMarkers), [places]);
   const visiblePlacesKey = visiblePlaces
     .map((place) => `${place.id}:${place.latitude.toFixed(5)},${place.longitude.toFixed(5)}:${place.signal}:${place.parking}:${place.line}`)
@@ -86,6 +95,14 @@ export function NaverMap<TPlace extends MapPlace>({
   }, [onMapInteraction]);
 
   useEffect(() => {
+    onMapFailureRef.current = onMapFailure;
+  }, [onMapFailure]);
+
+  useEffect(() => {
+    onMapReadyRef.current = onMapReady;
+  }, [onMapReady]);
+
+  useEffect(() => {
     onSelectPlaceRef.current = onSelectPlace;
   }, [onSelectPlace]);
 
@@ -100,10 +117,10 @@ export function NaverMap<TPlace extends MapPlace>({
   useEffect(() => {
     const placesForFallback = visiblePlacesRef.current;
 
-    if (!ready && placesForFallback.length > 0) {
+    if ((!ready || !providerEnabled) && placesForFallback.length > 0) {
       onBoundsChangeRef.current?.(boundsForFallbackPlaces(placesForFallback));
     }
-  }, [ready, visiblePlacesKey]);
+  }, [providerEnabled, ready, visiblePlacesKey]);
 
   useEffect(() => {
     const handleNaverResourceError = (event: Event) => {
@@ -120,7 +137,7 @@ export function NaverMap<TPlace extends MapPlace>({
   }, []);
 
   useEffect(() => {
-    if (!failureReason || !transientMapFailureReasons.has(failureReason) || automaticRetryUsedRef.current) {
+    if (!providerEnabled || !failureReason || !transientMapFailureReasons.has(failureReason) || automaticRetryUsedRef.current) {
       return;
     }
 
@@ -132,10 +149,16 @@ export function NaverMap<TPlace extends MapPlace>({
     }, naverMapAutomaticRetryDelayMs);
 
     return () => window.clearTimeout(timer);
-  }, [failureReason]);
+  }, [failureReason, providerEnabled]);
 
   useEffect(() => {
     if (failureReason) {
+      onMapFailureRef.current?.(failureReason);
+    }
+  }, [failureReason]);
+
+  useEffect(() => {
+    if (!providerEnabled || failureReason) {
       return;
     }
 
@@ -164,10 +187,10 @@ export function NaverMap<TPlace extends MapPlace>({
       active = false;
       window.clearTimeout(timeout);
     };
-  }, [failureReason]);
+  }, [failureReason, providerEnabled]);
 
   useEffect(() => {
-    if (failureReason || !ready || !mapRef.current || !window.naver?.maps) {
+    if (!providerEnabled || failureReason || !ready || !mapRef.current || !window.naver?.maps) {
       return;
     }
 
@@ -269,6 +292,10 @@ export function NaverMap<TPlace extends MapPlace>({
 
         if (hasLoadedNaverMapVisual(mapRef.current)) {
           setMapHealthy(true);
+          if (!mapReadyReportedRef.current) {
+            mapReadyReportedRef.current = true;
+            onMapReadyRef.current?.();
+          }
           return;
         }
 
@@ -327,20 +354,22 @@ export function NaverMap<TPlace extends MapPlace>({
     compact,
     currentLocationKey,
     failureReason,
+    providerEnabled,
     ready,
     showTraffic,
     visiblePlacesKey,
   ]);
 
-  const hasNoVisiblePlaces = visiblePlaces.length === 0 && (ready || Boolean(failureReason));
+  const hasNoVisiblePlaces = visiblePlaces.length === 0 && (ready || Boolean(failureReason) || !providerEnabled);
 
-  if (visiblePlaces.length === 0 || failureReason || !ready) {
+  if (visiblePlaces.length === 0 || failureReason || !ready || !providerEnabled) {
     return (
       <FallbackMap
         currentLocation={currentLocation}
         empty={hasNoVisiblePlaces}
         failureReason={failureReason}
         loading={!failureReason}
+        staticOnly={!providerEnabled}
         places={visiblePlaces}
         onMapInteraction={onMapInteraction}
         onSelectPlace={onSelectPlace}
@@ -385,6 +414,7 @@ function FallbackMap<TPlace extends MapPlace>({
   failureReason,
   loading,
   overlay = false,
+  staticOnly = false,
   onMapInteraction,
   onSelectPlace,
   onRetry,
@@ -395,6 +425,7 @@ function FallbackMap<TPlace extends MapPlace>({
   failureReason: MapFailureReason | null;
   loading: boolean;
   overlay?: boolean;
+  staticOnly?: boolean;
   onMapInteraction?: () => void;
   onSelectPlace: (place: TPlace) => void;
   onRetry: () => void;
@@ -406,11 +437,10 @@ function FallbackMap<TPlace extends MapPlace>({
       aria-label="클릭 가능한 전국 실시간 장소 지도"
     >
       <div className="naver-map__fallback-status">
-        <strong>{fallbackStatusTitle({ empty, failureReason, loading })}</strong>
-        <span>{fallbackStatusBody({ empty, failureReason, loading })}</span>
+        <strong>{fallbackStatusTitle({ empty, failureReason, loading, staticOnly })}</strong>
+        <span>{fallbackStatusBody({ empty, failureReason, loading, staticOnly })}</span>
         {failureReason && (
-          <div className="naver-map__fallback-recovery">
-            <code>{mapFailureCode(failureReason)}</code>
+          <div className="naver-map__fallback-recovery" data-map-failure-code={mapFailureCode(failureReason)}>
             <button type="button" onClick={onRetry}>지도 다시 시도</button>
           </div>
         )}
@@ -519,14 +549,17 @@ function fallbackStatusTitle({
   empty,
   failureReason,
   loading,
+  staticOnly,
 }: {
   empty: boolean;
   failureReason: MapFailureReason | null;
   loading: boolean;
+  staticOnly: boolean;
 }) {
   if (empty) return "표시할 장소 없음";
+  if (staticOnly) return "기본 장소 지도";
   if (loading) return "지도 연결 중";
-  if (failureReason === "auth" || failureReason === "missing_key") return "지도 인증 확인 필요";
+  if (failureReason === "auth" || failureReason === "missing_key") return "장소 지도로 계속 볼 수 있어요";
   if (failureReason === "timeout") return "지도 응답 지연";
   if (failureReason) return "대체 지도 표시 중";
   return "전국 실시간 지도";
@@ -536,15 +569,17 @@ function fallbackStatusBody({
   empty,
   failureReason,
   loading,
+  staticOnly,
 }: {
   empty: boolean;
   failureReason: MapFailureReason | null;
   loading: boolean;
+  staticOnly: boolean;
 }) {
   if (empty) return "지역이나 필터를 바꾸면 지도 후보를 다시 볼 수 있어요.";
+  if (staticOnly) return "외부 지도 호출 없이 검증된 장소 위치만 표시합니다.";
   if (loading) return "네이버 지도 연결 전에도 장소를 선택할 수 있어요.";
-  if (failureReason === "missing_key") return "지도 키가 설정되지 않았습니다. 장소 목록은 계속 사용할 수 있어요.";
-  if (failureReason === "auth") return "등록된 Web 서비스 URL과 현재 앱 주소를 확인해 주세요. 장소 목록은 계속 사용할 수 있어요.";
+  if (failureReason === "missing_key" || failureReason === "auth") return "지도 연결을 확인하는 동안 대체 지도로 장소를 표시합니다. 핀을 누르면 사진과 상태를 볼 수 있어요.";
   if (failureReason) return "네이버 지도 연결이 불안정해 대체 지도로 표시합니다. 핀을 누르면 장소 사진과 상태를 볼 수 있어요.";
   return "마커를 누르면 장소 상세가 열립니다.";
 }

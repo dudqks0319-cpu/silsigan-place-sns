@@ -1,6 +1,6 @@
 # #실시간 TestFlight readiness
 
-Updated: 2026-06-27
+Updated: 2026-07-20
 Source of truth: `docs/current-release-state.md`
 Operator packet: `docs/cloudflare-staging-operator-packet.md`
 
@@ -10,8 +10,8 @@ Operator packet: `docs/cloudflare-staging-operator-packet.md`
 
 | Target | Current judgement | Reason |
 | --- | --- | --- |
-| Web/PWA beta MVP | possible locally | Cloudflare Worker API, D1 schema, local browser smoke, reporting, photos, likes, comments, rankings, and moderation guards are implemented and locally verified. |
-| TestFlight internal testing | candidate after staging URLs/R2 | Native wrapper and permission copy can be exercised once staging Worker/Pages URLs and R2 are available. |
+| Web/PWA beta MVP | local complete; staging read-only | Cloudflare Worker API, D1 schema, local browser smoke, reporting, photos, likes, comments, rankings, and moderation guards are implemented and locally verified. Both web Workers are deployed, but the API Workers and live mutation path are not. |
+| TestFlight internal testing | candidate after staging API/R2/D1/Turnstile | Native wrapper and permission copy are locally verified; live staging API, R2, D1 registry reconciliation plus the real `0026` gap, Turnstile, and device evidence are still required. |
 | TestFlight external testing | blocked | Needs real staging smoke, R2/Images mutation proof, production-safe moderation runbook, and device QA evidence. |
 | App Store production submission | blocked | This is still a beta MVP until external Cloudflare resources, UGC operations, and real-device evidence are complete. |
 
@@ -21,7 +21,7 @@ The earlier release assessment correctly warns against App Store submission, but
 
 - Backend is no longer a Supabase-first MVP in the current release branch. README, package dependencies, release checks, and tests now target Cloudflare Workers, D1, R2, Durable Objects, and OpenNext Cloudflare.
 - Nationwide map and ranking scope are not just roadmap text. Local smoke and tests cover nationwide/region/map-bounds ranking panels, current-location controls, bbox place loading, and Worker ranking API query propagation.
-- Remaining release blockers are mostly external-state and evidence blockers, not missing local code paths: `R2_NOT_ENABLED`, missing configured API/web Worker deployments, staging/production deployment URLs, and real staging smoke.
+- Remaining release blockers are external-state and evidence blockers, not missing local code paths: R2 activation, Turnstile provisioning, dedicated `COST_GUARD_STATE` KV plus WAF/static-routing evidence, both API Worker deployments and URLs, Staging D1 registry reconciliation and `0026`, production D1, a NAVER owner domain, real staging mutation smoke including 60/70/80 global cost transitions, anonymous-proof lifecycle, exact issuance-budget evidence, and private place-request queue/guard evidence, moderation/alert operations, source rights, signing, and real-device QA. Wrangler OAuth, both web Worker deployment histories, and Staging schema evidence through `0025` already pass, but Wrangler still lists `0018`~`0026` pending.
 - App Store submission remains the wrong next milestone. The correct milestone is a TestFlight MVP with live Cloudflare staging and real-device QA.
 
 ## TestFlight MVP Gate
@@ -30,8 +30,10 @@ The following must be true before treating the app as TestFlight-ready:
 
 - [ ] `pnpm release:status -- --strict` passes or reports only intentionally deferred App Store production items.
 - [ ] Cloudflare R2 is enabled and `pnpm cf:r2:evidence -- --env=staging --check` passes.
+- [ ] Exact-host Turnstile site key and server-only secret are provisioned, and upload-ticket success/failure evidence passes on staging.
+- [~] Staging D1 schema already verifies `0018` through `0025`, but Wrangler's registry lists `0018`~`0026` pending. Back up and reconcile history first; the guarded harness must pass before any explicitly approved safe-suffix apply (currently expected `0026`). Audit post-`0022` live R2/D1 storage reconciliation before uploads resume, provision a separate cost-state KV, and prove `api_cost_guard_*` 60/70/80 plus reconciliation evidence.
 - [ ] Staging Worker API is deployed and `SILSIGAN_STAGING_API_BASE_URL` is set to an HTTPS URL.
-- [ ] Staging Pages frontend is deployed and `SILSIGAN_STAGING_PAGES_URL` is set to an HTTPS URL.
+- [~] Staging web Worker is deployed at `https://silsigan-web-staging.dudqks0319.workers.dev`; the release invocation must still export that exact value as `SILSIGAN_STAGING_PAGES_URL`.
 - [ ] `pnpm cf:external-state` passes for staging R2, staging D1, staging Worker dry-run, and deployment URL shape.
 - [ ] `pnpm smoke:staging` passes against the staging Worker.
 - [ ] `SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging -- --require-admin` passes with a staging admin token.
@@ -40,6 +42,8 @@ The following must be true before treating the app as TestFlight-ready:
 - [x] TestFlight beta description, reviewer instructions, permission copy, UGC moderation notes, and staging evidence requirements are documented in `docs/testflight-review-notes.md` and guarded by `release:status`.
 - [x] Local `/privacy` and `/support` pages exist and are guarded by `release:status` for implemented data-handling, support, report, deletion, and final URL language.
 - [x] Privacy/support URL readiness is guarded by `release:status`; missing, placeholder, non-HTTPS, localhost, query/fragment, credentialed, or duplicate values fail before external TestFlight review notes are submitted.
+- [x] iOS `PrivacyInfo.xcprivacy`, Android app-data backup/device-transfer exclusions, and app-scoped FileProvider paths are present and guarded by native contract tests.
+- [x] `docs/store-privacy-disclosure-draft.md` inventories App Privacy/Data Safety answers and is guarded by `release:status`; this does not claim console submission or legal approval.
 - [x] Real-device QA ledger structure is guarded by `release:status`; missing iPhone/Android matrices, permission flows, UGC flows, redaction rules, crash checks, or evidence artifact names fail before TestFlight internal testing.
 - [ ] iPhone real-device QA in `docs/real-device-qa.md` covers launch, map display, current-location allow/deny, place detail, report create, comment create/delete, photo upload/preview, like/unlike, moderation report, and no raw coordinate/file-name leakage in visible UI.
 - [ ] Android real-device QA in `docs/real-device-qa.md` covers the same user flows if Android beta distribution is in scope.
@@ -48,26 +52,29 @@ The following must be true before treating the app as TestFlight-ready:
 
 Only consider App Store production submission after TestFlight evidence is clean and these additional gates pass:
 
-- [x] Production D1 `0002_posts_questions.sql` is applied with `pnpm cf:d1:evidence -- --env=production --apply --confirm-production`.
+- [~] Staging D1 schema is remotely verified through `0025`, but migration history drift must be reconciled before the real `0026` gap can be applied. Production currently reports `D1_0006_NOT_APPLIED` and requires separate approval only after clean staging evidence.
 - [ ] Production Worker API and Pages URLs are deployed and set in `SILSIGAN_PRODUCTION_API_BASE_URL` / `SILSIGAN_PRODUCTION_PAGES_URL`.
 - [ ] `pnpm release:gate -- --production-candidate` passes.
-- [ ] App privacy labels, support URL, privacy policy URL, and review notes match the implemented data handling.
+- [ ] Final archive privacy report, App Store Connect App Privacy, Google Play Console Data Safety, support/privacy URLs, and review notes are compared with the implemented data handling and signed by named reviewers. The code-matched local draft is complete.
 - [x] UGC moderation owner, response SLA, abuse handling, user restriction, and deletion/restore runbook is documented and guarded by `release:status`.
 - [ ] Staging/production moderation alert webhook secrets and live queue access are configured and verified.
 - [x] Ranking manipulation smoke proves repeated same-user click/like signals do not inflate D1 ranking counts.
 - [x] Cloudflare cost/usage dashboard criteria, budget alerts, evidence cadence, and TestFlight stop conditions are documented and guarded by `release:status`.
-- [ ] Account deletion or anonymous data deletion/retention behavior is verified end-to-end if account-like identity is exposed in the native build.
-- [ ] Store screenshots and metadata use real app surfaces, not placeholder beta/demo claims.
+- [~] Local 390x844 browser E2E verifies the exact confirmation phrase, permanent anonymous-data deletion, zero remaining mock-owned content, new server-bound session issuance, and old-proof 403 rejection. Live staging retention/deletion plus signed native real-device execution remain required before this becomes complete.
+- [~] `docs/store-listing-draft.md`에 실제 앱 화면 기반 메타데이터와 390x844 로컬 후보 4장을 준비했다. mock-data 후보이므로 live staging API, 실제 승인 사진, 최종 배포 앱 실기기 화면으로 교체하기 전에는 제출하지 않는다. 네이버 지도 화면은 소유자 도메인과 origin 증거 전까지 제외한다.
 
 ## Current Blockers
 
 | Blocker | Owner action |
 | --- | --- |
-| `R2_NOT_ENABLED` | Add the R2 subscription through Cloudflare Dashboard checkout, then rerun R2 evidence checks. |
-| Missing Worker deployments and staging/production URLs | Deploy configured API/web Workers and export the four `SILSIGAN_*_URL` variables. |
-| Missing privacy/support URLs | Local `/privacy` and `/support` pages now exist; deploy them to final HTTPS URLs and export `SILSIGAN_PRIVACY_POLICY_URL` / `SILSIGAN_SUPPORT_URL`. |
+| R2 activation and private staging bucket | Complete Cloudflare's user-only payment/terms hand-off, create only the configured private staging bucket, then rerun R2 evidence. |
+| Missing Turnstile credentials | Create exact-host staging/production widgets and install public site keys plus server-only secrets without committing secrets. |
+| Staging D1 migration history and tail | Back up Staging, reconcile Wrangler's missing `0018`~`0025` history without replaying migrations, require the guarded registry preflight to pass, then explicitly approve only the safe suffix (currently expected `0026_global_api_cost_guard.sql`). Record global-cost evidence, provision the dedicated KV, and reconcile live R2/D1 for already-present `0022` before resuming uploads. |
+| Missing API Worker deployments and API URLs | Deploy the configured API Workers only after R2/D1/Turnstile are ready and export the staging/production API URL variables. Both web Workers are already deployed. |
+| NAVER owner domain and final application registration | Attach an owner-controlled domain, complete the prepared Dynamic Map registration after explicit approval, set exact allowed origins, limits, and alert recipient, then prove valid-origin success and invalid-origin rejection. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
 | No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and Android device evidence after staging is live. |
+| Anonymous proof deployment and residual bearer replay risk | Staging has applied `0023`/`0024`; deploy the API with `SILSIGAN_ANON_SESSION_REQUIRED=1` and `SILSIGAN_ANON_SESSION_DAILY_LIMIT=5000`, prove wrong/rotated/revoked proof, stolen-ID rejection, exact distributed issuance cap, and stale-session cleanup on the owner domain, and select member/device binding if theft of the complete ID+proof pair must also be resisted. |
 
 ## 2026-06-26 Phase 1 Read-Only Probe Before D1 Apply
 
@@ -116,6 +123,8 @@ Read-only Wrangler deployment probes found that the configured Workers are not d
 
 ## 2026-06-26 Ranking Manipulation Smoke
 
+This dated entry is historical. The current release candidate verification is `361/361`; the older `125 tests` count below is retained only for audit traceability.
+
 The D1 ranking smoke now covers repeated same-user click and like attempts against the same place.
 
 | Probe | Result | Evidence |
@@ -146,7 +155,7 @@ The TestFlight beta/reviewer note packet is now a release-state checked artifact
 | --- | --- | --- |
 | `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `docs/testflight-review-notes.md` to cover beta app description, reviewer instructions, permissions, UGC moderation, privacy policy URL/support URL status, staging evidence, and stop conditions. Current failure remains the known external P0 blockers, not missing TestFlight review-note coverage. |
 
-Still open: the final privacy policy URL and support URL must be real HTTPS pages before external TestFlight review notes are submitted.
+Closed on 2026-07-19: the final privacy policy URL and support URL are live HTTPS pages. Store-console entry and named legal review remain open.
 
 ## 2026-06-26 Privacy/Support URL Gate
 
@@ -154,7 +163,7 @@ The privacy/support URL finalization blocker is now release-state checked instea
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` to be distinct HTTPS URLs with no placeholders, credentials, query params, fragments, or localhost hosts. Current failure remains expected until final public URLs are available. |
+| `node scripts/release-state-check.mjs --strict` | URL guard pass; release blocked elsewhere | The check requires `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` to be distinct HTTPS URLs with no placeholders, credentials, query params, fragments, or localhost hosts. Both selected production URLs are live; current release failure comes from the remaining external P0/P1 blockers. |
 
 ## 2026-06-27 Real-Device QA Ledger Gate
 
@@ -166,8 +175,19 @@ The real-device QA ledger is now a release-state checked artifact. This closes t
 
 ## 2026-06-27 Privacy/Support Pages
 
-Local public privacy and support pages now exist, but final URL readiness remains blocked until the app is deployed to HTTPS Pages URLs.
+Local public privacy and support pages exist, and the selected production HTTPS URLs returned HTTP 200 on 2026-07-19.
 
 | Probe | Result | Evidence |
 | --- | --- | --- |
-| `node scripts/release-state-check.mjs --strict` | blocked-external expected | The check now requires `src/app/privacy/page.tsx` and `src/app/support/page.tsx` to include public-page tokens for data handling, Cloudflare D1/R2, location, photos, reports, deletion requests, TestFlight support, and final support/privacy URL language. Current failure remains expected until final HTTPS `SILSIGAN_PRIVACY_POLICY_URL` and `SILSIGAN_SUPPORT_URL` are exported. |
+| `node scripts/release-state-check.mjs --strict` | page and URL guards pass; release blocked elsewhere | The check requires `src/app/privacy/page.tsx` and `src/app/support/page.tsx` to include public-page tokens for data handling, Cloudflare D1/R2, location, photos, reports, deletion requests, TestFlight support, and final support/privacy URL language. The selected HTTPS values are recorded; store-console entry and named legal review remain external. |
+
+## 2026-07-19 Native Privacy And Store Disclosure Gate
+
+The native projects now fail closed on app-data backup and broad file-provider exposure, and the code-matched store disclosure is a release-state checked artifact.
+
+| Probe | Result | Evidence |
+| --- | --- | --- |
+| `node --experimental-strip-types --test --test-name-pattern='native shells declare privacy use' tests/webview-shell.test.ts` | pass | Verifies the iOS manifest data categories and target resource, Android backup/device-transfer exclusions, and the absence of a broad external-storage FileProvider path. |
+| `node --experimental-strip-types --test --test-name-pattern='store privacy disclosure draft' tests/cloudflare-api.test.ts` | pass | Verifies required Apple, Google, data inventory, native enforcement, console checklist, and stop-condition content. |
+
+Still open: a signed archive privacy report, actual App Store Connect/Google Play Console answers, named legal/mobile-release review, and real-device restore/permission evidence.

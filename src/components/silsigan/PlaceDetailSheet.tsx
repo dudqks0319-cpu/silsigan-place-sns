@@ -18,7 +18,7 @@ export type SheetPlace = {
   weather: string;
   updated: string;
   score: number;
-  tone: "calm" | "normal" | "busy" | "danger";
+  tone: "calm" | "normal" | "busy" | "danger" | "unknown";
   isSample?: boolean;
 };
 
@@ -43,6 +43,7 @@ export function PlaceDetailSheet({
   onReport,
   onReportPhoto,
   onReportPlace,
+  photoUploadReady,
   photos,
   place,
   realtimeEvents = [],
@@ -64,6 +65,7 @@ export function PlaceDetailSheet({
   onReport: () => void;
   onReportPhoto: (photo: PlacePhoto) => void;
   onReportPlace: () => void;
+  photoUploadReady: boolean;
   photos: PlacePhoto[];
   place: SheetPlace;
   realtimeEvents?: PlaceRealtimeEvent[];
@@ -118,7 +120,10 @@ export function PlaceDetailSheet({
 
       <div className={styles.detailStatusRow}>
         <span className={`${styles.statusChip} ${styles[place.tone]}`}>{place.signal}</span>
-        <span>{place.isSample ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />} {place.isSample ? "체험용 샘플" : `신뢰도 ${place.score}%`}</span>
+        <span>
+          {place.isSample ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />}
+          {place.isSample ? "체험용 샘플" : place.score > 0 ? `판단 근거 ${place.score}%` : "판단 근거 확인 중"}
+        </span>
         <span>최근 {place.updated}</span>
       </div>
       <p className={styles.detailSummary}>{place.summary}</p>
@@ -152,7 +157,9 @@ export function PlaceDetailSheet({
             {recentRealtimeEvents.map((event) => (
               <li key={`${event.type}:${event.createdAt}`}>
                 <span>{realtimeEventLabel(event)}</span>
-                <time dateTime={event.createdAt}>{event.createdAt.slice(11, 16)}</time>
+                <time dateTime={event.createdAt} title={formatRealtimeEventDateTime(event.createdAt)}>
+                  {formatRealtimeEventTime(event.createdAt)}
+                </time>
               </li>
             ))}
           </ul>
@@ -205,6 +212,7 @@ export function PlaceDetailSheet({
           onReportPhoto={onReportPhoto}
           onUpload={onPhotoUpload}
           safetyNotice={safetyNotice}
+          uploadEnabled={photoUploadReady}
         />
       </section>
     </aside>
@@ -221,6 +229,52 @@ function realtimeModeLabel(mode: "connecting" | "live" | "polling") {
   }
 
   return "자동 갱신";
+}
+
+function formatRealtimeEventTime(value: string) {
+  const eventDate = parseRealtimeEventDate(value);
+  if (!eventDate) {
+    return "시각 확인 필요";
+  }
+
+  const now = new Date();
+  const formattedTime = new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(eventDate);
+
+  if (
+    eventDate.getFullYear() === now.getFullYear()
+    && eventDate.getMonth() === now.getMonth()
+    && eventDate.getDate() === now.getDate()
+  ) {
+    return `오늘 ${formattedTime}`;
+  }
+
+  const formattedDate = new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+  }).format(eventDate);
+
+  return `${formattedDate} ${formattedTime}`;
+}
+
+function formatRealtimeEventDateTime(value: string) {
+  const eventDate = parseRealtimeEventDate(value);
+  if (!eventDate) {
+    return "시각 확인 필요";
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(eventDate);
+}
+
+function parseRealtimeEventDate(value: string) {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp) : null;
 }
 
 function photoPreviewBackground(previewUrl: string | undefined): CSSProperties | undefined {

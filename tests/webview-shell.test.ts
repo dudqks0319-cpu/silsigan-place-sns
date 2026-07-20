@@ -19,8 +19,14 @@ import { classifyNavigation, openExternalNavigation } from "../apps/webview/src/
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-test("Capacitor WebView shell keeps the production app identity and no generated native projects", async () => {
+test("Capacitor WebView shell keeps the production identity and declares native permission metadata", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../apps/webview/package.json", import.meta.url), "utf8"));
+  const iosInfoPlist = await readFile(new URL("../apps/webview/ios/App/App/Info.plist", import.meta.url), "utf8");
+  const iosAppDelegate = await readFile(new URL("../apps/webview/ios/App/App/AppDelegate.swift", import.meta.url), "utf8");
+  const iosStoryboard = await readFile(new URL("../apps/webview/ios/App/App/Base.lproj/Main.storyboard", import.meta.url), "utf8");
+  const androidManifest = await readFile(new URL("../apps/webview/android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
+  const androidActivity = await readFile(new URL("../apps/webview/android/app/src/main/java/kr/silsigan/mobile/MainActivity.java", import.meta.url), "utf8");
+  const androidSettingsPlugin = await readFile(new URL("../apps/webview/android/app/src/main/java/kr/silsigan/mobile/SilsiganShellPlugin.java", import.meta.url), "utf8");
   const config = createCapacitorConfig({
     SILSIGAN_WEBVIEW_ENV: "production",
     SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.example.com",
@@ -30,8 +36,62 @@ test("Capacitor WebView shell keeps the production app identity and no generated
   assert.equal(config.appName, "#실시간");
   assert.equal(config.server.cleartext, false);
   assert.equal(packageJson.dependencies["@capacitor/core"], "8.4.0");
-  assert.equal(existsSync(`${repoRoot}/apps/webview/ios`), false);
-  assert.equal(existsSync(`${repoRoot}/apps/webview/android`), false);
+  assert.equal(existsSync(`${repoRoot}/apps/webview/ios`), true);
+  assert.equal(existsSync(`${repoRoot}/apps/webview/android`), true);
+  assert.match(iosInfoPlist, /NSCameraUsageDescription/);
+  assert.match(iosInfoPlist, /NSPhotoLibraryUsageDescription/);
+  assert.match(iosInfoPlist, /NSLocationWhenInUseUsageDescription/);
+  assert.match(iosAppDelegate, /class SilsiganShellPlugin/);
+  assert.match(iosAppDelegate, /openSettings/);
+  assert.match(iosStoryboard, /customClass="SilsiganBridgeViewController"/);
+  assert.match(androidManifest, /android\.permission\.ACCESS_COARSE_LOCATION/);
+  assert.match(androidManifest, /android\.permission\.ACCESS_FINE_LOCATION/);
+  assert.match(androidManifest, /android\.permission\.CAMERA/);
+  assert.match(androidManifest, /android\.permission\.POST_NOTIFICATIONS/);
+  assert.match(androidManifest, /android:usesCleartextTraffic="false"/);
+  assert.match(androidActivity, /registerPlugin\(SilsiganShellPlugin\.class\)/);
+  assert.match(androidSettingsPlugin, /@CapacitorPlugin\(name = "SilsiganShell"\)/);
+  assert.match(androidSettingsPlugin, /ACTION_APPLICATION_DETAILS_SETTINGS/);
+});
+
+test("native shells declare privacy use and deny app data backup or broad file-provider access", async () => {
+  const iosPrivacyManifest = await readFile(new URL("../apps/webview/ios/App/App/PrivacyInfo.xcprivacy", import.meta.url), "utf8");
+  const iosProject = await readFile(new URL("../apps/webview/ios/App/App.xcodeproj/project.pbxproj", import.meta.url), "utf8");
+  const androidManifest = await readFile(new URL("../apps/webview/android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
+  const androidLegacyBackupRules = await readFile(new URL("../apps/webview/android/app/src/main/res/xml/backup_rules.xml", import.meta.url), "utf8");
+  const androidDataExtractionRules = await readFile(new URL("../apps/webview/android/app/src/main/res/xml/data_extraction_rules.xml", import.meta.url), "utf8");
+  const androidFilePaths = await readFile(new URL("../apps/webview/android/app/src/main/res/xml/file_paths.xml", import.meta.url), "utf8");
+
+  assert.match(iosPrivacyManifest, /<key>NSPrivacyTracking<\/key>\s*<false\/>/);
+  assert.match(iosPrivacyManifest, /<key>NSPrivacyTrackingDomains<\/key>\s*<array>\s*<\/array>/);
+  assert.match(iosPrivacyManifest, /<key>NSPrivacyAccessedAPITypes<\/key>\s*<array>\s*<\/array>/);
+  for (const dataType of [
+    "NSPrivacyCollectedDataTypePreciseLocation",
+    "NSPrivacyCollectedDataTypeCoarseLocation",
+    "NSPrivacyCollectedDataTypePhotosorVideos",
+    "NSPrivacyCollectedDataTypeOtherUserContent",
+    "NSPrivacyCollectedDataTypeSearchHistory",
+    "NSPrivacyCollectedDataTypeUserID",
+    "NSPrivacyCollectedDataTypeDeviceID",
+    "NSPrivacyCollectedDataTypeProductInteraction",
+    "NSPrivacyCollectedDataTypeOtherDiagnosticData",
+  ]) {
+    assert.match(iosPrivacyManifest, new RegExp(`<string>${dataType}<\\/string>`));
+  }
+  assert.match(iosProject, /PrivacyInfo\.xcprivacy in Resources/);
+
+  assert.match(androidManifest, /android:allowBackup="false"/);
+  assert.match(androidManifest, /android:fullBackupContent="@xml\/backup_rules"/);
+  assert.match(androidManifest, /android:dataExtractionRules="@xml\/data_extraction_rules"/);
+  for (const domain of ["root", "file", "database", "sharedpref", "external", "device_root", "device_file", "device_database", "device_sharedpref"]) {
+    assert.match(androidLegacyBackupRules, new RegExp(`<exclude domain="${domain}" path="\\."\\s*\\/>`));
+    assert.match(androidDataExtractionRules, new RegExp(`<exclude domain="${domain}" path="\\."\\s*\\/>`));
+  }
+  assert.match(androidDataExtractionRules, /<cloud-backup>/);
+  assert.match(androidDataExtractionRules, /<device-transfer>/);
+  assert.doesNotMatch(androidFilePaths, /<external-path\b/);
+  assert.match(androidFilePaths, /<external-files-path\b[^>]*path="\."/);
+  assert.match(androidFilePaths, /<cache-path\b[^>]*path="\."/);
 });
 
 test("WebView config fails closed without a selected non-local HTTPS deployment", () => {
@@ -110,6 +170,100 @@ test("location web payload exposes buckets only and strips all raw coordinates",
   assert.equal(JSON.stringify(result).includes("129.1186"), false);
 });
 
+test("native photo selection converts iPhone library media to a bounded JPEG", async () => {
+  let cameraOptions: Record<string, unknown> | undefined;
+  const bridge = createWebViewBridge({
+    firstPartyOrigins: ["https://silsigan.example.com"],
+    isNative: true,
+    nativePlatform: "ios",
+    loadPlugin: async (specifier) => {
+      if (specifier !== "@capacitor/camera") throw new Error("unexpected plugin");
+      return {
+        Camera: {
+          getPhoto: async (options: Record<string, unknown>) => {
+            cameraOptions = options;
+            return { webPath: "capacitor://localhost/native-photo.jpg", format: "jpeg" };
+          },
+        },
+        CameraResultType: { Uri: "uri" },
+        CameraSource: { Camera: "CAMERA", Photos: "PHOTOS" },
+      };
+    },
+    fetch: async () => new Response(new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: "image/jpeg" })),
+  });
+
+  const result = await bridge.invoke({
+    requestId: "native_photo_1234",
+    command: "selectPhoto",
+    payload: { purpose: "field_report", maxBytes: 3 * 1024 * 1024 },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value, {
+    url: "capacitor://localhost/native-photo.jpg",
+    format: "image/jpeg",
+    bytes: 3,
+  });
+  assert.deepEqual(cameraOptions, {
+    source: "PHOTOS",
+    resultType: "uri",
+    quality: 85,
+    width: 1280,
+    height: 1280,
+    allowEditing: false,
+    saveToGallery: false,
+    correctOrientation: true,
+  });
+});
+
+test("native photo selection fails closed when JPEG conversion is not proven", async () => {
+  const bridge = createWebViewBridge({
+    firstPartyOrigins: ["https://silsigan.example.com"],
+    isNative: true,
+    nativePlatform: "ios",
+    loadPlugin: async () => ({
+      Camera: { getPhoto: async () => ({ webPath: "capacitor://localhost/native-photo.heic", format: "heic" }) },
+      CameraResultType: { Uri: "uri" },
+      CameraSource: { Camera: "CAMERA", Photos: "PHOTOS" },
+    }),
+    fetch: async () => new Response(new Blob([new Uint8Array([1, 2, 3])], { type: "image/heic" })),
+  });
+
+  const result = await bridge.invoke({
+    requestId: "native_photo_5678",
+    command: "selectPhoto",
+    payload: { purpose: "field_report", maxBytes: 3 * 1024 * 1024 },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, "PHOTO_FORMAT_UNSUPPORTED");
+  assert.equal(JSON.stringify(result).includes("capacitor://"), false);
+});
+
+test("native photo selection rejects a forged JPEG MIME type without JPEG magic bytes", async () => {
+  const bridge = createWebViewBridge({
+    firstPartyOrigins: ["https://silsigan.example.com"],
+    isNative: true,
+    nativePlatform: "ios",
+    loadPlugin: async () => ({
+      Camera: { getPhoto: async () => ({ webPath: "capacitor://localhost/forged-photo.jpg", format: "jpeg" }) },
+      CameraResultType: { Uri: "uri" },
+      CameraSource: { Camera: "CAMERA", Photos: "PHOTOS" },
+    }),
+    fetch: async () => new Response(new Blob([new Uint8Array([0x00, 0x11, 0x22])], { type: "image/jpeg" })),
+  });
+
+  const result = await bridge.invoke({
+    requestId: "native_photo_forged_jpeg",
+    command: "selectPhoto",
+    payload: { purpose: "field_report", maxBytes: 3 * 1024 * 1024 },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, "PHOTO_FORMAT_UNSUPPORTED");
+  assert.equal(JSON.stringify(result).includes("capacitor://"), false);
+});
+
 test("bridge schema version and commands stay aligned with packages/contracts", async () => {
   assert.equal(WEBVIEW_BRIDGE_SCHEMA, "kr.silsigan.webview");
   assert.match(WEBVIEW_BRIDGE_VERSION, /^1\.\d+\.\d+$/);
@@ -118,6 +272,7 @@ test("bridge schema version and commands stay aligned with packages/contracts", 
   const bridge = createWebViewBridge({ firstPartyOrigins: ["https://silsigan.example.com"], isNative: false });
   assert.equal(bridge.schema, WEBVIEW_BRIDGE_SCHEMA);
   assert.equal(bridge.version, WEBVIEW_BRIDGE_VERSION);
+  assert.equal(bridge.platform, null);
   const unsupported = await bridge.invoke({
     requestId: "request_1234",
     command: "openSettings",
@@ -145,6 +300,8 @@ test("deployed Next app mounts the native bridge bootstrap with static allowlist
   assert.match(layout, /<NativeBridgeBootstrap\s*\/>/);
   assert.match(bootstrap, /window\.Capacitor\?\.isNativePlatform/);
   assert.match(bootstrap, /window\.SilsiganNativeBridge = bridge/);
+  assert.match(bootstrap, /registerPushToken: async/);
+  assert.match(bootstrap, /silsigan:push-token/);
   assert.match(bootstrap, /installDocumentNavigationGuard/);
   assert.match(bootstrap, /installNativeEventSeams/);
   for (const plugin of ["app", "browser", "camera", "geolocation", "keyboard", "network", "push-notifications", "share"]) {

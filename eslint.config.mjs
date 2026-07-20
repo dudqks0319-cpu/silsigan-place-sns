@@ -12,6 +12,7 @@ const eslintConfig = [
       "coverage/**",
       "playwright-report/**",
       "test-results/**",
+      "apps/webview/android/**/build/**",
     ],
   },
   ...nextVitals,

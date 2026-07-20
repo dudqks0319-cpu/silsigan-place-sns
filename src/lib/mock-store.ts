@@ -10,12 +10,10 @@ import {
   type StoredReport,
   buildShareCard,
   classifyHashtag,
-  creditEventForQuestion,
   creditEventsForReport,
   distanceMeters,
   evaluateRegionActivation,
   getCategorySafetyWarning,
-  getQuestionCost,
   getReportExpiry,
   isReportExpired,
   rankPostsForFeed,
@@ -26,6 +24,7 @@ import {
 } from "./domain.ts";
 import { ApiError } from "./errors.ts";
 import type { CreatePostInput, CreateQuestionInput, CreateReportInput, FlagPostInput, FlagReportInput } from "./validators.ts";
+import { isLocationAccuracySufficient } from "../../packages/contracts/src/index.ts";
 
 export type RegionActivationDashboardRow = {
   regionId: RegionId;
@@ -425,7 +424,7 @@ export function createPost(input: CreatePostInput) {
   const now = new Date();
   const post: StoredPost = {
     id: `post_${crypto.randomUUID()}`,
-    userId: "demo-user",
+    userId: "local-session",
     creatorName: "실시간러버",
     creatorBadge: place.region === "busan" ? "부산 현장러" : place.region === "gyeongju" ? "경주 골목러" : "울산 현장러",
     placeId: input.placeId,
@@ -463,33 +462,9 @@ export function listQuestions(filters: string | ScopedListFilters = {}) {
   return questions.filter((question) => matchesScopedPlace(question.placeId, normalizedFilters)).slice(0, normalizeListLimit(normalizedFilters.limit));
 }
 
-export function createQuestion(input: CreateQuestionInput) {
-  findPlace(input.placeId);
-
-  const creditCost = getQuestionCost(input.questionType);
-  if (input.availableCredits < creditCost) {
-    throw new ApiError(402, "INSUFFICIENT_CREDITS", "질문권이 부족합니다.", {
-      requiredCredits: creditCost,
-      availableCredits: input.availableCredits,
-    });
-  }
-
-  const question: StoredQuestion = {
-    id: `question_${crypto.randomUUID()}`,
-    placeId: input.placeId,
-    questionType: input.questionType,
-    body: input.body,
-    creditCost,
-    answeredReportId: null,
-    createdAt: new Date().toISOString(),
-  };
-
-  questions.unshift(question);
-
-  return {
-    question,
-    creditEvent: creditEventForQuestion(input.questionType),
-  };
+export function createQuestion(input: CreateQuestionInput): never {
+  void input;
+  throw new ApiError(503, "CREDIT_LEDGER_REQUIRED", "질문권 장부가 준비되지 않아 질문 기능을 사용할 수 없습니다.");
 }
 
 export function flagReport(input: FlagReportInput) {
@@ -629,6 +604,10 @@ function verifiedRadiusForInput(place: Place, clientLocation: CreateReportInput[
     return null;
   }
 
+  if (!isLocationAccuracySufficient(clientLocation.accuracyM)) {
+    return null;
+  }
+
   const distanceM = distanceMeters(clientLocation, {
     latitude: place.latitude,
     longitude: place.longitude,
@@ -671,7 +650,6 @@ function publicPost(post: StoredPost) {
       createdAt: post.createdAt,
     })),
     shareCard: buildShareCard(post, place),
-    judgement: buildShareCard(post, place).headline.replace(`${place.name} `, ""),
     safetyWarning: getCategorySafetyWarning(place.category),
     isSample: post.id.startsWith("post_seed_"),
   };
