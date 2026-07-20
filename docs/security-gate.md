@@ -136,7 +136,7 @@ Evidence:
 ### 3. Input/Output
 
 - 모든 body/query/path 입력은 enum, 길이, 숫자 범위, 좌표 범위를 검증한다.
-- 일반 JSON body는 `Content-Length` 유무와 관계없이 스트림을 읽는 동안 64 KiB를 넘으면 `413 JSON_BODY_TOO_LARGE`로 중단하고, 잘못된 JSON은 parser 세부정보 없이 `400 INVALID_JSON`으로 반환한다. 사진 JSON은 별도 3 MiB 이미지 한도에 맞춘 bounded 경로를 사용한다.
+- 일반 JSON body는 `Content-Length` 유무와 관계없이 스트림을 읽는 동안 64 KiB를 넘으면 `413 JSON_BODY_TOO_LARGE`로 중단하고, 잘못된 JSON은 parser 세부정보 없이 `400 INVALID_JSON`으로 반환한다. 사진은 로컬 원본을 반복 재인코딩한 뒤 서버 전송·저장본 1 MiB 한도에 맞춘 bounded 경로만 사용한다.
 - map bounds는 최대 면적 제한을 둔다.
 - 댓글/제보 본문은 출력 시 HTML escape를 전제로 한다.
 - 사진 업로드는 MIME sniffing과 확장자 검증을 모두 수행한다.

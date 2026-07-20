@@ -195,7 +195,7 @@ test("native photo selection converts iPhone library media to a bounded JPEG", a
   const result = await bridge.invoke({
     requestId: "native_photo_1234",
     command: "selectPhoto",
-    payload: { purpose: "field_report", maxBytes: 3 * 1024 * 1024 },
+    payload: { purpose: "field_report", maxBytes: 12 * 1024 * 1024 },
   });
 
   assert.equal(result.ok, true);
@@ -232,7 +232,7 @@ test("native photo selection fails closed when JPEG conversion is not proven", a
   const result = await bridge.invoke({
     requestId: "native_photo_5678",
     command: "selectPhoto",
-    payload: { purpose: "field_report", maxBytes: 3 * 1024 * 1024 },
+    payload: { purpose: "field_report", maxBytes: 12 * 1024 * 1024 },
   });
 
   assert.equal(result.ok, false);
@@ -256,7 +256,7 @@ test("native photo selection rejects a forged JPEG MIME type without JPEG magic 
   const result = await bridge.invoke({
     requestId: "native_photo_forged_jpeg",
     command: "selectPhoto",
-    payload: { purpose: "field_report", maxBytes: 3 * 1024 * 1024 },
+    payload: { purpose: "field_report", maxBytes: 12 * 1024 * 1024 },
   });
 
   assert.equal(result.ok, false);

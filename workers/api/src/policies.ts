@@ -1,9 +1,11 @@
+import { PHOTO_MAX_DIMENSION as CONTRACT_PHOTO_MAX_DIMENSION, PHOTO_UPLOAD_MAX_BYTES } from "../../../packages/contracts/src/index.ts";
+
 export const DEFAULT_LIMIT = 20;
 export const MAX_LIMIT = 50;
 export const MAX_REGION_RANKING_LIMIT = 50;
 export const MAX_PLACE_RADIUS_M = 100_000;
-export const PHOTO_MAX_BYTES = 3 * 1024 * 1024;
-export const PHOTO_MAX_DIMENSION = 1280;
+export const PHOTO_MAX_BYTES = PHOTO_UPLOAD_MAX_BYTES;
+export const PHOTO_MAX_DIMENSION = CONTRACT_PHOTO_MAX_DIMENSION;
 export const PHOTO_ALLOWED_MIME_TYPES = ["image/webp", "image/jpeg"] as const;
 
 export type ApiResponse<TData> =

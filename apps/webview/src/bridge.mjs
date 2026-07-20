@@ -13,6 +13,7 @@ export const WEBVIEW_BRIDGE_COMMANDS = Object.freeze([
 ]);
 
 const DISTANCE_BUCKETS = new Set(["within_50m", "within_150m", "within_300m", "outside_300m", "unverified"]);
+const PHOTO_LOCAL_SOURCE_MAX_BYTES = 12 * 1024 * 1024;
 const DEFAULT_PLUGIN_LOADERS = Object.freeze({
   "@capacitor/app": () => import("@capacitor/app"),
   "@capacitor/browser": () => import("@capacitor/browser"),
@@ -246,7 +247,7 @@ function validateRequest(input) {
     requireEnum(payload.purpose, ["field_report", "nearby"]);
   } else if (input.command === "takePhoto" || input.command === "selectPhoto") {
     requireOnlyKeys(payload, ["purpose", "maxBytes"]);
-    if (payload.purpose !== "field_report" || !Number.isInteger(payload.maxBytes) || payload.maxBytes < 100_000 || payload.maxBytes > 10_000_000) {
+    if (payload.purpose !== "field_report" || !Number.isInteger(payload.maxBytes) || payload.maxBytes < 100_000 || payload.maxBytes > PHOTO_LOCAL_SOURCE_MAX_BYTES) {
       throw new Error("Invalid photo payload");
     }
   } else if (input.command === "share") {

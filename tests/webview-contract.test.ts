@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   classifyWebViewNavigation,
+  PHOTO_LOCAL_SOURCE_MAX_BYTES,
   parseSilsiganDeepLink,
   parseWebViewBridgeRequest,
   webViewBridgeCommands,
@@ -52,6 +53,15 @@ test("WebView bridge accepts only the seven schema-validated commands", () => {
     payload: { purpose: "field_report" },
   });
   assert.deepEqual(parseWebViewBridgeRequest({
+    requestId: "request_photo_1234",
+    command: "selectPhoto",
+    payload: { purpose: "field_report", maxBytes: PHOTO_LOCAL_SOURCE_MAX_BYTES },
+  }), {
+    requestId: "request_photo_1234",
+    command: "selectPhoto",
+    payload: { purpose: "field_report", maxBytes: PHOTO_LOCAL_SOURCE_MAX_BYTES },
+  });
+  assert.deepEqual(parseWebViewBridgeRequest({
     requestId: "request_5678",
     command: "share",
     payload: { url: "https://silsigan.example.com/place/one", text: "현장 상태" },
@@ -77,6 +87,11 @@ test("WebView bridge rejects arbitrary JavaScript commands URLs and extra fields
     requestId: "request_1234",
     command: "requestLocation",
     payload: { purpose: "field_report", latitude: 35.1 },
+  }));
+  assert.throws(() => parseWebViewBridgeRequest({
+    requestId: "request_photo_oversize",
+    command: "selectPhoto",
+    payload: { purpose: "field_report", maxBytes: PHOTO_LOCAL_SOURCE_MAX_BYTES + 1 },
   }));
 });
 

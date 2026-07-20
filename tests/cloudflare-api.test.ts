@@ -363,6 +363,7 @@ test("Cloudflare API environments pin browser writes to their deployed web origi
   assert.equal(config.env?.production?.vars?.SILSIGAN_PHOTO_TURNSTILE_REQUIRED, "1");
   assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT === "5000"), true);
   assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT === "1000"), true);
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PHOTO_DAILY_BYTES_LIMIT === "20971520"), true);
   assert.equal(
     environments.every((environment) => {
       const binding = environment?.ratelimits?.find((candidate) => candidate.name === "PUBLIC_API_RATE_LIMITER");
@@ -3664,6 +3665,25 @@ test("Cloudflare API clamps generic list and ranking limits", () => {
 
   assert.equal(ranked.length, 50);
   assert.equal(ranked[0]?.score, 59);
+});
+
+test("photo policy accepts at most one MiB after client re-encoding", () => {
+  const base = {
+    uploadId: "upload_photo_policy",
+    placeId: "busan-gwangalli",
+    byteSize: policies.PHOTO_MAX_BYTES,
+    mimeType: "image/jpeg",
+    width: 1280,
+    height: 720,
+    clientReencoded: true,
+  };
+
+  assert.equal(policies.PHOTO_MAX_BYTES, 1024 * 1024);
+  assert.equal(policies.validatePhotoComplete(base).policy.maxBytes, 1024 * 1024);
+  assert.throws(
+    () => policies.validatePhotoComplete({ ...base, byteSize: policies.PHOTO_MAX_BYTES + 1 }),
+    /PHOTO_SIZE_LIMIT/,
+  );
 });
 
 test("Cloudflare API bbox parser and filter keep only places inside bounds", () => {

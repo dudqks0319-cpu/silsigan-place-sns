@@ -16,6 +16,14 @@ export type FeatureFlagKey = (typeof featureFlagKeys)[number];
  */
 export const PHOTO_RIGHTS_TERMS_VERSION = "photo-rights-2026-07-20-v1" as const;
 
+/** Final sanitized bytes accepted by the API and written to private object storage. */
+export const PHOTO_UPLOAD_MAX_BYTES = 1 * 1024 * 1024;
+
+/** Local-only source bound before browser/native re-encoding; these bytes are never uploaded as-is. */
+export const PHOTO_LOCAL_SOURCE_MAX_BYTES = 12 * 1024 * 1024;
+
+export const PHOTO_MAX_DIMENSION = 1280;
+
 export const locationAccuracyBuckets = ["high", "medium", "low", "unknown"] as const;
 export type LocationAccuracyBucket = (typeof locationAccuracyBuckets)[number];
 

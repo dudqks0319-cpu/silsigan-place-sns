@@ -6,6 +6,7 @@ import {
   type RankingRecord,
   type RateLimitState,
   PHOTO_MAX_BYTES,
+  PHOTO_MAX_DIMENSION,
   MAX_REGION_RANKING_LIMIT,
   applyBoundedSlidingWindowRateLimit,
   clampLimit,
@@ -1286,7 +1287,7 @@ const photoMonthlyReadFreeSafetyCeiling = 1_000_000;
 const photoDailyReadFreeSafetyCeiling = 20_000;
 const photoDailyIpReadFreeSafetyCeiling = 1_000;
 const photoDailyUploadFreeSafetyCeiling = 20;
-const photoDailyBytesFreeSafetyCeiling = 60 * 1024 * 1024;
+const photoDailyBytesFreeSafetyCeiling = 20 * PHOTO_MAX_BYTES;
 const photoCostGuardStopPercent = 80;
 const photoUploadTicketTtlSafetyCeilingSeconds = 5 * 60;
 const photoUploadTicketClockSkewMs = 30_000;
@@ -6350,8 +6351,8 @@ async function createPhotoUploadTicket(
     },
     {
       r2Policy: {
-        maxBytes: 3 * 1024 * 1024,
-        maxDimension: 1280,
+        maxBytes: PHOTO_MAX_BYTES,
+        maxDimension: PHOTO_MAX_DIMENSION,
         originalFilenameStored: false,
         gpsExifStripped: true,
         processing: "worker-strips-metadata-before-r2-put",
@@ -6542,7 +6543,7 @@ async function uploadPhotoMultipart(request: Request, session: AnonymousSession,
   }
 
   if (typeof file.size === "number" && file.size > PHOTO_MAX_BYTES) {
-    throw new HttpError(413, "PHOTO_SIZE_LIMIT", "사진은 3MB 이하만 업로드할 수 있습니다.");
+    throw new HttpError(413, "PHOTO_SIZE_LIMIT", "서버로 보내는 사진은 1MB 이하여야 합니다.");
   }
 
   const imageBytes = new Uint8Array(await file.arrayBuffer());

@@ -42,3 +42,12 @@ test("every photo upload requires a versioned posting-rights confirmation", () =
   assert.match(photoUploaderSource, /rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION/);
   assert.match(photoUploaderSource, /setRightsConfirmed\(false\)/);
 });
+
+test("photo upload re-encodes local sources and never sends more than one MiB", () => {
+  assert.match(photoUploaderSource, /PHOTO_LOCAL_SOURCE_MAX_BYTES/);
+  assert.match(photoUploaderSource, /blob\.size <= PHOTO_UPLOAD_MAX_BYTES/);
+  assert.match(photoUploaderSource, /PHOTO_OUTPUT_QUALITIES/);
+  assert.match(photoUploaderSource, /PHOTO_OUTPUT_DIMENSIONS/);
+  assert.match(photoUploaderSource, /서버 전송 전에 1MB 이하/);
+  assert.doesNotMatch(photoUploaderSource, /최대 3MB|3MB 이하/);
+});

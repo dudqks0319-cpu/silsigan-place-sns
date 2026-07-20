@@ -2,12 +2,17 @@
 
 import { Camera, Flag, Image as ImageIcon, Trash2 } from "lucide-react";
 import { type CSSProperties, useId, useRef, useState } from "react";
-import { PHOTO_RIGHTS_TERMS_VERSION } from "../../../packages/contracts/src/index.ts";
+import {
+  PHOTO_LOCAL_SOURCE_MAX_BYTES,
+  PHOTO_MAX_DIMENSION,
+  PHOTO_RIGHTS_TERMS_VERSION,
+  PHOTO_UPLOAD_MAX_BYTES,
+} from "../../../packages/contracts/src/index.ts";
 import styles from "./SilsiganRedesign.module.css";
 import { EmptyState } from "./EmptyState";
 
-const PHOTO_MAX_BYTES = 3 * 1024 * 1024;
-const PHOTO_MAX_DIMENSION = 1280;
+const PHOTO_OUTPUT_QUALITIES = [0.82, 0.68, 0.54, 0.42] as const;
+const PHOTO_OUTPUT_DIMENSIONS = [PHOTO_MAX_DIMENSION, 1024, 800, 640] as const;
 
 type PhotoMimeType = "image/jpeg" | "image/webp";
 
@@ -54,7 +59,7 @@ export function PhotoUploader({
   const [status, setStatus] = useState<"idle" | "processing" | "uploading" | "done" | "error">("idle");
   const [message, setMessage] = useState(
     uploadEnabled
-      ? "JPEG 또는 WebP 1장, 최대 3MB. #실시간 앱은 iPhone HEIC를 JPEG로 자동 변환합니다. 웹에서는 JPEG로 저장한 뒤 올려주세요."
+      ? "JPEG 또는 WebP 원본을 고르면 서버 전송 전에 1MB 이하로 안전하게 다시 저장합니다. #실시간 앱은 iPhone HEIC를 JPEG로 자동 변환합니다."
       : "사진 업로드 서버에 연결되지 않았습니다. 확인한 상태는 사진 없이도 제보할 수 있습니다.",
   );
   const [viewingPhotoId, setViewingPhotoId] = useState<string | null>(null);
@@ -107,7 +112,7 @@ export function PhotoUploader({
       const response = await nativeBridge.invoke({
         requestId: nativePhotoRequestId(),
         command: "selectPhoto",
-        payload: { purpose: "field_report", maxBytes: PHOTO_MAX_BYTES },
+        payload: { purpose: "field_report", maxBytes: PHOTO_LOCAL_SOURCE_MAX_BYTES },
       });
       if (!response.ok) {
         throw new Error(nativePhotoErrorMessage(response.error?.code));
@@ -198,7 +203,7 @@ export function PhotoUploader({
             setRightsConfirmed(checked);
             setMessage(
               checked
-                ? "JPEG 또는 WebP 1장, 최대 3MB. 사진을 고르면 안전한 크기로 다시 저장합니다."
+                ? "JPEG 또는 WebP 원본 1장(최대 12MB)을 고르면 서버 전송 전에 1MB 이하로 다시 저장합니다."
                 : "직접 촬영했거나 게시 권한이 있는 사진인지 먼저 확인해 주세요.",
             );
           }}
@@ -324,7 +329,7 @@ function isAllowedNativePhotoUrl(value: string): boolean {
 }
 
 function nativePhotoErrorMessage(code: string | undefined): string {
-  if (code === "PHOTO_TOO_LARGE") return "변환한 사진이 3MB를 넘습니다. 다른 사진을 선택해 주세요.";
+  if (code === "PHOTO_TOO_LARGE") return "선택한 원본 사진이 12MB를 넘습니다. 다른 사진을 선택해 주세요.";
   if (code === "PERMISSION_DENIED") return "사진 접근 권한이 필요합니다. 설정에서 사진 권한을 허용해 주세요.";
   if (code === "PHOTO_FORMAT_UNSUPPORTED") return "iPhone 사진을 JPEG로 변환하지 못했습니다.";
   return "사진을 불러오지 못했습니다. 다시 시도해 주세요.";
@@ -340,34 +345,43 @@ function photoViewLabel(photo: PlacePhoto): string {
 
 async function preparePhotoForUpload(file: File): Promise<ReencodedPhoto> {
   const sourceMimeType = photoMimeType(file.type);
-  if (file.size > PHOTO_MAX_BYTES) {
-    throw new Error("사진은 3MB 이하만 올릴 수 있습니다.");
+  if (file.size > PHOTO_LOCAL_SOURCE_MAX_BYTES) {
+    throw new Error("원본 사진은 12MB 이하만 선택할 수 있습니다.");
   }
 
   const image = await loadImage(file);
-  const { width, height } = fitInside(image.naturalWidth, image.naturalHeight, PHOTO_MAX_DIMENSION);
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) {
-    throw new Error("이 브라우저에서는 사진을 처리할 수 없습니다.");
+  let previousDimensions = "";
+
+  for (const maxDimension of PHOTO_OUTPUT_DIMENSIONS) {
+    const { width, height } = fitInside(image.naturalWidth, image.naturalHeight, maxDimension);
+    const dimensions = `${width}x${height}`;
+    if (dimensions === previousDimensions) continue;
+    previousDimensions = dimensions;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("이 브라우저에서는 사진을 처리할 수 없습니다.");
+    }
+    context.drawImage(image, 0, 0, width, height);
+
+    for (const quality of PHOTO_OUTPUT_QUALITIES) {
+      const blob = await canvasToBlob(canvas, sourceMimeType, quality);
+      if (blob.size <= PHOTO_UPLOAD_MAX_BYTES) {
+        return {
+          blob,
+          byteSize: blob.size,
+          height,
+          mimeType: photoMimeType(blob.type || sourceMimeType),
+          width,
+        };
+      }
+    }
   }
 
-  context.drawImage(image, 0, 0, width, height);
-  const blob = await canvasToBlob(canvas, sourceMimeType);
-  const mimeType = photoMimeType(blob.type || sourceMimeType);
-  if (blob.size > PHOTO_MAX_BYTES) {
-    throw new Error("다시 저장한 사진도 3MB를 넘습니다.");
-  }
-
-  return {
-    blob,
-    byteSize: blob.size,
-    height,
-    mimeType,
-    width,
-  };
+  throw new Error("사진을 1MB 이하로 줄이지 못했습니다. 다른 사진을 선택해 주세요.");
 }
 
 function photoMimeType(value: string): PhotoMimeType {
@@ -407,7 +421,7 @@ function fitInside(sourceWidth: number, sourceHeight: number, maxDimension: numb
   };
 }
 
-function canvasToBlob(canvas: HTMLCanvasElement, mimeType: PhotoMimeType): Promise<Blob> {
+function canvasToBlob(canvas: HTMLCanvasElement, mimeType: PhotoMimeType, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
@@ -419,7 +433,7 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: PhotoMimeType): Promi
         resolve(blob);
       },
       mimeType,
-      0.86,
+      quality,
     );
   });
 }

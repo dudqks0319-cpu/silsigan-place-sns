@@ -93,7 +93,7 @@
 
 4. 사진 업로드 결과가 report/post와 명확히 연결돼야 한다.
    - 현재 상태: 완료-local. `0014_field_report_publications.sql`이 `field_report_publications`, `field_report_media`, `hashtags`, `field_report_hashtags`, `publication_outbox`를 추가했고 Worker가 사진 소유권·장소 일치·멱등 재시도·승인 전 태그 비노출을 검증한다. staging R2/D1 적용과 브라우저 증적은 외부 게이트로 남는다.
-   - 비용·공격 안전: `0015`/`0016`/`0017`은 staging D1까지 적용·검증됐고, 로컬 `0020_photo_transform_budget.sql`, `0021_photo_read_abuse_budget.sql`, `0022_photo_storage_release_ledger.sql`은 Images 변환, per-IP read, 멱등 storage release 원장을 추가한다. 5분 서명 티켓, 재사용 차단, IP 업로드/조회 제한, 동시 삭제 중복 차감 차단, 일일 20회/60 MiB, 약 3.2 GiB/12,800 writes/4,000 Images transformations/800,000 monthly Class B reads/16,000 daily D1-tracked reads 자동 중단, 관리자 whole-R2 긴급 스위치, redacted webhook을 로컬 하네스로 검증했다. `0020`~`0022` 원격 적용, post-`0022` R2/D1 reconciliation, R2 사용자 결제/약관 완료는 남는다.
+   - 비용·공격 안전: `0015`/`0016`/`0017`은 staging D1까지 적용·검증됐고, 로컬 `0020_photo_transform_budget.sql`, `0021_photo_read_abuse_budget.sql`, `0022_photo_storage_release_ledger.sql`은 Images 변환, per-IP read, 멱등 storage release 원장을 추가한다. 서버 전송·저장본 1 MiB, 5분 서명 티켓, 재사용 차단, IP 업로드/조회 제한, 동시 삭제 중복 차감 차단, 일일 20회/20 MiB, 약 3.2 GiB/12,800 writes/4,000 Images transformations/800,000 monthly Class B reads/16,000 daily D1-tracked reads 자동 중단, 관리자 whole-R2 긴급 스위치, redacted webhook을 로컬 하네스로 검증했다. `0020`~`0022` 원격 적용, post-`0022` R2/D1 reconciliation, R2 사용자 결제/약관 완료는 남는다.
 
 5. 로컬 저장 기반 좋아요/팔로우/저장은 계정 복구 전략이 필요하다.
    - 다음 작업: TestFlight 내부 단계에서는 익명 세션 유지 정책을 문서화하고, 외부 테스트 전 서버 복구 전략을 결정한다.

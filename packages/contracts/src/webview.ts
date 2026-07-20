@@ -1,3 +1,5 @@
+import { PHOTO_LOCAL_SOURCE_MAX_BYTES } from "./config.ts";
+
 export const webViewBridgeCommands = [
   "requestLocation",
   "takePhoto",
@@ -57,7 +59,7 @@ export function parseWebViewBridgeRequest(input: unknown): WebViewBridgeRequest 
   if (command === "takePhoto" || command === "selectPhoto") {
     requireOnlyKeys(payload, ["purpose", "maxBytes"]);
     if (payload.purpose !== "field_report") throw new Error("Invalid photo purpose");
-    const maxBytes = requireInteger(payload.maxBytes, 100_000, 10_000_000);
+    const maxBytes = requireInteger(payload.maxBytes, 100_000, PHOTO_LOCAL_SOURCE_MAX_BYTES);
     return { requestId, command, payload: { purpose: "field_report", maxBytes } };
   }
   if (command === "share") {
