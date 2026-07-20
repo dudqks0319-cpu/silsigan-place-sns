@@ -38,9 +38,10 @@ Always fetch the canonical branch and work from a clean clone or worktree. Do no
 ## GitHub Actions state
 
 - The repository Actions permission is enabled with `allowed_actions=all`, and the canonical branch contains `.github/workflows/ci.yml`.
-- The two runs immediately before this handoff (`29710281873` and `29710857132`) ended as `startup_failure` with zero jobs and the synthetic workflow path `BuildFailed`; they did not execute the repository tests.
-- Immediately after the first handoff push, the final branch commit had no check run registered. Therefore local `416/416` evidence is verified, but a green GitHub CI run is not claimed.
-- The next developer should inspect the Actions page while authenticated, confirm workflow recognition from the default branch or pull request, and resolve the repository/platform startup condition before making CI a required merge check. Do not weaken or remove the CI audit/verification steps merely to produce a green badge.
+- Runs `29710281873`, `29710857132`, and `29711040447` ended as `startup_failure` with zero jobs and the synthetic workflow path `BuildFailed`; they did not execute repository tests.
+- The run page classifies this as an unexpected GitHub error and provides support request ID `26A3:1D8F6:DC98B8:11ECDBC:6A5D7984`. At the same time, [GitHub Status](https://www.githubstatus.com/) reports an active Actions incident in which new workflows may be delayed or fail to start.
+- Therefore local `416/416` evidence is verified, but a green GitHub CI run is not claimed. After GitHub marks the incident resolved, rerun CI without changing the workflow. If startup failure persists, send the request ID above to GitHub Support.
+- Do not weaken or remove the CI audit/verification steps merely to produce a green badge.
 
 ## Safe resume commands
 
