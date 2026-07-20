@@ -3,8 +3,8 @@
 작성 기준일: 2026-07-14  
 대상 저장소: `dudqks0319-cpu/silsigan-place-sns`  
 검토 브랜치: `codex/silsigan-progress-20260710`  
-원격 기준 커밋: `1d4d607a84cb09055ff3561fd802486995c622fd`
-코드 기준 커밋: `1d4d607a84cb09055ff3561fd802486995c622fd`
+원격 기준 커밋: `744d3032760cf67a25bf1a70f90edf1530437800`
+코드 기준 커밋: `744d3032760cf67a25bf1a70f90edf1530437800`
 
 2026-07-20 전국 출시·마케팅·디자인 보완 계획: `docs/market-design-nationwide-plan-2026-07-20.md`  
 전국 검색·지도·제보 기능은 지역 제한 없이 유지하고, Tier A/B는 기능 제한이 아니라 초기 fresh evidence 공급과 운영 집중 우선순위로만 사용합니다.
@@ -74,11 +74,11 @@ Production 승격은 금지합니다.
 - `[x]` 서울시 실시간 도시데이터 응답을 `crowd` LiveSignal로 정규화하는 adapter와 관측시각·TTL·추정값·미지 혼잡도 거부 계약 테스트
 - `[x]` Capacitor iOS/Android 프로젝트 골격과 `kr.silsigan.mobile` 권한/cleartext 보안 메타데이터를 로컬 생성·반영하고 `SilsiganShell.openSettings`를 양 플랫폼에 등록
 
-### GitHub에는 아직 반영되지 않은 항목
+### GitHub 반영 완료
 
-- `[!]` 위 로컬 보강 내용을 commit/push하지 않았습니다.
-- `[ ]` push 전 변경 파일 검토, secret scan, branch diff 확인이 필요합니다.
-- `[ ]` push 후 GitHub SHA와 release ledger의 SHA를 다시 일치시켜야 합니다.
+- `[x]` 맥북과 맥미니의 선별 통합 내용을 `744d3032760cf67a25bf1a70f90edf1530437800`으로 commit/push했습니다.
+- `[x]` 커밋 대상 변경 파일, secret scan, branch diff, pre-push 검사를 통과했습니다.
+- `[x]` GitHub 원격 SHA가 로컬 통합 SHA와 일치함을 확인했습니다. GitHub Actions는 외부 대기 상태이므로 CI 통과로 표시하지 않습니다.
 
 ## 4. 남은 P0/P1
 
@@ -115,20 +115,20 @@ Production 승격은 금지합니다.
 
 ## 5. 수정된 실행 순서
 
-### Phase 0 — 로컬 변경 고정 및 원격 반영 준비
+### Phase 0 — 로컬 변경 고정 및 원격 반영
 
 의존성: 없음
 
 - [x] 현재 dirty worktree에서 변경 파일을 분류·검토
 - [x] 커밋 대상 테스트 422/422, skip 0, `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm cf:build`, root/mobile dependency audit with no known vulnerabilities, staging/production frontend/API Worker dry-run, WebView/mobile verify, Android JDK 21 lint/debug APK, `git diff --check` 재실행
 - [x] `pnpm cf:typegen`과 `pnpm cf:build` 통과. OpenNext가 `.open-next/worker.js`와 assets bundle을 생성했으며, 실제 Cloudflare 배포는 수행하지 않음
-- [x] secret scan과 migration chain fixture를 로컬에서 재실행해 통과함. 최종 push 후 원격 SHA 기준으로 다시 확인 필요
+- [x] secret scan과 migration chain fixture를 로컬에서 재실행해 통과했고, push 후 원격 SHA 일치를 확인함
 - [x] 저장소 `local-report` browser smoke를 390x844에서 재실행해 일반 올리기의 명시적 장소 선택, 사진별 촬영·게시 권한 확인 클릭과 파일 입력 활성화, anonymous-session bootstrap, onboarding, home/map/my, 설정 동기화, NAVER 검색 결과의 명시적 검토 폼 prefill과 제출 전 무저장, 비공개 장소 요청 접수와 owner-only 상태, 사용자 안전 지도 fallback·컨트롤, 전국 검색, 랭킹·상세, realtime, like/comment/photo, 장소·댓글·사진 신고, 소유 사진 삭제, JPEG 업로드, 통합 발행 계약과 승인 제보 deep link, legacy social feed 비활성 상태의 `#지금` 최신 승인 사진 탐색·Worker 팔로우·마이 복귀·cursor 다음 페이지 병합, 계정 삭제/세션 회전/이전 proof 403, share/OG, 관리자 로그인, aggregate/Tier A/Tier B KPI, 5개 사진 비용 계기와 3개 전역 API 비용 계기, 사진 stop/resume, 전역 API stop/Cloudflare 대조/below-70% resume까지 필수 58개 흐름을 통과함. 최신 artifact는 `artifacts/cloudflare-pages-smoke-worker-report-local/pages-smoke-1784510945721.png`, `pages-smoke-home-1784510945721.png`, `pages-smoke-map-1784510945721.png`, `pages-smoke-place-1784510945721.png`, `pages-smoke-my-1784510945721.png`, `pages-smoke-hashtag-1784510945721.png`, `pages-smoke-account-deletion-1784510945721.png`, `pages-smoke-admin-cost-guard-stopped-1784510945721.png`, `pages-smoke-admin-cost-guard-running-1784510945721.png`, `pages-smoke-admin-api-cost-guard-stopped-1784510945721.png`, `pages-smoke-admin-api-cost-guard-running-1784510945721.png`, `pages-smoke-network-1784510945721.json`임. 네트워크 614건에서 request body 저장·민감정보 hit가 없었고, 임의 백엔드 오류문·내부 검수 사유·내부 저장 식별자·raw 익명 proof를 사용자 화면이나 증적에 전달하지 않는 오류 경계를 유지함
 - [x] Computer Use로 Cloudflare R2 checkout을 읽기 전용 확인했으며 결제정보 입력, 약관 동의, R2 활성화는 수행하지 않음. NAVER Cloud 로그인 후 별도 `Silsigan` Dynamic Map 폼을 준비했지만 최종 등록은 승인 전이라 누르지 않음
-- [ ] 사용자 승인 후에만 commit/push
-- [ ] push 후 GitHub SHA, branch, release ledger를 다시 확인
+- [x] 사용자 요청에 따라 선별 통합본 commit/push
+- [x] push 후 GitHub SHA와 branch를 확인하고 release ledger를 통합 기준 SHA로 동기화
 
-완료 조건: 원격 SHA와 문서 SHA가 같고, 새 `0013`~`0025` 및 release-evidence gate가 GitHub에서 확인됩니다.
+완료 조건: 통합 기준 SHA `744d3032760cf67a25bf1a70f90edf1530437800`과 원격 branch가 일치하고, `0013`~`0026` 및 release-evidence gate가 GitHub에서 확인됩니다. 완료했습니다.
 
 ### Phase 1 — Cloudflare staging
 
@@ -222,7 +222,7 @@ Production 승격은 금지합니다.
 
 ## 6. Production 승격 체크리스트
 
-- [ ] GitHub remote가 최신 로컬 검증 SHA와 일치
+- [x] GitHub remote가 통합 기준 로컬 검증 SHA `744d3032760cf67a25bf1a70f90edf1530437800`와 일치
 - [x] API feature gate
 - [x] server-owned question credit fail-closed
 - [x] `expiresAt` 강제

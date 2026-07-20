@@ -2,7 +2,7 @@
 
 Updated: 2026-07-20
 Branch: `codex/silsigan-progress-20260710`
-Release candidate source commit: `1d4d607a84cb09055ff3561fd802486995c622fd`; evidence-only documentation follows on the same branch
+Release candidate source commit: `744d3032760cf67a25bf1a70f90edf1530437800`; evidence-only documentation follows on the same branch
 
 ## Objective
 

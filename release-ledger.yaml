@@ -17,9 +17,9 @@ candidate:
   phase: "v2_local_ready_external_blocked"
   version: "0.1.0"
   build_number: "not_applicable"
-  git_sha: "1d4d607a84cb09055ff3561fd802486995c622fd"
+  git_sha: "744d3032760cf67a25bf1a70f90edf1530437800"
   branch: "codex/silsigan-progress-20260710"
-  dirty_state: "dirty_uncommitted_local_v2_hardening_after_010947c"
+  dirty_state: "source_committed_remote_matched_generated_evidence_preserved"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
@@ -176,7 +176,7 @@ blockers:
     status: "open"
     title: "NAVER Web Maps requires an owner-controlled custom domain plus console key, limit, and notification evidence."
     owner: "release-operator"
-    evidence: "2026-07-20 NAVER Cloud owner login is complete and Computer Use prepared a separate Silsigan Dynamic Map application with localhost development origins plus Android/iOS identifier kr.silsigan.mobile, removed both temporary workers.dev entries from the unsubmitted draft, and saved artifacts/manual-qa/naver-silsigan-draft-complete-20260720.png without clicking final registration or exposing credentials. Cloudflare Domains contains no domain or subdomain. Cloudflare Registrar does not support .kr; exact-name search displayed unpurchased silsigan.app as available at USD 14.20/year with the same displayed renewal price, and no purchase or checkout action was taken. The release gate rejects workers.dev/pages.dev/vercel.app and now also refuses missing or unsafe representative-account, monthly 4,800,000, daily 160,000, 70% alert, and recipient-confirmation evidence. Domain selection and addition/acquisition, final registration, production origins, masked console limit/recipient evidence, valid-origin success, and invalid-origin rejection evidence remain pending"
+    evidence: "2026-07-20 NAVER Cloud owner login is complete and the unsubmitted Silsigan Dynamic Map form currently contains localhost development origins, the staging and production workers.dev preview origins, and Android/iOS identifier kr.silsigan.mobile. Final registration was not clicked and no credential was exposed. workers.dev remains preview-only: the release gate requires an owner-controlled custom domain plus representative-account, monthly 4,800,000, daily 160,000, 70% alert, and recipient-confirmation evidence. Domain selection and addition, final NAVER registration with owner-controlled production origins, masked console limit/recipient evidence, valid-origin success, and invalid-origin rejection evidence remain pending"
     due: "before_staging_browser_smoke"
   - id: "P0-SILSIGAN-SOURCE-RIGHTS"
     severity: "P0"
