@@ -5,6 +5,7 @@
 - Canonical branch: `codex/silsigan-progress-20260710`
 - Reviewed integration base: `a8e4db0` (`fix: bound retry costs in protected staging`)
 - Dependency security commit in this handoff chain: `9daab36` (`fix: audit mobile dependency tree`)
+- Turnstile public-config commit: `30360956cd4aad29b145dce664f8bc7943bd5874` (`chore: provision staging Turnstile config`)
 - Release state: `v2_local_ready_external_blocked`
 - Production deploy and remote D1 migration were not performed.
 
@@ -66,8 +67,8 @@ pnpm release:status
 
 1. Read-only Cloudflare state check: confirm whether R2 is actually enabled in Wrangler/CLI and that direct public `r2.dev` and R2 custom domains are disabled.
 2. Preserve the protected pre-change Staging backup and the empty archived legacy table. Backup-gated recovery preserved the old table and normal Wrangler migrations applied `0018`~`0026`; the latest read-only evidence verifies no pending migration, aligned registry, and core seed evidence with zero remote writes from the verification. Do not add or rewrite migration registry rows.
-3. Dedicated `COST_GUARD_STATE` KV is provisioned for staging/production. Finish the prepared Turnstile widget and install credentials without committing secrets.
-4. Finish NAVER Maps using an owner-controlled domain and exact HTTPS origins; shared `workers.dev`, `pages.dev`, and `vercel.app` origins are not acceptable release evidence.
+3. Dedicated `COST_GUARD_STATE` KV is provisioned for staging/production. The exact-host Turnstile widget/public key and both staging secret names are provisioned without committing values. R2 enablement, configured application deployment, and live upload-ticket success/failure evidence remain.
+4. Log in again directly in the NAVER Cloud browser session after the expired-session registration failure, then finish NAVER Maps using an owner-controlled domain and exact HTTPS origins; shared `workers.dev`, `pages.dev`, and `vercel.app` origins are not acceptable release evidence.
 5. Deploy the staging API Worker only after preflight passes. Run read-only smoke first, then separately authorize write smoke.
 6. Complete private R2 upload/read/delete evidence, moderation smoke, iPhone and Android real-device QA, source-rights review, and legal/store sign-off.
 7. Promote to production only after every release-ledger P0 blocker is closed and rollback evidence is current.

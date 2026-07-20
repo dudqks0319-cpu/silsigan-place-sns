@@ -10,8 +10,8 @@ Operator packet: `docs/cloudflare-staging-operator-packet.md`
 
 | Target | Current judgement | Reason |
 | --- | --- | --- |
-| Web/PWA beta MVP | local complete; staging read-only | Cloudflare Worker API, D1 schema, local browser smoke, reporting, photos, likes, comments, rankings, and moderation guards are implemented and locally verified. Both web Workers are deployed, but the API Workers and live mutation path are not. |
-| TestFlight internal testing | candidate after staging API/R2/Turnstile | Native wrapper and permission copy are locally verified; Staging D1 now passes through `0026`, while live staging API, R2 plus post-`0022` storage reconciliation, Turnstile, and device evidence are still required. |
+| Web/PWA beta MVP | local complete; staging read-only | Cloudflare Worker API, D1 schema, local browser smoke, reporting, photos, likes, comments, rankings, and moderation guards are implemented and locally verified. Both web Workers are deployed and the staging API secret target exists, but the configured API application and live mutation path are not deployed. |
+| TestFlight internal testing | candidate after staging API/R2/Turnstile smoke | Native wrapper and permission copy are locally verified; Staging D1 now passes through `0026`, and Turnstile configuration is provisioned, while live staging API, R2 plus post-`0022` storage reconciliation, Turnstile upload-ticket evidence, and device evidence are still required. |
 | TestFlight external testing | blocked | Needs real staging smoke, R2/Images mutation proof, production-safe moderation runbook, and device QA evidence. |
 | App Store production submission | blocked | This is still a beta MVP until external Cloudflare resources, UGC operations, and real-device evidence are complete. |
 
@@ -21,7 +21,7 @@ The earlier release assessment correctly warns against App Store submission, but
 
 - Backend is no longer a Supabase-first MVP in the current release branch. README, package dependencies, release checks, and tests now target Cloudflare Workers, D1, R2, Durable Objects, and OpenNext Cloudflare.
 - Nationwide map and ranking scope are not just roadmap text. Local smoke and tests cover nationwide/region/map-bounds ranking panels, current-location controls, bbox place loading, and Worker ranking API query propagation.
-- Remaining release blockers are external-state and evidence blockers, not missing local code paths: R2 activation and post-`0022` live storage reconciliation, final Turnstile creation, WAF/static-routing evidence, both API Worker deployments and URLs, production D1, a NAVER owner domain, real staging mutation smoke including 60/70/80 global cost transitions, moderation/alert operations, source rights, signing, and real-device QA. Wrangler OAuth, Staging D1 through `0026`, both web Worker deployment histories, and the separate `COST_GUARD_STATE` namespaces already pass.
+- Remaining release blockers are external-state and evidence blockers, not missing local code paths: R2 activation and post-`0022` live storage reconciliation, activation/smoke of the provisioned staging Turnstile secret plus the production secret, WAF/static-routing evidence, configured staging and production API application deployments and healthy URLs, production D1, a NAVER owner domain and completed registration after direct re-login, real staging mutation smoke including 60/70/80 global cost transitions, moderation/alert operations, source rights, signing, and real-device QA. Wrangler OAuth, Staging D1 through `0026`, both web Worker deployment histories, the exact-host Turnstile widget/public key/staging secret version, and the separate `COST_GUARD_STATE` namespaces already pass.
 - App Store submission remains the wrong next milestone. The correct milestone is a TestFlight MVP with live Cloudflare staging and real-device QA.
 
 ## TestFlight MVP Gate
@@ -30,7 +30,7 @@ The following must be true before treating the app as TestFlight-ready:
 
 - [ ] `pnpm release:status -- --strict` passes or reports only intentionally deferred App Store production items.
 - [ ] Cloudflare R2 is enabled and `pnpm cf:r2:evidence -- --env=staging --check` passes.
-- [ ] Exact-host Turnstile site key and server-only secret are provisioned, and upload-ticket success/failure evidence passes on staging.
+- [ ] Exact-host Turnstile widget/public site key/staging secret version are provisioned; deploy the version and capture upload-ticket success/failure evidence on staging.
 - [~] Staging D1 backup and separate cost-state KV are complete. The latest read-only evidence passes through `0026` with no pending migration and aligned registry/core seed evidence. Preserve the backup, audit post-`0022` live R2/D1 storage reconciliation before uploads resume, and prove `api_cost_guard_*` 60/70/80 plus reconciliation evidence.
 - [ ] Staging Worker API is deployed and `SILSIGAN_STAGING_API_BASE_URL` is set to an HTTPS URL.
 - [~] Staging web Worker is deployed at `https://silsigan-web-staging.dudqks0319.workers.dev`; the release invocation must still export that exact value as `SILSIGAN_STAGING_PAGES_URL`.
@@ -68,10 +68,10 @@ Only consider App Store production submission after TestFlight evidence is clean
 | Blocker | Owner action |
 | --- | --- |
 | R2 activation and private staging bucket | Complete Cloudflare's user-only payment/terms hand-off, create only the configured private staging bucket, then rerun R2 evidence. |
-| Missing Turnstile credentials | Create exact-host staging/production widgets and install public site keys plus server-only secrets without committing secrets. |
+| Turnstile live evidence and production secret pending | Deploy the already provisioned staging secret version, capture exact-host upload-ticket success/failure evidence, and install the production secret later without committing secrets. |
 | Staging D1 post-migration reconciliation | Preserve the completed external backup and rerun non-mutating D1 evidence, then record global-cost evidence and reconcile live R2/D1 after `0022` before resuming uploads. Staging schema/registry through `0026` and dedicated KV are complete. |
-| Missing API Worker deployments and API URLs | Deploy the configured API Workers only after R2/D1/Turnstile are ready and export the staging/production API URL variables. Both web Workers are already deployed. |
-| NAVER owner domain and final application registration | Attach an owner-controlled domain, complete the prepared Dynamic Map registration after explicit approval, set exact allowed origins, limits, and alert recipient, then prove valid-origin success and invalid-origin rejection. |
+| Missing configured API application deployments and API URLs | Deploy the configured API applications only after R2/D1/Turnstile are ready and export the staging/production API URL variables. Both web Workers and the staging API secret target already exist, but the staging health route currently returns 404. |
+| NAVER owner domain and final application registration | Log in again directly in Chrome after the expired-session authentication failure, attach an owner-controlled domain, complete the prepared Dynamic Map registration, set exact allowed origins, limits, and alert recipient, then prove valid-origin success and invalid-origin rejection. |
 | No real staging smoke yet | Run staging Worker, Pages, mutation, admin, and tail-redaction smoke after URLs/R2 are ready. |
 | No real-device QA evidence yet | Fill `docs/real-device-qa.md` with iPhone and Android device evidence after staging is live. |
 | Anonymous proof deployment and residual bearer replay risk | Staging `0023`/`0024` schema is applied; deploy the API with `SILSIGAN_ANON_SESSION_REQUIRED=1` and `SILSIGAN_ANON_SESSION_DAILY_LIMIT=5000`, then prove wrong/rotated/revoked proof, stolen-ID rejection, exact distributed issuance cap, and stale-session cleanup on the owner domain. |

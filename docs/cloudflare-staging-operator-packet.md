@@ -5,7 +5,7 @@ Scope: Cloudflare-backed TestFlight MVP evidence, not App Store production submi
 
 ## Current Block
 
-Wrangler OAuth is active. Backup-gated recovery preserved the empty legacy source table under an archive name and normal Wrangler migrations applied `0018`~`0026`. The latest corrected 2026-07-20 read-only check confirms both web Workers have deployment history, Staging D1 through `0026`, Wrangler pending 0건, migration registry alignment, core seed evidence, and zero writes from verification. R2 still returns `R2_NOT_ENABLED`, both API Workers are missing, separate staging/production `COST_GUARD_STATE` namespaces are provisioned and bound, and the deployment URL/origin shell is incomplete. The Turnstile form is prepared but has not created credentials. Current external blocks are the user-only R2 payment/terms activation hand-off, post-`0022` live R2/D1 reconciliation, Turnstile creation, and API Worker deployment:
+Wrangler OAuth is active. Backup-gated recovery preserved the empty legacy source table under an archive name and normal Wrangler migrations applied `0018`~`0026`. The latest corrected 2026-07-20 read-only check confirms both web Workers have deployment history, Staging D1 through `0026`, Wrangler pending 0건, migration registry alignment, core seed evidence, and zero writes from verification. R2 still returns `R2_NOT_ENABLED`, production API remains missing, separate staging/production `COST_GUARD_STATE` namespaces are provisioned and bound, and the deployment URL/origin shell is incomplete. The exact-host Turnstile widget now exists, its public site key is configured in staging/production, and staging secret storage lists both required secret names without exposing values. The staging API host has bootstrap/secret-change deployment history, but `/api/health` returns 404 and newer Wrangler version `1062068c-f06b-4090-9038-2b3d7b4cc9a1` is undeployed, so no application deployment is claimed. Current external blocks are the user-only R2 payment/terms activation hand-off, post-`0022` live R2/D1 reconciliation, first configured staging API application deployment, and live smoke evidence:
 
 ```bash
 pnpm cf:external-state
@@ -70,14 +70,14 @@ export SILSIGAN_STAGING_ADMIN_TOKEN=<redacted-admin-token>
 export SILSIGAN_STAGING_TAIL_LOG_FILE=artifacts/cloudflare-tail/staging-tail.log
 ```
 
-Set the staging Worker-only secrets without printing or committing them:
+The following staging Worker-only secrets are installed without printing or committing their values:
 
-- `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET`: at least 32 random characters
-- `SILSIGAN_TURNSTILE_SECRET_KEY`: the server-only secret for a widget restricted to the exact staging web hostname
+- `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET`: generated with cryptographic randomness
+- `SILSIGAN_TURNSTILE_SECRET_KEY`: the server-only secret for the exact-host widget
 - `COST_ALERT_WEBHOOK_URL`: operator-owned HTTPS notification bridge
 - `COST_ALERT_WEBHOOK_TOKEN`: optional bearer secret for that bridge
 
-Create the Turnstile widget before deploy, restrict its hostname to the exact selected staging page host, and place its public site key in staging `SILSIGAN_TURNSTILE_SITE_KEY` in `workers/api/wrangler.jsonc`. Keep `SILSIGAN_PHOTO_TURNSTILE_REQUIRED=1`. The public key may be returned by `/api/config`; the secret must only be installed with Wrangler secret storage and must never be committed.
+The Turnstile widget is restricted to the selected staging/production web hosts, and source commit `30360956cd4aad29b145dce664f8bc7943bd5874` places its public site key as `SILSIGAN_TURNSTILE_SITE_KEY` in both environment configurations. Keep `SILSIGAN_PHOTO_TURNSTILE_REQUIRED=1`. The public key may be returned by `/api/config`; the staging secret is already in Worker secret storage and must never be printed or committed. `wrangler secret list --env staging` must show both required names immediately before deploying version `1062068c-f06b-4090-9038-2b3d7b4cc9a1` or a later equivalent version. Production secret installation remains a separate production action.
 
 The `PUBLIC_API_RATE_LIMITER`, `PHOTO_UPLOAD_RATE_LIMITER`, and `PHOTO_READ_RATE_LIMITER` bindings must all be present in the deployed Worker. `SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED=1` makes a missing general limiter fail closed in staging/production. The public limiter admits at most 120 requests per minute per hashed Cloudflare client IP before CORS preflight, routing, or any D1 access; photo traffic then passes its narrower dedicated limit. General JSON bodies are streamed through a 64 KiB ceiling before parsing, the legacy photo JSON path keeps its separately bounded image allowance, and multipart photo requests are bounded before `formData()` parsing even when `Content-Length` is absent. Missing bindings, Turnstile proof/configuration, or the photo HMAC secret fail closed.
 
@@ -176,7 +176,7 @@ Stop and document the exact blocker if any of these remain true:
 - R2 privacy evidence returns `R2_PUBLIC_DEV_URL_ENABLED`, `R2_PUBLIC_CUSTOM_DOMAIN_CONFIGURED`, `R2_DEV_URL_CHECK_FAILED`, or `R2_CUSTOM_DOMAIN_CHECK_FAILED`
 - production D1 still lacks required remote evidence at `D1_0006_NOT_APPLIED`; Staging passes through `0026`, but post-`0022` live R2/D1 reconciliation remains required before uploads resume
 - Local matching-static-asset and directory-mode contracts pass, and the 2026-07-20 local Chrome 503 harness under `artifacts/static-directory-failover` confirms zero post-fallback API/NAVER-provider/analytics requests; live WAF/rate-limit and invocation-free static asset routing evidence is still missing because application code cannot prevent a request already reaching the Worker from counting against the Workers allowance
-- the environment still lacks an exact-host Turnstile widget, public site key, or server-only secret
+- staging loses the exact-host Turnstile widget, public site key, either verified secret name, or live action/hostname validation after application deployment
 - `SILSIGAN_STAGING_API_BASE_URL` is missing or non-HTTPS
 - `SILSIGAN_STAGING_PAGES_URL` is missing or non-HTTPS
 - `SILSIGAN_PRIVACY_POLICY_URL` or `SILSIGAN_SUPPORT_URL` is missing or non-HTTPS
