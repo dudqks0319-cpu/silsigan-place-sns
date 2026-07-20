@@ -35,6 +35,13 @@ Always fetch the canonical branch and work from a clean clone or worktree. Do no
 - `pnpm audit:security`: root and mobile report no known vulnerabilities.
 - Secret-pattern scan and `git diff --check`: passed.
 
+## GitHub Actions state
+
+- The repository Actions permission is enabled with `allowed_actions=all`, and the canonical branch contains `.github/workflows/ci.yml`.
+- The two runs immediately before this handoff (`29710281873` and `29710857132`) ended as `startup_failure` with zero jobs and the synthetic workflow path `BuildFailed`; they did not execute the repository tests.
+- Immediately after the first handoff push, the final branch commit had no check run registered. Therefore local `416/416` evidence is verified, but a green GitHub CI run is not claimed.
+- The next developer should inspect the Actions page while authenticated, confirm workflow recognition from the default branch or pull request, and resolve the repository/platform startup condition before making CI a required merge check. Do not weaken or remove the CI audit/verification steps merely to produce a green badge.
+
 ## Safe resume commands
 
 ```bash
