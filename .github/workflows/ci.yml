@@ -44,6 +44,9 @@ jobs:
           pnpm --dir apps/mobile install --frozen-lockfile
           pnpm --dir apps/webview install --frozen-lockfile
 
+      - name: Audit locked dependencies
+        run: pnpm audit:security
+
       - name: Run deterministic verification gate
         shell: bash
         run: |

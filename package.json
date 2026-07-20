@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "audit:security": "pnpm audit --audit-level low && pnpm --dir apps/mobile audit --audit-level low",
     "smoke:staging": "node scripts/cloudflare-staging-smoke.mjs",
     "smoke:pages": "node scripts/cloudflare-pages-smoke.mjs",
     "smoke:pages:local-report": "node scripts/cloudflare-pages-local-report-smoke.mjs",
