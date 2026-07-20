@@ -13,6 +13,20 @@ export const securityHeaders = [
   { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
 ] as const;
 
+export const htmlDocumentCacheHeader = {
+  key: "Cache-Control",
+  value: "public, max-age=0, must-revalidate",
+} as const;
+
+export const htmlDocumentRoutes = [
+  "/",
+  "/privacy",
+  "/support",
+  "/place/:path*",
+  "/share/:path*",
+  "/admin/:path*",
+] as const;
+
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   devIndicators: false,
@@ -23,6 +37,10 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [...securityHeaders],
       },
+      ...htmlDocumentRoutes.map((source) => ({
+        source,
+        headers: [htmlDocumentCacheHeader],
+      })),
     ];
   },
   outputFileTracingRoot: process.cwd(),

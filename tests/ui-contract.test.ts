@@ -3,7 +3,11 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import nextConfig, { securityHeaders } from "../next.config.ts";
+import nextConfig, {
+  htmlDocumentCacheHeader,
+  htmlDocumentRoutes,
+  securityHeaders,
+} from "../next.config.ts";
 import { normalizeCloudflareRuntimeConfig } from "../src/lib/cloudflare-api.ts";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -84,6 +88,32 @@ test("web responses enforce baseline browser attack protections without blocking
       const hostname = pattern instanceof URL ? pattern.hostname : pattern.hostname;
       return hostname === "*.r2.dev" || hostname === "*.cloudflarestorage.com";
     }),
+    false,
+  );
+});
+
+test("HTML documents revalidate across deployments while hashed assets keep their platform cache policy", async () => {
+  assert.equal(htmlDocumentCacheHeader.key, "Cache-Control");
+  assert.equal(htmlDocumentCacheHeader.value, "public, max-age=0, must-revalidate");
+  assert.deepEqual(htmlDocumentRoutes, ["/", "/privacy", "/support", "/place/:path*", "/share/:path*", "/admin/:path*"]);
+
+  const rules = await nextConfig.headers?.() as Array<{
+    source: string;
+    headers: Array<{ key: string; value: string }>;
+  }> | undefined;
+  assert.ok(rules);
+  for (const source of htmlDocumentRoutes) {
+    const cacheRule: { source: string; headers: Array<{ key: string; value: string }> } | undefined = rules.find(
+      (candidate: { source: string }) => candidate.source === source,
+    );
+    assert.ok(cacheRule, `${source} must have an HTML cache rule`);
+    assert.equal(cacheRule.headers.some((header: { key: string; value: string }) => header.key === "Cache-Control" && header.value === htmlDocumentCacheHeader.value), true);
+  }
+  assert.equal(
+    rules.some(
+      (candidate) =>
+        candidate.source.includes("_next/static") && candidate.headers.some((header) => header.key === "Cache-Control"),
+    ),
     false,
   );
 });
