@@ -11064,7 +11064,7 @@ async function listD1FieldReportHashtags(db: D1Database, options: HashtagQueryOp
         pe.created_at AS createdAt,
         pe.expires_at AS expiresAt,
         COALESCE((
-          SELECT GROUP_CONCAT(fm2.photo_id, char(31) ORDER BY fm2.position)
+          SELECT GROUP_CONCAT(fm2.photo_id, ',' ORDER BY fm2.position)
           FROM field_report_media fm2
           JOIN photos ph2 ON ph2.id = fm2.photo_id
           WHERE fm2.report_id = pe.id
@@ -11073,7 +11073,7 @@ async function listD1FieldReportHashtags(db: D1Database, options: HashtagQueryOp
             AND ph2.deleted_at IS NULL
         ), '') AS photoIds,
         COALESCE((
-          SELECT GROUP_CONCAT(frh2.hashtag_name, char(31) ORDER BY frh2.position)
+          SELECT GROUP_CONCAT(frh2.hashtag_name, ',' ORDER BY frh2.position)
           FROM field_report_hashtags frh2
           JOIN hashtags h2 ON h2.name = frh2.hashtag_name
           WHERE frh2.report_id = pe.id AND h2.moderation_status = 'approved'
@@ -11493,7 +11493,7 @@ function creatorBadgeForPlace(place: PlaceRecord): string {
 }
 
 function parseFieldReportJoinedValues(value: string | null | undefined): string[] {
-  return value ? value.split("\u001f").filter(Boolean) : [];
+  return value ? value.split(",").filter(Boolean) : [];
 }
 
 function parseHashtagNames(value: string): string[] {
@@ -11651,7 +11651,7 @@ async function listFieldReports(url: URL, session: AnonymousSession, env: Env): 
           accuracy_bucket AS accuracyBucket,
           moderation_status AS moderationStatus,
           COALESCE((
-            SELECT GROUP_CONCAT(fm.photo_id, char(31) ORDER BY fm.position)
+            SELECT GROUP_CONCAT(fm.photo_id, ',' ORDER BY fm.position)
             FROM field_report_media fm
             JOIN photos ph ON ph.id = fm.photo_id
             WHERE fm.report_id = place_events.id
@@ -11660,7 +11660,7 @@ async function listFieldReports(url: URL, session: AnonymousSession, env: Env): 
               AND ph.deleted_at IS NULL
           ), '') AS photoIds,
           COALESCE((
-            SELECT GROUP_CONCAT(frh.hashtag_name, char(31) ORDER BY frh.position)
+            SELECT GROUP_CONCAT(frh.hashtag_name, ',' ORDER BY frh.position)
             FROM field_report_hashtags frh
             JOIN hashtags h ON h.name = frh.hashtag_name
             WHERE frh.report_id = place_events.id

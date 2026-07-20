@@ -33,6 +33,10 @@ function readCiWorkflow(): string {
   return readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
 }
 
+function readWorkerSource(): string {
+  return readFileSync(new URL("../workers/api/src/index.ts", import.meta.url), "utf8");
+}
+
 function readPagesSmoke(): string {
   return readFileSync(new URL("../scripts/cloudflare-pages-smoke.mjs", import.meta.url), "utf8");
 }
@@ -332,13 +336,36 @@ test("CI installs and requires SQLite so D1 coverage cannot silently skip", () =
 
 test("CI builds the Android shell with JDK 21 instead of stopping at JavaScript syntax", () => {
   const workflow = readCiWorkflow();
+  const androidJobStart = workflow.indexOf("\n  android:");
+  const androidJob = workflow.slice(androidJobStart);
 
+  assert.notEqual(androidJobStart, -1, "CI must define an Android job");
   assert.match(workflow, /android:\s*\n\s+runs-on:\s*ubuntu-latest/);
-  assert.match(workflow, /uses:\s*actions\/setup-java@v4/);
-  assert.match(workflow, /java-version:\s*["']?21["']?/);
-  assert.match(workflow, /uses:\s*gradle\/actions\/setup-gradle@v4/);
-  assert.match(workflow, /working-directory:\s*apps\/webview\/android/);
-  assert.match(workflow, /\.\/gradlew :app:lintDebug :app:assembleDebug --no-daemon/);
+  assert.match(androidJob, /uses:\s*pnpm\/action-setup@v4/);
+  assert.match(androidJob, /uses:\s*actions\/setup-node@v4/);
+  assert.match(androidJob, /pnpm --dir apps\/webview install --frozen-lockfile/);
+  assert.match(androidJob, /SILSIGAN_STAGING_PAGES_URL:\s*https:\/\/silsigan-web-staging\.dudqks0319\.workers\.dev/);
+  assert.match(androidJob, /SILSIGAN_WEBVIEW_FIRST_PARTY_ORIGINS:\s*https:\/\/silsigan-web-staging\.dudqks0319\.workers\.dev/);
+  assert.match(androidJob, /pnpm --dir apps\/webview sync:staging/);
+  assert.match(androidJob, /uses:\s*actions\/setup-java@v4/);
+  assert.match(androidJob, /java-version:\s*["']?21["']?/);
+  assert.match(androidJob, /uses:\s*gradle\/actions\/setup-gradle@v4/);
+  assert.match(androidJob, /working-directory:\s*apps\/webview\/android/);
+  assert.match(androidJob, /\.\/gradlew :app:lintDebug :app:assembleDebug --no-daemon/);
+
+  const installIndex = androidJob.indexOf("pnpm --dir apps/webview install --frozen-lockfile");
+  const syncIndex = androidJob.indexOf("pnpm --dir apps/webview sync:staging");
+  const gradleIndex = androidJob.indexOf("./gradlew :app:lintDebug :app:assembleDebug --no-daemon");
+  assert.ok(installIndex < syncIndex && syncIndex < gradleIndex, "Capacitor sync must run after install and before Gradle");
+});
+
+test("D1 field report joins use a SQLite JSON portable separator", () => {
+  const workerSource = readWorkerSource();
+  const portableJoins = workerSource.match(/GROUP_CONCAT\([^,\n]+,\s*','\s+ORDER BY/g) ?? [];
+
+  assert.doesNotMatch(workerSource, /char\(31\)/);
+  assert.equal(portableJoins.length, 4);
+  assert.match(workerSource, /function parseFieldReportJoinedValues[\s\S]*?value\.split\(","\)/);
 });
 
 test("CI uploads verification evidence only after a failure", () => {
