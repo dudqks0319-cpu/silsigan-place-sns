@@ -9,8 +9,8 @@ type ApiResponse<T> = {
   };
 };
 
-const anonymousIdKey = "silsigan.anonymousId.v1";
-const anonymousSessionKey = "silsigan.anonymousSession.v2";
+const anonymousIdStorageName = "silsigan.anonymousId.v1";
+const anonymousSessionStorageName = "silsigan.anonymousSession.v2";
 const genericApiErrorMessage = "요청 처리 중 오류가 발생했습니다.";
 const photoStabilityProtectionMessage = "서비스 안정성과 악용 방지를 위해 사진 기능을 잠시 제한했습니다. 상태 제보는 계속 이용할 수 있습니다.";
 const publicApiErrorMessages: Readonly<Record<string, string>> = Object.freeze({
@@ -190,8 +190,8 @@ async function issueAnonymousSession(baseUrl: string, signal?: AbortSignal | nul
     throw new ApiClientError(response.status, normalizeApiErrorCode(payload.error?.code ?? "ANONYMOUS_SESSION_REQUIRED"));
   }
 
-  window.localStorage.setItem(anonymousSessionKey, JSON.stringify(payload.data));
-  window.localStorage.removeItem(anonymousIdKey);
+  window.localStorage.setItem(anonymousSessionStorageName, JSON.stringify(payload.data));
+  window.localStorage.removeItem(anonymousIdStorageName);
   return payload.data;
 }
 
@@ -200,7 +200,7 @@ function readAnonymousSessionCredential(): AnonymousSessionCredential | null {
     return null;
   }
 
-  const raw = window.localStorage.getItem(anonymousSessionKey);
+  const raw = window.localStorage.getItem(anonymousSessionStorageName);
   if (!raw) {
     return null;
   }
@@ -213,7 +213,7 @@ function readAnonymousSessionCredential(): AnonymousSessionCredential | null {
   } catch {
   }
 
-  window.localStorage.removeItem(anonymousSessionKey);
+  window.localStorage.removeItem(anonymousSessionStorageName);
   return null;
 }
 
@@ -238,8 +238,8 @@ export function clearAnonymousSessionCredential(): void {
     return;
   }
 
-  window.localStorage.removeItem(anonymousSessionKey);
-  window.localStorage.removeItem(anonymousIdKey);
+  window.localStorage.removeItem(anonymousSessionStorageName);
+  window.localStorage.removeItem(anonymousIdStorageName);
 }
 
 type CloudflareApiRequestContext = {
@@ -395,13 +395,13 @@ function getAnonymousId() {
     return null;
   }
 
-  const existing = window.localStorage.getItem(anonymousIdKey);
+  const existing = window.localStorage.getItem(anonymousIdStorageName);
   if (existing && /^[a-zA-Z0-9_-]{12,80}$/.test(existing)) {
     return existing;
   }
 
   const created = `anon_${crypto.randomUUID()}`;
-  window.localStorage.setItem(anonymousIdKey, created);
+  window.localStorage.setItem(anonymousIdStorageName, created);
 
   return created;
 }
@@ -412,6 +412,6 @@ function persistAnonymousId(value: string | null) {
   }
 
   if (/^[a-zA-Z0-9_-]{12,80}$/.test(value)) {
-    window.localStorage.setItem(anonymousIdKey, value);
+    window.localStorage.setItem(anonymousIdStorageName, value);
   }
 }
