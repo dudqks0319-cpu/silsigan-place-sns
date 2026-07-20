@@ -40,7 +40,7 @@
     "cf:r2:evidence": "node scripts/cloudflare-r2-release-evidence.mjs",
     "verify:app": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "verify:workspaces": "pnpm --dir apps/mobile verify && pnpm --dir apps/webview check",
-    "verify:cloudflare": "pnpm cf:web:dry-run:staging && pnpm cf:web:dry-run:production && pnpm cf:dry-run:staging && pnpm cf:dry-run:production",
+    "verify:cloudflare": "pnpm cf:build && pnpm cf:web:dry-run:staging && pnpm cf:web:dry-run:production && pnpm cf:dry-run:staging && pnpm cf:dry-run:production",
     "verify": "pnpm verify:app && pnpm verify:workspaces && pnpm verify:cloudflare"
   },
   "dependencies": {

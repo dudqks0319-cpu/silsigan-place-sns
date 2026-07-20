@@ -301,10 +301,10 @@ test("workspace verification covers the mobile app and WebView shell", () => {
   );
 });
 
-test("Cloudflare verification performs only staging and production dry runs", () => {
+test("Cloudflare verification builds OpenNext before staging and production dry runs", () => {
   assert.equal(
     packageJson.scripts["verify:cloudflare"],
-    "pnpm cf:web:dry-run:staging && pnpm cf:web:dry-run:production && pnpm cf:dry-run:staging && pnpm cf:dry-run:production",
+    "pnpm cf:build && pnpm cf:web:dry-run:staging && pnpm cf:web:dry-run:production && pnpm cf:dry-run:staging && pnpm cf:dry-run:production",
   );
   assert.doesNotMatch(packageJson.scripts["verify:cloudflare"], /(^|\s)pnpm\s+cf:deploy(?:\s|$)/);
   assert.doesNotMatch(packageJson.scripts["verify:cloudflare"], /release:gate|smoke:staging|cf:external-state/);
