@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "gitSha": "48e672aa3f9ece06e31f40305fc6e080c69fb479",
   "branch": "codex/silsigan-progress-20260710",
-  "generatedAt": "2026-07-20T23:54:23.029Z",
+  "generatedAt": "2026-07-20T23:59:13.808Z",
   "artifacts": [
     {
       "path": "artifacts/release-evidence/verification-2026-07-21.json",
-      "sha256": "0c95f518562078f2d27ad590dbee5926f321072bce31564fd1f4a9db65ac6e1f"
+      "sha256": "72be02c2ba4ff69e93c683eac10639bd85138ea8c7518dd61f64eaba61be5ad1"
     }
   ]
 }

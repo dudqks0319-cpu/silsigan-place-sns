@@ -21,6 +21,12 @@
     "openNextBuild": "pass",
     "wranglerDryRuns": "pass_staging_and_production_web_and_api",
     "dependencyAudit": "pass_root_and_mobile_no_known_vulnerabilities",
+    "githubActions": {
+      "runId": 29788726774,
+      "verify": "pass",
+      "androidJdk21LintAndDebugBuild": "pass",
+      "annotation": "upstream_actions_v4_node20_deprecation_forced_to_node24"
+    },
     "secretPatternScan": {
       "scannedFiles": 399,
       "highConfidenceHits": 0,
