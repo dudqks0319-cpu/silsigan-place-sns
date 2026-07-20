@@ -66,6 +66,8 @@ V2 로컬 구현은 전체 테스트를 통과했고, 전국 기본 탐색, 사�
 
 ## 다음 행동
 
+Developer continuation notes are consolidated in `docs/developer-handoff-2026-07-20.md`; continue from the canonical remote branch in a clean clone or worktree rather than resetting the dirty primary local directory.
+
 1. Finish the user-only Cloudflare payment/terms hand-off for Standard R2, then create only the configured private staging bucket and rerun R2 evidence.
 2. Create an exact-host Turnstile widget and a dedicated `COST_GUARD_STATE` KV, install server-only secrets, back up Staging, reconcile Wrangler's `0018`~`0025` registry rows against the verified schema without replaying migrations, and rerun the guarded preflight. Only after the registry starts at the first real schema gap may an explicitly approved apply run the safe suffix (currently expected to be `0026_global_api_cost_guard.sql`). Then reconcile R2/D1 for the already-present `0022` and deploy the staging API Worker with the global 60/70/80 guard required, `SILSIGAN_ANON_SESSION_REQUIRED=1`, `SILSIGAN_ANON_SESSION_DAILY_LIMIT=5000`, exact allowed origin `https://silsigan-web-staging.dudqks0319.workers.dev`, and select the resulting API URL.
 3. Attach an owner-controlled web custom domain, complete `docs/naver-maps-release-operator-packet.md`, confirm source rights, then run staging ingestion, map/fallback, mutation, admin, R2/Images, and tail-redaction evidence.
