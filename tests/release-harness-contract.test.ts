@@ -366,3 +366,14 @@ test("browser smoke atomically activates the visible owned-photo delete control"
     /async function clickFirstPhotoDelete[\s\S]*document\.elementFromPoint[\s\S]*button\.click\(\)/,
   );
 });
+
+test("browser smoke verifies the traffic guard in static directory mode", () => {
+  const source = readPagesSmoke();
+
+  assert.match(source, /const directoryMode = Boolean/);
+  assert.match(source, /button\.disabled/);
+  assert.match(source, /교통 연결 중단/);
+  assert.match(source, /정적 디렉터리 모드에서는 외부 교통 연결이 비활성 상태로 유지됩니다/);
+  assert.match(source, /실시간 연결을 다시 확인했지만 보호 모드를 유지합니다\. 기본 장소 위치만 표시합니다/);
+  assert.match(source, /정적 디렉터리에서 최신 근거 없는 장소를 가짜 TOP 10으로 만들지 않았습니다/);
+});

@@ -446,6 +446,11 @@ async function runBrowserSmoke(client, config) {
     record(config.checks, "rankings.visible", "skip", "Worker API가 없어 가짜 TOP 10을 렌더링하지 않습니다.");
     record(config.checks, "rankings.detail", "skip", "Worker API가 없어 가짜 랭킹 상세를 열지 않습니다.");
     record(config.checks, "place.detail", "skip", "Worker API가 없어 가짜 지도 마커 상세를 열지 않습니다.");
+  } else if (!config.apiBaseUrl) {
+    await assertRankingPanelsVisible(client, config, true);
+    record(config.checks, "rankings.visible", "pass", "정적 디렉터리에서 최신 근거 없는 장소를 가짜 TOP 10으로 만들지 않았습니다.");
+    record(config.checks, "rankings.detail", "skip", "최신 근거가 없어 정적 디렉터리 랭킹 상세를 열지 않습니다.");
+    record(config.checks, "place.detail", "skip", "Worker API가 없어 정적 장소 상세의 실시간 근거를 만들지 않습니다.");
   } else {
     await assertRankingPanelsVisible(client, config);
     record(config.checks, "rankings.visible", "pass", "전국 또는 현재 지도 범위의 최신 근거 TOP 10 랭킹 패널이 렌더링됐습니다.");
@@ -1102,8 +1107,20 @@ async function assertMapSurfaceVisible(client, timeoutMs, allowEmpty) {
   return state;
 }
 
-async function assertRankingPanelsVisible(client, config) {
-  const condition = `
+async function assertRankingPanelsVisible(client, config, allowDirectorySuspension = false) {
+  const condition = allowDirectorySuspension
+    ? `
+    (() => {
+      const grid = document.querySelector('[aria-label="실시간 장소 랭킹"]');
+      if (!(grid instanceof HTMLElement)) return false;
+      const text = grid.innerText;
+      const buttons = [...grid.querySelectorAll('button')];
+      return text.includes('실시간 순위 일시 중단')
+        && text.includes('기본 장소 위치는 표시하지만 최신 근거가 없으므로 순위를 만들지 않습니다.')
+        && buttons.length === 0;
+    })()
+  `
+    : `
     (() => {
       const grid = document.querySelector('[aria-label="실시간 장소 랭킹"]');
       if (!(grid instanceof HTMLElement)) return false;
@@ -1154,26 +1171,48 @@ async function runMapControlChecks(client, config) {
   );
   record(config.checks, "map.userCopy", "pass", "지도 진단 코드는 화면에서 숨기고 전국 지역 탭은 완성된 사용자 문구만 표시했습니다.");
 
-  await assertTextButtonAboveBottomNav(client, "교통 켜기");
+  const directoryMode = Boolean(await evaluate(
+    client,
+    `document.body.innerText.includes('교통 연결 중단')`,
+  ));
+  const trafficButtonText = directoryMode ? "교통 연결 중단" : "교통 켜기";
+
+  await assertTextButtonAboveBottomNav(client, trafficButtonText);
   await assertTextButtonAboveBottomNav(client, "이 지역 다시 검색");
   await assertTextButtonAboveBottomNav(client, "현재 위치");
   record(config.checks, "map.controlsUncovered", "pass", "초기 지도 도구와 현재 위치 버튼이 하단 내비게이션에 가려지지 않습니다.");
   await assertBottomNavOpaque(client, config.timeoutMs);
   record(config.checks, "layout.bottomNavOpaque", "pass", "하단 내비게이션이 뒤쪽 버튼을 비쳐 보이게 하지 않습니다.");
 
-  await clickHitTestedTextButton(client, "교통 켜기");
-  await waitForEvaluate(
-    client,
-    `
-      [...document.querySelectorAll('button')].some((button) =>
-        button.getAttribute('aria-pressed') === 'true' && button.textContent?.includes('교통 끄기')
-      )
-    `,
-    "map.trafficButton",
-    config.timeoutMs,
-  );
-  record(config.checks, "map.trafficButton", "pass", "교통 버튼 클릭 후 pressed 상태와 문구가 바뀌었습니다.");
-  await clickHitTestedTextButton(client, "교통 끄기");
+  if (directoryMode) {
+    await waitForEvaluate(
+      client,
+      `
+        [...document.querySelectorAll('button')].some((button) =>
+          button.disabled
+            && button.getAttribute('aria-pressed') === 'false'
+            && button.textContent?.includes('교통 연결 중단')
+        )
+      `,
+      "map.trafficButton",
+      config.timeoutMs,
+    );
+    record(config.checks, "map.trafficButton", "pass", "정적 디렉터리 모드에서는 외부 교통 연결이 비활성 상태로 유지됩니다.");
+  } else {
+    await clickHitTestedTextButton(client, "교통 켜기");
+    await waitForEvaluate(
+      client,
+      `
+        [...document.querySelectorAll('button')].some((button) =>
+          button.getAttribute('aria-pressed') === 'true' && button.textContent?.includes('교통 끄기')
+        )
+      `,
+      "map.trafficButton",
+      config.timeoutMs,
+    );
+    record(config.checks, "map.trafficButton", "pass", "교통 버튼 클릭 후 pressed 상태와 문구가 바뀌었습니다.");
+    await clickHitTestedTextButton(client, "교통 끄기");
+  }
 
   await clickHitTestedTextButton(client, "필터");
   await waitForEvaluate(
@@ -1192,11 +1231,20 @@ async function runMapControlChecks(client, config) {
   await clickHitTestedTextButton(client, "이 지역 다시 검색");
   await waitForEvaluate(
     client,
-    `document.body.innerText.includes('현재 지도 화면 기준으로 다시 불러왔습니다.') || document.body.innerText.includes('현재 검색어 기준으로 장소를 다시 불러왔습니다.')`,
+    directoryMode
+      ? `document.body.innerText.includes('실시간 연결을 다시 확인했지만 보호 모드를 유지합니다. 기본 장소 위치만 표시합니다.')`
+      : `document.body.innerText.includes('현재 지도 화면 기준으로 다시 불러왔습니다.') || document.body.innerText.includes('현재 검색어 기준으로 장소를 다시 불러왔습니다.')`,
     "map.requeryButton",
     config.timeoutMs,
   );
-  record(config.checks, "map.requeryButton", "pass", "이 지역 다시 검색 버튼 클릭 후 토스트가 갱신됐습니다.");
+  record(
+    config.checks,
+    "map.requeryButton",
+    "pass",
+    directoryMode
+      ? "정적 디렉터리 재검색 후에도 실시간 보호 모드와 기본 장소 범위를 유지했습니다."
+      : "이 지역 다시 검색 버튼 클릭 후 토스트가 갱신됐습니다.",
+  );
 
   await clickHitTestedButton(client, { ariaIncludes: "안전 정책" });
   await waitForEvaluate(

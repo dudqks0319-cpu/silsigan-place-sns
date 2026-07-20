@@ -41,16 +41,17 @@ Status: local candidate only; App Store submission blocked
 
 | 순서 | 메시지 | 로컬 후보 |
 | --- | --- | --- |
-| 1 | `가기 전, 지금 사진으로 먼저 확인` | `artifacts/store-listing-candidate/pages-smoke-home-1784488590649.png` |
-| 2 | `사진·관측시각·판단 근거를 한 화면에` | `artifacts/store-listing-candidate/pages-smoke-place-1784488590649.png` |
-| 3 | `#지금으로 최신 현장 사진 탐색` | `artifacts/store-listing-candidate/pages-smoke-hashtag-1784488590649.png` |
-| 4 | `제보와 저장 상태를 기기 기준으로 관리` | `artifacts/store-listing-candidate/pages-smoke-my-1784488590649.png` |
+| 1 | `가기 전, 지금 사진으로 먼저 확인` | `artifacts/store-listing-candidate/pages-smoke-home-1784509404889.png` |
+| 2 | `사진·관측시각·판단 근거를 한 화면에` | `artifacts/store-listing-candidate/pages-smoke-place-1784509404889.png` |
+| 3 | `#지금으로 최신 현장 사진 탐색` | `artifacts/store-listing-candidate/pages-smoke-hashtag-1784509404889.png` |
+| 4 | `제보와 저장 상태를 기기 기준으로 관리` | `artifacts/store-listing-candidate/pages-smoke-my-1784509404889.png` |
 
 검증 동반 증거:
 
-- 네트워크 로그: `artifacts/store-listing-candidate/pages-smoke-network-1784488590649.json`
-- 콘솔 로그: `artifacts/store-listing-candidate/pages-smoke-console-1784488590649.log`
-- 로컬 브라우저 결과: 필수 상호작용 모두 통과, request body 미저장, 민감정보 탐지 0건
+- 네트워크 로그: `artifacts/store-listing-candidate/pages-smoke-network-1784509404889.json`
+- 콘솔 로그: `artifacts/store-listing-candidate/pages-smoke-console-1784509404889.log`
+- 로컬 브라우저 결과: 필수 상호작용 58/58 통과, 네트워크 이벤트 664건, request body 미저장, 민감정보 탐지 0건
+- 마이 후보는 비활성 회원 전환을 약속하지 않고, 기기 변경 또는 브라우저 데이터 삭제 시 복구할 수 없다는 실제 익명 사용 범위를 표시합니다.
 
 ## Final Replacement Gate
 

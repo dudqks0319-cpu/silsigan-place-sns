@@ -748,6 +748,7 @@ type ApiCostGuardMetric = "workers_requests" | "d1_rows_read" | "d1_rows_written
 type ApiCostRouteClass =
   | "CONTROL"
   | "AUTH_ATTEMPT"
+  | "WRITE_VALIDATION"
   | "ESSENTIAL_PUBLIC"
   | "STANDARD_PUBLIC_READ"
   | "HIGH_COST_READ"
@@ -797,6 +798,19 @@ type ApiCostGuardDailyRow = {
 type ApiCostGuardDecision = {
   fallbackToSnapshot: boolean;
   reserveAfterAuthentication: boolean;
+};
+
+type ApiCostGuardReservationOptions = {
+  authenticationAttemptReserved?: boolean;
+  criticalAdmission?: boolean;
+};
+
+type ApiCostGuardReservationPlan = {
+  statement: D1PreparedStatement;
+  limits: ReturnType<typeof apiCostGuardLimits>;
+  admissionPercent: number;
+  criticalAdmission: boolean;
+  dayUtc: string;
 };
 
 type CommentRecord = {
@@ -1416,6 +1430,7 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
     const path = normalizePath(url.pathname);
     const apiCostRouteClass = classifyApiCostRoute(request, url, path);
     const apiCostControlRoute = isApiCostGuardControlRoute(path);
+    const deferredApiCostMutationReservation = request.method === "POST" && path === "/api/place-requests";
 
     if (!isPublicLimiterExempt(path)) {
       await enforceCloudflarePublicApiRateLimit(request, env);
@@ -1577,7 +1592,7 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
     const session = apiCostRouteClass === "ESSENTIAL_PUBLIC"
       ? publicReadAnonymousSession()
       : await getAnonymousSession(request, env, requiresVerifiedAnonymousSession(request, url, path));
-    if (!apiCostReserved) {
+    if (!apiCostReserved && !deferredApiCostMutationReservation) {
       await reserveApiCostGuardAfterAuthentication(apiCostRouteClass, env, ctx, authenticationAttemptReserved);
       apiCostReserved = true;
     }
@@ -1585,7 +1600,12 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
 
     if (path === "/api/place-requests") {
       if (request.method === "POST") {
-        return withHeaders(await createPlaceAdditionRequest(request, session, env), sessionHeaders);
+        await enforceRateLimit("place-request:create", request, session.id, 12, 60_000);
+        await reserveApiCostGuardAfterAuthentication("WRITE_VALIDATION", env, ctx);
+        return withHeaders(
+          await createPlaceAdditionRequest(request, session, env, ctx, authenticationAttemptReserved),
+          sessionHeaders,
+        );
       }
       if (request.method === "GET") {
         return withHeaders(await listMyPlaceAdditionRequests(url, session, env), sessionHeaders);
@@ -4398,7 +4418,13 @@ function parseStringArray(value: string): string[] {
   }
 }
 
-async function createPlaceAdditionRequest(request: Request, session: AnonymousSession, env: Env): Promise<Response> {
+async function createPlaceAdditionRequest(
+  request: Request,
+  session: AnonymousSession,
+  env: Env,
+  ctx: ExecutionContext,
+  authenticationAttemptReserved: boolean,
+): Promise<Response> {
   const db = requireD1(env);
   const body = await readJson(request);
   assertExactFields(body, ["clientRequestId", "name", "address", "category"]);
@@ -4424,23 +4450,68 @@ async function createPlaceAdditionRequest(request: Request, session: AnonymousSe
     });
   }
 
+  await assertPlaceAdditionRequestBudgetAvailable(db, anonymousUserId);
+
   const now = new Date().toISOString();
   const placeRequestId = `place_request_${crypto.randomUUID()}`;
+  let apiCostReservationPlan: ApiCostGuardReservationPlan | null = null;
   try {
-    await runAtomicD1Batch(db, [
-      db.prepare(
-        `INSERT INTO anonymous_users (id, session_hash, trust_score, created_at, last_seen_at)
-         VALUES (?, ?, 50, ?, ?)
-         ON CONFLICT(session_hash) DO NOTHING`,
-      ).bind(anonymousUserId, sessionHash, now, now),
-      db.prepare(
-        `INSERT INTO place_addition_requests
-          (id, anonymous_user_id, client_request_id, name, address, category, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'needs_verification', ?, ?)`,
-      )
-        .bind(placeRequestId, anonymousUserId, clientRequestId, name, address, category, now, now),
-    ], "PLACE_REQUEST_QUEUE_UNAVAILABLE", "장소 추가 요청과 비용 보호 원장을 함께 저장할 수 없습니다.");
+    const statements: D1PreparedStatement[] = [];
+    if (apiCostGuardRequired(env)) {
+      const control = await readApiCostGuardControl(env);
+      if (control.mode !== "running") {
+        apiCostGuardBlockedReservation("USER_WRITE", control);
+      }
+      apiCostReservationPlan = createApiCostGuardReservationPlan(db, "USER_WRITE", env, {
+        authenticationAttemptReserved,
+      });
+      statements.push(
+        apiCostReservationPlan.statement,
+        db.prepare(
+          `INSERT INTO anonymous_users (id, session_hash, trust_score, created_at, last_seen_at)
+           SELECT ?, ?, 50, ?, ?
+           WHERE changes() = 1
+           ON CONFLICT(session_hash) DO UPDATE SET last_seen_at = anonymous_users.last_seen_at`,
+        ).bind(anonymousUserId, sessionHash, now, now),
+        db.prepare(
+          `INSERT INTO place_addition_requests
+            (id, anonymous_user_id, client_request_id, name, address, category, status, created_at, updated_at)
+           SELECT ?, ?, ?, ?, ?, ?, 'needs_verification', ?, ?
+           WHERE changes() = 1`,
+        ).bind(placeRequestId, anonymousUserId, clientRequestId, name, address, category, now, now),
+      );
+    } else {
+      statements.push(
+        db.prepare(
+          `INSERT INTO anonymous_users (id, session_hash, trust_score, created_at, last_seen_at)
+           VALUES (?, ?, 50, ?, ?)
+           ON CONFLICT(session_hash) DO NOTHING`,
+        ).bind(anonymousUserId, sessionHash, now, now),
+        db.prepare(
+          `INSERT INTO place_addition_requests
+            (id, anonymous_user_id, client_request_id, name, address, category, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'needs_verification', ?, ?)`,
+        ).bind(placeRequestId, anonymousUserId, clientRequestId, name, address, category, now, now),
+      );
+    }
+
+    await runAtomicD1Batch(
+      db,
+      statements,
+      "PLACE_REQUEST_QUEUE_UNAVAILABLE",
+      "장소 추가 요청과 비용 보호 원장을 함께 저장할 수 없습니다.",
+    );
     const created = await findPlaceAdditionRequestById(db, placeRequestId);
+    if (apiCostReservationPlan) {
+      if (!created) {
+        await completeApiCostGuardReservation("USER_WRITE", null, apiCostReservationPlan, env, ctx);
+      }
+      const reservation = await readApiCostGuardDaily(db, apiCostReservationPlan.dayUtc);
+      if (!reservation) {
+        throw new HttpError(503, "API_COST_GUARD_UNAVAILABLE", "서비스 비용 보호 원장을 확인할 수 없습니다.");
+      }
+      await completeApiCostGuardReservation("USER_WRITE", reservation, apiCostReservationPlan, env, ctx);
+    }
     if (!created) {
       throw new HttpError(503, "PLACE_REQUEST_QUEUE_UNAVAILABLE", "저장된 장소 추가 요청을 확인할 수 없습니다.");
     }
@@ -4719,6 +4790,48 @@ async function findPlaceAdditionRequestByClientId(
     )
     .bind(anonymousUserId, clientRequestId)
     .first<PlaceAdditionRequestRecord>();
+}
+
+async function assertPlaceAdditionRequestBudgetAvailable(
+  db: D1Database,
+  anonymousUserId: string,
+): Promise<void> {
+  const budget = await db
+    .prepare(
+      `SELECT
+         (
+           SELECT COUNT(*)
+           FROM place_addition_requests
+           WHERE anonymous_user_id = ?
+             AND created_at >= strftime('%Y-%m-%dT00:00:00.000Z', 'now')
+             AND created_at < strftime('%Y-%m-%dT00:00:00.000Z', 'now', '+1 day')
+         ) AS sessionRequestCount,
+         COALESCE((
+           SELECT request_count
+           FROM place_addition_request_daily_budget
+           WHERE day_utc = strftime('%Y-%m-%d', 'now')
+         ), 0) AS dailyRequestCount`,
+    )
+    .bind(anonymousUserId)
+    .first<{ sessionRequestCount: number; dailyRequestCount: number }>();
+
+  if (!budget) {
+    throw new HttpError(503, "PLACE_REQUEST_QUEUE_UNAVAILABLE", "장소 추가 요청 비용 한도를 확인할 수 없습니다.");
+  }
+  if (budget.sessionRequestCount >= placeAdditionRequestPerSessionDailyLimit) {
+    throw new HttpError(429, "PLACE_REQUEST_SESSION_DAILY_LIMIT", "하루 장소 추가 요청 한도에 도달했습니다.");
+  }
+  if (budget.dailyRequestCount >= placeAdditionRequestDailyStopLimit) {
+    throw new HttpError(
+      429,
+      "PLACE_REQUEST_DAILY_BUDGET_80_PERCENT_STOP",
+      "오늘의 장소 추가 요청 비용 안전 한도에 도달했습니다.",
+      {
+        stopPercent: placeAdditionRequestCostGuardStopPercent,
+        dailyRequestStopLimit: placeAdditionRequestDailyStopLimit,
+      },
+    );
+  }
 }
 
 function assertPlaceAdditionIdempotency(
@@ -6593,6 +6706,8 @@ function apiCostRouteWeight(routeClass: ApiCostRouteClass): {
       return { admittedRequests: 0, workersRequests: 0, rowsRead: 0, rowsWritten: 0, critical: false, highCost: false, mutation: false };
     case "AUTH_ATTEMPT":
       return { admittedRequests: 1, workersRequests: 1, rowsRead: 2, rowsWritten: 2, critical: false, highCost: false, mutation: false };
+    case "WRITE_VALIDATION":
+      return { admittedRequests: 0, workersRequests: 0, rowsRead: 8, rowsWritten: 0, critical: false, highCost: false, mutation: false };
     case "ESSENTIAL_PUBLIC":
     case "STANDARD_PUBLIC_READ":
       return { admittedRequests: 1, workersRequests: 1, rowsRead: 1_000, rowsWritten: 2, critical: false, highCost: false, mutation: false };
@@ -6683,13 +6798,31 @@ async function reserveApiCostGuard(
   routeClass: ApiCostRouteClass,
   env: Env,
   ctx: ExecutionContext,
-  options: {
-    authenticationAttemptReserved?: boolean;
-    criticalAdmission?: boolean;
-  } = {},
+  options: ApiCostGuardReservationOptions = {},
 ): Promise<{ fallbackToSnapshot: boolean }> {
   const db = requireD1(env);
   const control = await readApiCostGuardControl(env);
+  const plan = createApiCostGuardReservationPlan(db, routeClass, env, options);
+  if (control.mode !== "running" && !plan.criticalAdmission) {
+    return apiCostGuardBlockedReservation(routeClass, control);
+  }
+
+  let reservation: ApiCostGuardDailyRow | null;
+  try {
+    reservation = await plan.statement.first<ApiCostGuardDailyRow>();
+  } catch {
+    throw new HttpError(503, "API_COST_GUARD_UNAVAILABLE", "서비스 비용 보호 원장을 사용할 수 없습니다.");
+  }
+
+  return completeApiCostGuardReservation(routeClass, reservation, plan, env, ctx);
+}
+
+function createApiCostGuardReservationPlan(
+  db: D1Database,
+  routeClass: ApiCostRouteClass,
+  env: Env,
+  options: ApiCostGuardReservationOptions = {},
+): ApiCostGuardReservationPlan {
   const baseWeight = apiCostRouteWeight(routeClass);
   const authenticationWeight = apiCostRouteWeight("AUTH_ATTEMPT");
   const weight = options.authenticationAttemptReserved
@@ -6702,10 +6835,6 @@ async function reserveApiCostGuard(
       }
     : baseWeight;
   const criticalAdmission = options.criticalAdmission ?? weight.critical;
-  if (control.mode !== "running" && !criticalAdmission) {
-    return apiCostGuardBlockedReservation(routeClass, control);
-  }
-
   const limits = apiCostGuardLimits(env);
   const admissionPercent = criticalAdmission ? limits.stopPercent : limits.degradePercent;
   const workerThreshold = Math.floor((limits.workersRequests * admissionPercent) / 100);
@@ -6713,18 +6842,20 @@ async function reserveApiCostGuard(
   const writeThreshold = Math.floor((limits.d1RowsWritten * admissionPercent) / 100);
   const dayUtc = utcDayKey(new Date());
   const updatedAt = new Date().toISOString();
-  let reservation: ApiCostGuardDailyRow | null;
-
-  try {
-    reservation = await db
-      .prepare(
-         `INSERT INTO api_cost_guard_daily (
+  const runningControlPredicate = criticalAdmission
+    ? "1 = 1"
+    : "EXISTS (SELECT 1 FROM api_cost_guard_control WHERE id = 1 AND mode = 'running')";
+  const statement = db
+    .prepare(
+       `INSERT INTO api_cost_guard_daily (
            day_utc, admitted_requests, reserved_workers_requests, reserved_rows_read, reserved_rows_written,
            critical_requests, critical_rows_read, critical_rows_written, high_cost_requests, mutation_requests,
            observed_workers_requests, observed_rows_read, observed_rows_written, updated_at
-         ) VALUES (?, ${weight.admittedRequests}, ${weight.workersRequests}, ${weight.rowsRead}, ${weight.rowsWritten},
+         )
+         SELECT ?, ${weight.admittedRequests}, ${weight.workersRequests}, ${weight.rowsRead}, ${weight.rowsWritten},
            ${weight.critical ? 1 : 0}, ${weight.critical ? weight.rowsRead : 0}, ${weight.critical ? weight.rowsWritten : 0},
-           ${weight.highCost ? 1 : 0}, ${weight.mutation ? 1 : 0}, 0, 0, 0, ?)
+           ${weight.highCost ? 1 : 0}, ${weight.mutation ? 1 : 0}, 0, 0, 0, ?
+         WHERE ${runningControlPredicate}
          ON CONFLICT(day_utc) DO UPDATE SET
            admitted_requests = api_cost_guard_daily.admitted_requests + ${weight.admittedRequests},
            reserved_workers_requests = api_cost_guard_daily.reserved_workers_requests + ${weight.workersRequests},
@@ -6742,6 +6873,7 @@ async function reserveApiCostGuard(
                  + ${weight.rowsRead} <= ${readThreshold}
            AND MAX(api_cost_guard_daily.reserved_rows_written, api_cost_guard_daily.observed_rows_written)
                  + ${weight.rowsWritten} <= ${writeThreshold}
+           AND ${runningControlPredicate}
          RETURNING
            day_utc AS dayUtc,
            admitted_requests AS admittedRequests,
@@ -6757,21 +6889,28 @@ async function reserveApiCostGuard(
            observed_rows_read AS observedRowsRead,
            observed_rows_written AS observedRowsWritten,
            updated_at AS updatedAt`,
-      )
-      .bind(dayUtc, updatedAt)
-      .first<ApiCostGuardDailyRow>();
-  } catch {
-    throw new HttpError(503, "API_COST_GUARD_UNAVAILABLE", "서비스 비용 보호 원장을 사용할 수 없습니다.");
-  }
+    )
+    .bind(dayUtc, updatedAt);
 
+  return { statement, limits, admissionPercent, criticalAdmission, dayUtc };
+}
+
+async function completeApiCostGuardReservation(
+  routeClass: ApiCostRouteClass,
+  reservation: ApiCostGuardDailyRow | null,
+  plan: ApiCostGuardReservationPlan,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<{ fallbackToSnapshot: boolean }> {
+  const db = requireD1(env);
   if (!reservation) {
-    const current = await readApiCostGuardDaily(db, dayUtc);
-    await claimAndEnqueueApiCostGuardWarning(db, current, limits, env, ctx);
-    const metric = apiCostGuardDominantMetric(current, limits);
-    const mode: ApiCostGuardMode = criticalAdmission ? "stopped" : "degraded";
+    const current = await readApiCostGuardDaily(db, plan.dayUtc);
+    await claimAndEnqueueApiCostGuardWarning(db, current, plan.limits, env, ctx);
+    const metric = apiCostGuardDominantMetric(current, plan.limits);
+    const mode: ApiCostGuardMode = plan.criticalAdmission ? "stopped" : "degraded";
     await transitionApiCostGuardMode(
       mode,
-      `automatic-${admissionPercent}-percent-${metric}`,
+      `automatic-${plan.admissionPercent}-percent-${metric}`,
       metric,
       env,
       ctx,
@@ -6780,19 +6919,19 @@ async function reserveApiCostGuard(
       return { fallbackToSnapshot: true };
     }
     throw new HttpError(
-      criticalAdmission ? 503 : 429,
-      criticalAdmission ? "API_COST_GUARD_80_PERCENT_STOP" : "API_COST_GUARD_DEGRADED",
+      plan.criticalAdmission ? 503 : 429,
+      plan.criticalAdmission ? "API_COST_GUARD_80_PERCENT_STOP" : "API_COST_GUARD_DEGRADED",
       "서비스 안정성과 악용 방지를 위해 이 기능을 잠시 제한했습니다.",
-      { mode, metric, admissionPercent },
+      { mode, metric, admissionPercent: plan.admissionPercent },
     );
   }
 
-  await claimAndEnqueueApiCostGuardWarning(db, reservation, limits, env, ctx);
-  const metric = apiCostGuardThresholdMetric(reservation, limits, admissionPercent);
+  await claimAndEnqueueApiCostGuardWarning(db, reservation, plan.limits, env, ctx);
+  const metric = apiCostGuardThresholdMetric(reservation, plan.limits, plan.admissionPercent);
   if (metric) {
     await transitionApiCostGuardMode(
-      criticalAdmission ? "stopped" : "degraded",
-      `automatic-${admissionPercent}-percent-${metric}`,
+      plan.criticalAdmission ? "stopped" : "degraded",
+      `automatic-${plan.admissionPercent}-percent-${metric}`,
       metric,
       env,
       ctx,

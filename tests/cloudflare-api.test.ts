@@ -5958,6 +5958,107 @@ test("place addition request D1 guards enforce per-session and exact global 80 p
   }
 });
 
+test("place addition replay and blocked attempts reserve only low global guard cost", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = {
+    DB: db,
+    SILSIGAN_ANON_SESSION_REQUIRED: "1",
+    SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+    SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100000",
+    SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+    SILSIGAN_D1_DAILY_WRITE_LIMIT: "100000",
+  };
+
+  const readGuardUsage = () => db
+    .prepare(
+      `SELECT reserved_rows_read AS reservedRowsRead,
+              reserved_rows_written AS reservedRowsWritten,
+              mutation_requests AS mutationRequests
+       FROM api_cost_guard_daily
+       WHERE day_utc = strftime('%Y-%m-%d', 'now')`,
+    )
+    .first<{ reservedRowsRead: number; reservedRowsWritten: number; mutationRequests: number }>();
+
+  try {
+    const session = await issueVerifiedAnonymousSession(db);
+    const baseBody = {
+      clientRequestId: "place-guard-amplification-0001",
+      name: "비용 보호 재시도 장소",
+      address: "서울특별시 테스트로 101",
+      category: "카페",
+    };
+    const created = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, baseBody),
+      env,
+    );
+    assert.equal(created.status, 201);
+    const afterCreate = await readGuardUsage();
+    assert.ok(afterCreate);
+    assert.equal(afterCreate.mutationRequests, 1);
+
+    for (let index = 0; index < 3; index += 1) {
+      const replay = await worker.handleRequest(
+        anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, baseBody),
+        env,
+      );
+      assert.equal(replay.status, 200);
+      const replayPayload = (await replay.json()) as SuccessPayload<{ id: string }>;
+      assert.equal(replayPayload.meta?.idempotentReplay, true);
+    }
+
+    const afterReplay = await readGuardUsage();
+    const controlAfterReplay = await db
+      .prepare("SELECT mode FROM api_cost_guard_control WHERE id = 1")
+      .first<{ mode: string }>();
+    assert.ok(afterReplay);
+    assert.equal(controlAfterReplay?.mode, "running");
+    assert.equal(afterReplay.mutationRequests, afterCreate.mutationRequests);
+    assert.ok(afterReplay.reservedRowsRead - afterCreate.reservedRowsRead <= 30);
+    assert.ok(afterReplay.reservedRowsWritten - afterCreate.reservedRowsWritten <= 6);
+
+    for (let index = 2; index <= 3; index += 1) {
+      const accepted = await worker.handleRequest(
+        anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, {
+          ...baseBody,
+          clientRequestId: `place-guard-amplification-000${index}`,
+          name: `비용 보호 신규 장소 ${index}`,
+          address: `서울특별시 테스트로 ${100 + index}`,
+        }),
+        env,
+      );
+      assert.equal(accepted.status, 201);
+    }
+
+    const beforeBlocked = await readGuardUsage();
+    assert.ok(beforeBlocked);
+    assert.equal(beforeBlocked.mutationRequests, 3);
+    const blocked = await worker.handleRequest(
+      anonymousSessionRequest("https://api.test/api/place-requests", "POST", session, {
+        ...baseBody,
+        clientRequestId: "place-guard-amplification-0004",
+        name: "비용 보호 한도 초과 장소",
+        address: "서울특별시 테스트로 104",
+      }),
+      env,
+    );
+    const blockedPayload = (await blocked.json()) as FailurePayload;
+    const afterBlocked = await readGuardUsage();
+    const controlAfterBlocked = await db
+      .prepare("SELECT mode FROM api_cost_guard_control WHERE id = 1")
+      .first<{ mode: string }>();
+
+    assert.equal(blocked.status, 429);
+    assert.equal(blockedPayload.error.code, "PLACE_REQUEST_SESSION_DAILY_LIMIT");
+    assert.ok(afterBlocked);
+    assert.equal(controlAfterBlocked?.mode, "running");
+    assert.equal(afterBlocked.mutationRequests, beforeBlocked.mutationRequests);
+    assert.ok(afterBlocked.reservedRowsRead - beforeBlocked.reservedRowsRead <= 10);
+    assert.ok(afterBlocked.reservedRowsWritten - beforeBlocked.reservedRowsWritten <= 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("admin place request review is anonymous-header-free, audited, duplicate-safe, and never imports places", { skip: !sqlite3Available() }, async () => {
   const { db, tempDir } = createSeededSqliteD1();
   const env = { DB: db, SILSIGAN_ANON_SESSION_REQUIRED: "1", ADMIN_TOKENS: testAdminTokens };
