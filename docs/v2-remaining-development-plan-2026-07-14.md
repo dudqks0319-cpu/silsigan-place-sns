@@ -3,8 +3,8 @@
 작성 기준일: 2026-07-14  
 대상 저장소: `dudqks0319-cpu/silsigan-place-sns`  
 검토 브랜치: `codex/silsigan-progress-20260710`  
-원격 기준 커밋: `010947c99a898389120989814b89f20794b397f4`  
-코드 기준 커밋: `010947c99a898389120989814b89f20794b397f4`
+원격 기준 커밋: `1d4d607a84cb09055ff3561fd802486995c622fd`
+코드 기준 커밋: `1d4d607a84cb09055ff3561fd802486995c622fd`
 
 2026-07-20 전국 출시·마케팅·디자인 보완 계획: `docs/market-design-nationwide-plan-2026-07-20.md`  
 전국 검색·지도·제보 기능은 지역 제한 없이 유지하고, Tier A/B는 기능 제한이 아니라 초기 fresh evidence 공급과 운영 집중 우선순위로만 사용합니다.
@@ -26,7 +26,7 @@ Production 승격은 금지합니다.
 
 | Milestone | 상태 | 근거와 남은 일 |
 | --- | --- | --- |
-| M0 저장소 감사 | `[x]` | Cloudflare Worker/D1/R2/Images, 환경변수, release gate, 지도 fallback 문서화. 현재 문서 기준 테스트 수는 413/413, skip 0입니다. |
+| M0 저장소 감사 | `[x]` | Cloudflare Worker/D1/R2/Images, 환경변수, release gate, 지도 fallback 문서화. 현재 문서 기준 테스트 수는 416/416, skip 0입니다. |
 | M1 도메인·DB | `[~]` | 사진 비용 보호, 서버 결합 익명 증명·정확한 발급 예산, 비공개 장소 요청, Workers/D1 전역 비용 원장을 포함한 로컬 chain `0004~0026` 완료. Staging 스키마는 `0025`까지 원격 검증됐지만 migration registry drift를 먼저 복구해야 하며, 안전한 `0026` suffix 및 production 적용은 별도 승인 대기입니다. |
 | M2 전국 기본 데이터 | `[~]` | KMA, TourAPI, 전국 주차장, ITS 교통·CCTV adapter와 gateway는 로컬 완료. KMA·교통·서울용 bounded scheduler도 로컬 완료했지만 대상은 0개이고 production 외부 source 수집 플래그는 비활성입니다. 내부 cleanup/outbox Cron은 staging·production 모두 5분 주기로 구성됩니다. `[!]` 실제 key·권리 승인·ingestion·health·fallback 증거 필요. |
 | M3 WebView UI | `[x]` | 방문 판단 중심 홈, Apple형 중립/블루 UI, 지도 fallback, 검색·필터·재검색·지역탭, 출처/관측시각/unknown 상태, 360/390/430px overflow 검증 완료. 실제 staging 지도 origin은 미완료. |
@@ -52,7 +52,7 @@ Production 승격은 금지합니다.
 - `[x]` `0014_field_report_publications.sql`과 사진·해시태그·멱등 키·outbox의 원자적 D1 발행 경로 및 승인 전 해시태그 비공개 테스트
 - `[x]` 원격 D1 evidence query가 `0014`의 통합 발행 테이블 5개까지 검사하도록 보강
 - `[x]` `0015_photo_storage_budget.sql`, 4 GiB active bytes/16,000 monthly writes conservative hard ceiling, 80% automatic stop, pre-R2 atomic reservation, deletion byte release, fail-closed missing-ledger 테스트
-- `[x]` 413/413 테스트, skip 0. lint, typecheck, production/OpenNext build, staging/production frontend/API Worker dry-run, WebView check, mobile 4/4, Android JDK 21 lint/debug APK 검증을 최종 로컬 gate에서 함께 유지
+- `[x]` 416/416 테스트, skip 0. lint, typecheck, production/OpenNext build, staging/production frontend/API Worker dry-run, WebView check, mobile 4/4, Android JDK 21 lint/debug APK 검증을 최종 로컬 gate에서 함께 유지
 - `[x]` release blocker YAML을 필수 필드·허용 상태·중복 ID 기준으로 fail-closed 파싱하고, 후보 SHA/브랜치와 artifact SHA-256을 결합하는 `release:evidence:prepare` 하네스 추가
 - `[x]` 일반 `올리기`는 장소 선택 전 발행 화면을 열지 않고, 사용자가 검색·지도·후보에서 명시적으로 고른 장소만 제보 대상으로 사용하도록 분리
 - `[x]` aggregate/Tier A/Tier B fresh-coverage KPI와 Tier A 70% 기준을 구현하되 전국 검색·지도·제보 기능은 모든 지역에 동일하게 유지
@@ -85,8 +85,9 @@ Production 승격은 금지합니다.
 ### P0 — 출시 차단
 
 - `[x]` staging D1에 `0004~0025` 적용 및 원격 row/schema 증거; enabled unsafe scheduler target 0 포함
-- `[!]` staging D1 backup, Wrangler `0018`~`0025` migration registry drift 복구, guarded preflight 통과 후 `0026_global_api_cost_guard.sql` apply/evidence, global API guard tables/control/index, dedicated `COST_GUARD_STATE` KV 및 already-present `0022`의 live R2/D1 reconciliation 확인
-- `[!]` ranking cache와 분리된 `COST_GUARD_STATE` KV, WAF/rate-limit, static asset Worker bypass를 실제 Cloudflare 계정에서 검증
+- `[!]` staging D1 backup, Wrangler `0018`~`0025` migration registry drift 복구, guarded preflight 통과 후 `0026_global_api_cost_guard.sql` apply/evidence, global API guard tables/control/index 및 already-present `0022`의 live R2/D1 reconciliation 확인
+- `[x]` ranking cache와 분리된 staging/production `COST_GUARD_STATE` KV를 실제 Cloudflare 계정에 생성하고 환경별 binding 확인
+- `[!]` WAF/rate-limit, static asset Worker bypass를 실제 Cloudflare 요청에서 검증
 - `[!]` production D1의 V2 chain 적용 및 원격 row/schema 증거는 별도 승인 후 진행
 - `[!]` Cloudflare R2 subscription, bucket, private/public object, 삭제 증거
 - `[!]` staging API Worker 배포, Pages/API HTTPS URL, `/api/health`, `/api/places`, `dataMode=live`
@@ -119,10 +120,10 @@ Production 승격은 금지합니다.
 의존성: 없음
 
 - [x] 현재 dirty worktree에서 변경 파일을 분류·검토
-- [x] `npm test` 413/413, skip 0, `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm cf:build`, critical dependency audit, staging/production frontend/API Worker dry-run, WebView/mobile verify, Android JDK 21 lint/debug APK, `git diff --check` 재실행
+- [x] `npm test` 416/416, skip 0, `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm cf:build`, critical dependency audit, staging/production frontend/API Worker dry-run, WebView/mobile verify, Android JDK 21 lint/debug APK, `git diff --check` 재실행
 - [x] `pnpm cf:typegen`과 `pnpm cf:build` 통과. OpenNext가 `.open-next/worker.js`와 assets bundle을 생성했으며, 실제 Cloudflare 배포는 수행하지 않음
 - [x] secret scan과 migration chain fixture를 로컬에서 재실행해 통과함. 최종 push 후 원격 SHA 기준으로 다시 확인 필요
-- [x] 저장소 `local-report` browser smoke를 390x844에서 재실행해 일반 올리기의 명시적 장소 선택, 사진별 촬영·게시 권한 확인 클릭과 파일 입력 활성화, anonymous-session bootstrap, onboarding, home/map/my, 설정 동기화, 외부 장소검색 미설정 복구, 비공개 장소 요청 접수와 owner-only 상태, 사용자 안전 지도 fallback·컨트롤, 전국 검색, 랭킹·상세, realtime, like/comment/photo, 장소·댓글·사진 신고, 소유 사진 삭제, JPEG 업로드, 통합 발행 계약과 승인 제보 deep link, legacy social feed 비활성 상태의 `#지금` 최신 승인 사진 탐색·Worker 팔로우·마이 복귀·cursor 다음 페이지 병합, 계정 삭제/세션 회전/이전 proof 403, share/OG, 관리자 로그인, aggregate/Tier A/Tier B KPI, 5개 사진 비용 계기와 3개 전역 API 비용 계기, 사진 stop/resume, 전역 API stop/Cloudflare 대조/below-70% resume까지 필수 58개 흐름을 통과함. 최신 artifact는 `artifacts/cloudflare-pages-smoke-worker-report-local/pages-smoke-1784508343166.png`, `pages-smoke-home-1784508343166.png`, `pages-smoke-map-1784508343166.png`, `pages-smoke-place-1784508343166.png`, `pages-smoke-my-1784508343166.png`, `pages-smoke-hashtag-1784508343166.png`, `pages-smoke-account-deletion-1784508343166.png`, `pages-smoke-admin-cost-guard-stopped-1784508343166.png`, `pages-smoke-admin-cost-guard-running-1784508343166.png`, `pages-smoke-admin-api-cost-guard-stopped-1784508343166.png`, `pages-smoke-admin-api-cost-guard-running-1784508343166.png`, `pages-smoke-network-1784508343166.json`임. 네트워크 683건에서 request body 저장·민감정보 hit가 없었고, 임의 백엔드 오류문·내부 검수 사유·내부 저장 식별자·raw 익명 proof를 사용자 화면이나 증적에 전달하지 않는 오류 경계를 유지함
+- [x] 저장소 `local-report` browser smoke를 390x844에서 재실행해 일반 올리기의 명시적 장소 선택, 사진별 촬영·게시 권한 확인 클릭과 파일 입력 활성화, anonymous-session bootstrap, onboarding, home/map/my, 설정 동기화, NAVER 검색 결과의 명시적 검토 폼 prefill과 제출 전 무저장, 비공개 장소 요청 접수와 owner-only 상태, 사용자 안전 지도 fallback·컨트롤, 전국 검색, 랭킹·상세, realtime, like/comment/photo, 장소·댓글·사진 신고, 소유 사진 삭제, JPEG 업로드, 통합 발행 계약과 승인 제보 deep link, legacy social feed 비활성 상태의 `#지금` 최신 승인 사진 탐색·Worker 팔로우·마이 복귀·cursor 다음 페이지 병합, 계정 삭제/세션 회전/이전 proof 403, share/OG, 관리자 로그인, aggregate/Tier A/Tier B KPI, 5개 사진 비용 계기와 3개 전역 API 비용 계기, 사진 stop/resume, 전역 API stop/Cloudflare 대조/below-70% resume까지 필수 58개 흐름을 통과함. 최신 artifact는 `artifacts/cloudflare-pages-smoke-worker-report-local/pages-smoke-1784510945721.png`, `pages-smoke-home-1784510945721.png`, `pages-smoke-map-1784510945721.png`, `pages-smoke-place-1784510945721.png`, `pages-smoke-my-1784510945721.png`, `pages-smoke-hashtag-1784510945721.png`, `pages-smoke-account-deletion-1784510945721.png`, `pages-smoke-admin-cost-guard-stopped-1784510945721.png`, `pages-smoke-admin-cost-guard-running-1784510945721.png`, `pages-smoke-admin-api-cost-guard-stopped-1784510945721.png`, `pages-smoke-admin-api-cost-guard-running-1784510945721.png`, `pages-smoke-network-1784510945721.json`임. 네트워크 614건에서 request body 저장·민감정보 hit가 없었고, 임의 백엔드 오류문·내부 검수 사유·내부 저장 식별자·raw 익명 proof를 사용자 화면이나 증적에 전달하지 않는 오류 경계를 유지함
 - [x] Computer Use로 Cloudflare R2 checkout을 읽기 전용 확인했으며 결제정보 입력, 약관 동의, R2 활성화는 수행하지 않음. NAVER Cloud 로그인 후 별도 `Silsigan` Dynamic Map 폼을 준비했지만 최종 등록은 승인 전이라 누르지 않음
 - [ ] 사용자 승인 후에만 commit/push
 - [ ] push 후 GitHub SHA, branch, release ledger를 다시 확인
@@ -226,7 +227,7 @@ Production 승격은 금지합니다.
 - [x] server-owned question credit fail-closed
 - [x] `expiresAt` 강제
 - [x] staging D1 `0004~0025`, enabled unsafe target 0, cleanup/outbox, Images/read/storage/session/issuance/place-request evidence
-- [ ] staging D1 backup, `0018`~`0025` migration registry drift 복구, guarded `0026` apply/evidence, global cost guard tables/index/control, dedicated KV, post-`0022` live R2/D1 reconciliation 확인
+- [ ] staging D1 backup, `0018`~`0025` migration registry drift 복구, guarded `0026` apply/evidence, global cost guard tables/index/control, post-`0022` live R2/D1 reconciliation 확인. Dedicated KV 생성·binding은 완료
 - [ ] staging R2 및 실제 삭제
 - [ ] staging API Worker/Pages URL
 - [ ] 실제 공공데이터와 권리 승인
