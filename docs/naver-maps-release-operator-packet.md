@@ -15,7 +15,9 @@ NAVER Cloud 공식 Application 가이드는 Web 서비스 URL을 등록할 때 H
 - [NAVER 지도 API v3 Client ID 가이드](https://navermaps.github.io/maps.js.ncp/docs/tutorial-1-Getting-Client-ID.html): `Dynamic Map` 선택과 `ncpKeyId` 사용
 - [NAVER Cloud 공식 요금표](https://www.ncloud.com/charge/price/ko): 대표 계정 1개 기준 Mobile/Web Dynamic Map 월 6,000,000건 무료, 초과 호출 과금
 
-2026-07-20 Computer Use로 NAVER Cloud 계정 소유자 세션을 확인했습니다. 별도 `Silsigan` Application 등록 폼에는 `Dynamic Map`, `http://localhost:3000`, `http://127.0.0.1:3000`, 현재 staging/production `workers.dev` web host, Android package와 iOS Bundle ID `kr.silsigan.mobile`이 준비되어 있습니다. 최종 `등록`은 누르지 않았고 Client ID/Secret도 생성하거나 노출하지 않았습니다. 공유 `workers.dev` host는 현재 preview 초안용일 뿐 소유자 도메인 release gate를 충족하지 않습니다. 최종 출시 전에는 소유 도메인을 연결하고 정확한 origin으로 교체해야 합니다.
+2026-07-20 Computer Use로 별도 `Silsigan` Dynamic Map Application을 생성했습니다. 등록값은 `http://localhost:3000`, `http://127.0.0.1:3000`, 현재 staging/production `workers.dev` preview host, Android package와 iOS Bundle ID `kr.silsigan.mobile`입니다. 공개 Client ID만 `.env.example`과 gitignored `.env.local`에 구성했고 Client Secret은 출력하거나 저장소에 기록하지 않았습니다. localhost 검증에서는 NAVER SDK와 실제 타일 13개가 로드돼 Client ID와 개발 origin이 동작함을 확인했습니다. OpenNext build와 staging dry-run을 통과한 현재 version `fc15d04e-6534-44d3-b908-8ce8cbb3a336`을 staging에 배포했습니다. staging은 아직 API/R2 보호 모드이므로 외부 NAVER 호출 0건을 유지하면서 검증 장소 fallback과 `실시간 연결 다시 시도`를 표시합니다. 이전 fallback 화면은 `artifacts/manual-qa/naver-map-preview-staging-20260720.jpeg`에 보존했습니다. 공유 `workers.dev` host는 preview 검증용일 뿐 소유자 도메인 release gate를 충족하지 않습니다. 최종 출시 전에는 기존 Application에 소유 도메인을 연결하고 정확한 origin으로 교체해야 합니다.
+
+같은 날 Dynamic Map의 일별 hard limit `160,000`, 월별 hard limit `4,800,000`, 한도 초과 사용 `허용안함`을 저장하고, 일별·월별 사용량 알림을 모두 `70%`부터 10% 단위로 통보하도록 저장 후 재확인했습니다. 현재 NAVER 계정의 통보 대상 목록에는 이메일과 휴대폰이 등록되어 있지 않아 실제 수신자는 비어 있습니다. 개인 연락처를 임의로 입력하지 않았으며, 마스킹된 수신자 증거가 생기기 전에는 알림 설정 전체를 완료로 판정하지 않습니다.
 
 2026-07-20 Cloudflare `Domains > Overview`도 읽기 전용으로 다시 확인했으며, 현재 계정에는 도메인 또는 서브도메인이 없습니다. 이어서 구매 화면에서 정확한 이름만 조회한 결과 `silsigan.com`은 이미 등록되어 있고 Cloudflare Registrar는 `.kr` 등록을 지원하지 않았으며, `silsigan.app`은 당시 연 `$14.20`·동일 갱신가로 구매 가능한 후보로 표시됐습니다. 구매 버튼, 장바구니, 결제는 진행하지 않았으며 가용성과 가격은 실제 구매 시점에 다시 확인해야 합니다. 따라서 기존 계정 도메인을 재사용할 수 없고, 사용자가 소유한 도메인을 추가하거나 새 도메인을 구입하기 전까지 NAVER 지도를 출시 기능으로 활성화하지 않습니다. 최초 무도메인 증거는 `artifacts/manual-qa/cloudflare-no-domains-20260719.png`이며 이번 재확인에서도 외부 상태는 같았습니다.
 
@@ -40,15 +42,15 @@ NAVER 지도 활성화 전에 사용자가 소유·관리하는 하나의 regist
 3. `Dynamic Map`만 출시 범위에 맞게 선택합니다. 사용하지 않는 API는 선택하지 않습니다.
 4. Web 서비스 URL에는 공유 호스팅 suffix가 아니라 검증된 소유 대표 도메인을 등록합니다.
 5. Client Secret은 브라우저·저장소·스크린샷·로그에 넣지 않습니다. Web SDK에는 Client ID만 사용합니다.
-6. 대표 계정임을 확인한 뒤 월별 hard limit은 무료 6,000,000건의 80%인 `4,800,000` 이하, 일별 hard limit은 `160,000` 이하로 설정합니다. 둘 중 하나라도 더 높거나 비어 있으면 출시하지 않습니다.
-7. 임계치는 `70%` 이하부터 선택해 최소 70/80/90/100% 알림을 받고, 실제 통보 대상 이메일 또는 SMS를 추가합니다. 통보 대상이 없으면 알림 설정을 완료로 보지 않습니다.
+6. `[x]` 월별 hard limit `4,800,000`, 일별 hard limit `160,000`, 한도 초과 사용 `허용안함`을 저장했습니다. 대표 계정 여부는 별도 증거가 필요합니다.
+7. `[~]` 일별·월별 임계치는 모두 `70%`부터 시작하도록 저장했습니다. 실제 통보 대상 이메일 또는 SMS는 아직 비어 있어 알림 전달 증거는 미완료입니다.
 8. 저장 후 Application 이름, `Dynamic Map`, 대표 도메인, 한도, 임계치, 통보 대상이 보이는 증거를 남깁니다. Client Secret과 개인 연락처는 마스킹합니다.
 
-약관 동의, 로그인, Client ID/Secret 신규 발급 또는 재발급은 계정 소유자가 직접 수행합니다.
+약관 동의, 로그인, Client ID/Secret 재발급은 계정 소유자가 직접 수행합니다.
 
 ## 애플리케이션 환경변수
 
-콘솔과 custom domain이 준비된 뒤에만 다음 값을 실행 환경에 설정합니다.
+공개 Client ID는 preview/local 검증에만 구성되어 있습니다. custom domain과 아래 콘솔 증거가 준비되기 전에는 나머지 release-confirmation 값을 설정하지 않습니다.
 
 ```bash
 export NEXT_PUBLIC_NAVER_MAP_CLIENT_ID=<public-client-id>

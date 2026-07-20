@@ -422,8 +422,18 @@ type PlaceStatusData = {
   independentSourceCount: number;
   confidenceScore: number;
   reasonCodes: string[];
+  officialTourismPlace?: OfficialTourismPlace | null;
   observedAt: string | null;
   computedAt: string;
+};
+
+type OfficialTourismPlace = {
+  contentId: string;
+  name: string;
+  address: string | null;
+  sourceName: "한국관광공사 TourAPI";
+  attributionText: "한국관광공사";
+  verifiedAt: string;
 };
 
 type D1PlaceRow = {
@@ -3183,14 +3193,28 @@ async function ingestOfficialStaticSource(
 
     if (source.sourceKey === "tour_api") {
       const serviceKey = requiredSourceCredential(env.TOUR_API_SERVICE_KEY);
-      const areaCode = stringField(body, "areaCode", 3);
+      const searchMode = optionalEnumField(body, "searchMode", ["area", "location"] as const) ?? "area";
       const contentTypeId = optionalStringField(body, "contentTypeId", 3);
-      const fetched = await gateway.execute(createTourApiAdapter({ serviceKey }), {
-        areaCode,
-        ...(contentTypeId ? { contentTypeId } : {}),
-        pageNo: integerField(body, "pageNo", 1, 10_000, 1),
-        numOfRows: integerField(body, "numOfRows", 1, 100, 20),
-      }, policy);
+      const pageNo = integerField(body, "pageNo", 1, 10_000, 1);
+      const numOfRows = integerField(body, "numOfRows", 1, 100, 20);
+      const adapter = createTourApiAdapter({ serviceKey });
+      const fetched = searchMode === "location"
+        ? await gateway.execute(adapter, {
+            searchMode: "location",
+            latitude: place.latitude,
+            longitude: place.longitude,
+            radiusM: integerField(body, "radiusM", 10, 20_000, 5_000),
+            ...(contentTypeId ? { contentTypeId } : {}),
+            pageNo,
+            numOfRows,
+          }, policy)
+        : await gateway.execute(adapter, {
+            searchMode: "area",
+            areaCode: stringField(body, "areaCode", 3),
+            ...(contentTypeId ? { contentTypeId } : {}),
+            pageNo,
+            numOfRows,
+          }, policy);
       result = {
         ...fetched,
         items: fetched.items.map((item) => ({
@@ -4168,7 +4192,11 @@ async function getPlaceStatus(placeId: string, env: Env): Promise<Response> {
 async function resolvePlaceStatusData(placeId: string, env: Env): Promise<PlaceStatusData> {
   const now = new Date();
   if (env.DB) {
-    return recomputeD1PlaceStatus(env.DB, placeId, now);
+    const [status, officialTourismPlace] = await Promise.all([
+      recomputeD1PlaceStatus(env.DB, placeId, now),
+      loadD1OfficialTourismPlace(env.DB, placeId),
+    ]);
+    return { ...status, officialTourismPlace };
   }
 
   const currentSignals = liveSignals
@@ -4185,8 +4213,50 @@ async function resolvePlaceStatusData(placeId: string, env: Env): Promise<PlaceS
     independentSourceCount: 0,
     confidenceScore: 0,
     reasonCodes: ["demo_data_not_eligible"],
+    officialTourismPlace: null,
     observedAt: latestObservedAt(currentSignals),
     computedAt: now.toISOString(),
+  };
+}
+
+async function loadD1OfficialTourismPlace(
+  db: D1Database,
+  placeId: string,
+): Promise<OfficialTourismPlace | null> {
+  const row = await db.prepare(`
+    SELECT
+      psm.external_place_id AS contentId,
+      COALESCE(psm.external_name, p.name) AS name,
+      psm.external_address AS address,
+      psm.last_seen_at AS verifiedAt
+    FROM place_source_mappings psm
+    JOIN data_sources ds ON ds.id = psm.source_id
+    JOIN places p ON p.id = psm.place_id
+    WHERE psm.place_id = ?
+      AND psm.manually_verified = 1
+      AND ds.source_key = 'tour_api'
+      AND ds.enabled = 1
+      AND ds.commercial_use_status IN ('allowed', 'allowed_with_attribution')
+    ORDER BY psm.last_seen_at DESC
+    LIMIT 1
+  `).bind(placeId).first<{
+    contentId: string;
+    name: string;
+    address: string | null;
+    verifiedAt: string;
+  }>();
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    contentId: row.contentId,
+    name: row.name,
+    address: row.address,
+    sourceName: "한국관광공사 TourAPI",
+    attributionText: "한국관광공사",
+    verifiedAt: row.verifiedAt,
   };
 }
 

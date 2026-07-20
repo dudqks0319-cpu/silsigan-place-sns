@@ -225,6 +225,41 @@ test("official static adapters preserve source metadata without current-state ti
   assert.equal([...cache.entries.keys()].some((key) => key.includes(tourKey) || key.includes(parkingKey)), false);
 });
 
+test("TourAPI adapter supports a bounded location search for nearby alternatives", async () => {
+  const serviceKey = "tour-location-fixture-key-never-cache";
+  let requestedUrl = "";
+  const adapter = createTourApiAdapter({ serviceKey });
+  const gateway = new PublicDataGateway({
+    fetcher: async (input) => {
+      requestedUrl = String(input);
+      return Response.json(tourFixture());
+    },
+  });
+
+  const result = await gateway.execute(adapter, {
+    searchMode: "location",
+    latitude: 35.1531696,
+    longitude: 129.1185509,
+    radiusM: 5_000,
+    contentTypeId: "12",
+    pageNo: 1,
+    numOfRows: 10,
+  }, { freshTtlSeconds: 300, staleTtlSeconds: 86_400 });
+  const url = new URL(requestedUrl);
+
+  assert.equal(url.pathname.endsWith("/locationBasedList2"), true);
+  assert.equal(url.searchParams.get("mapX"), "129.1185509");
+  assert.equal(url.searchParams.get("mapY"), "35.1531696");
+  assert.equal(url.searchParams.get("radius"), "5000");
+  assert.equal(result.items[0]?.externalId, "126508");
+  assert.equal(adapter.cacheKey({
+    searchMode: "location",
+    latitude: 35.1531696,
+    longitude: 129.1185509,
+    radiusM: 5_000,
+  }).includes(serviceKey), false);
+});
+
 test("national traffic normalizes provider observation time and bounded live expiry", async () => {
   const cache = new MemoryPublicDataCache();
   const serviceKey = "traffic-fixture-key-never-cache";

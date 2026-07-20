@@ -5368,6 +5368,11 @@ test("official static ingestion creates a source mapping without creating a curr
     `).run();
     globalThis.fetch = async (input: RequestInfo | URL): Promise<Response> => {
       assert.equal(String(input).includes(serviceKey), true);
+      const providerUrl = new URL(String(input));
+      assert.equal(providerUrl.pathname.endsWith("/locationBasedList2"), true);
+      assert.equal(providerUrl.searchParams.get("mapX"), "129.1186");
+      assert.equal(providerUrl.searchParams.get("mapY"), "35.1532");
+      assert.equal(providerUrl.searchParams.get("radius"), "5000");
       return Response.json({
         response: {
           header: { resultCode: "0000", resultMsg: "OK" },
@@ -5398,7 +5403,8 @@ test("official static ingestion creates a source mapping without creating a curr
           externalId: "126508",
           matchMethod: "manual",
           manuallyVerified: true,
-          areaCode: "6",
+          searchMode: "location",
+          radiusM: 5_000,
           contentTypeId: "12",
           pageNo: 1,
           numOfRows: 10,
@@ -5428,6 +5434,26 @@ test("official static ingestion creates a source mapping without creating a curr
     assert.equal(mapping?.manuallyVerified, 1);
     const liveCount = await db.prepare("SELECT COUNT(*) AS count FROM live_signals WHERE source_id = 'source-tour-api'").first<{ count: number }>();
     assert.equal(liveCount?.count, 0);
+
+    const statusResponse = await worker.handleRequest(
+      new Request("https://api.test/api/places/busan-gwangalli/status"),
+      { DB: db, ENVIRONMENT: "staging" },
+    );
+    const statusPayload = (await statusResponse.json()) as SuccessPayload<{
+      officialTourismPlace: {
+        contentId: string;
+        name: string;
+        sourceName: string;
+        attributionText: string;
+        verifiedAt: string;
+      } | null;
+    }>;
+    assert.equal(statusResponse.status, 200);
+    assert.equal(statusPayload.data.officialTourismPlace?.contentId, "126508");
+    assert.equal(statusPayload.data.officialTourismPlace?.name, "광안리해수욕장");
+    assert.equal(statusPayload.data.officialTourismPlace?.sourceName, "한국관광공사 TourAPI");
+    assert.equal(statusPayload.data.officialTourismPlace?.attributionText, "한국관광공사");
+    assert.ok(statusPayload.data.officialTourismPlace?.verifiedAt);
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(tempDir, { recursive: true, force: true });

@@ -57,6 +57,7 @@ import { formatDistanceMeters, haversineDistanceMeters } from "@/lib/geo";
 import { isRuntimeDataModeAllowed, shouldClearTruthBearingDataOnLoadFailure } from "@/lib/runtime-data-mode";
 import { mergeReportCollections } from "@/lib/report-exploration";
 import { fetchStaticPlaceDirectory } from "@/lib/static-place-snapshot";
+import { buildGroundedTravelGuide } from "@/lib/travel-guide";
 import { acquirePhotoUploadTurnstileToken, type PhotoUploadProtection } from "@/lib/turnstile-client";
 import {
   REALTIME_CONNECT_TIMEOUT_MS,
@@ -3000,6 +3001,7 @@ export default function SilsiganRedesign() {
                     onAnswerQuest={answerFieldQuest}
                     onBlockPost={blockPostCreator}
                     onFlagPost={setPendingFlagPost}
+                    onGoMap={() => setActiveView("map")}
                     helpfulPostIds={helpfulPostIds}
                     savedPostIds={savedPostIds}
                     onHelpfulPost={markHelpful}
@@ -4370,7 +4372,9 @@ function MapScreen({
           }}
           disabled={mapRequerying}
         >
-          {mapRequerying ? "다시 불러오는 중" : "이 지역 다시 검색"}
+          {mapRequerying
+            ? dataMode === "directory" ? "연결 확인 중" : "다시 불러오는 중"
+            : dataMode === "directory" ? "실시간 연결 다시 시도" : "이 지역 다시 검색"}
         </button>
       </div>
       {requeryHintVisible && <p className={styles.mapRequeryHint}>지도를 움직였습니다. 이 지역 기준으로 다시 검색할 수 있어요.</p>}
@@ -4488,6 +4492,7 @@ function PlaceScreen({
   onAnswerQuest,
   onBlockPost,
   onFlagPost,
+  onGoMap,
   helpfulPostIds,
   savedPostIds,
   onHelpfulPost,
@@ -4522,6 +4527,7 @@ function PlaceScreen({
   onAnswerQuest: (quest: FieldQuest) => void;
   onBlockPost: (post: PublicPost) => void;
   onFlagPost: (post: PublicPost) => void;
+  onGoMap: () => void;
   helpfulPostIds: Set<string>;
   savedPostIds: Set<string>;
   onHelpfulPost: (post: PublicPost) => void;
@@ -4555,6 +4561,16 @@ function PlaceScreen({
   const latestReportEvidence = reports.find((report) => !report.isSample) ?? null;
   const signalCount = placeStatus?.currentSignals.length ?? 0;
   const evidenceCount = signalCount > 0 ? signalCount : latestReportEvidence ? 1 : 0;
+  const currentGuideStatus = dataMode === "live" ? currentLivePlaceStatus(placeStatus ?? undefined) : null;
+  const guide = buildGroundedTravelGuide({
+    dataMode,
+    status: currentGuideStatus?.status ?? "insufficient",
+    signalCount: currentGuideStatus?.currentSignals.length ?? 0,
+    missingRequiredDimensions: currentGuideStatus?.missingRequiredDimensions ?? [],
+    conflictingDimensions: currentGuideStatus?.conflictingDimensions ?? [],
+    alternativeCount: nearbyPlaces.length,
+    officialTourismPlace: placeStatus?.officialTourismPlace ?? null,
+  });
   const decisionLabel = dataMode === "sample"
     ? "샘플 화면이며 실제 방문 판단에 사용할 수 없어요"
     : dataMode === "directory"
@@ -4628,6 +4644,49 @@ function PlaceScreen({
         <div className={styles.trustRing}>
           <ShieldCheck size={24} />
         </div>
+      </section>
+
+      <section className={`${styles.travelGuideCard} ${styles[`travelGuide_${guide.decision}`]}`} aria-label="AI 여행 변수 대응 가이드">
+        <div className={styles.travelGuideHeader}>
+          <span><Sparkles size={15} /> AI 여행 변수 대응 · 안전모드</span>
+          <strong>{guide.title}</strong>
+        </div>
+        <p>{guide.summary}</p>
+        <div className={styles.travelGuideGrounding}>
+          {placeStatus?.officialTourismPlace ? (
+            <>
+              <strong>{placeStatus.officialTourismPlace.name}</strong>
+              <span>
+                한국관광공사 TourAPI · 콘텐츠 ID {placeStatus.officialTourismPlace.contentId}
+              </span>
+            </>
+          ) : (
+            <>
+              <strong>관광지 기준 정보 연결 전</strong>
+              <span>검증된 한국관광공사 TourAPI 매핑이 확인되면 공식 관광지 기준을 함께 표시합니다.</span>
+            </>
+          )}
+        </div>
+        <span className={styles.travelGuideSource}>{guide.sourceLine}</span>
+        <div className={styles.travelGuideTags} aria-label="공모전 기능 해시태그">
+          {guide.hashtags.map((hashtag) => <span key={hashtag}>#{hashtag}</span>)}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (guide.decision === "insufficient" && nearbyPlaces.length === 0) {
+              onGoMap();
+            } else if (guide.decision === "alternatives" || guide.decision === "insufficient") {
+              setPlaceActiveTab("근처");
+            } else if (guide.decision === "go_now") {
+              setPlaceActiveTab("사진");
+            } else {
+              setPlaceActiveTab("실시간");
+            }
+          }}
+        >
+          {guide.ctaLabel}<ChevronRight size={15} />
+        </button>
       </section>
 
       <section className={styles.sourceEvidenceCard} aria-label="현재 상태 출처와 관측시각">

@@ -5,12 +5,25 @@ import {
   type PublicDataAdapter,
 } from "./gateway.ts";
 
-export type TourApiQuery = {
+export type TourApiAreaQuery = {
+  searchMode?: "area";
   areaCode: string;
   contentTypeId?: string;
   pageNo?: number;
   numOfRows?: number;
 };
+
+export type TourApiLocationQuery = {
+  searchMode: "location";
+  latitude: number;
+  longitude: number;
+  radiusM: number;
+  contentTypeId?: string;
+  pageNo?: number;
+  numOfRows?: number;
+};
+
+export type TourApiQuery = TourApiAreaQuery | TourApiLocationQuery;
 
 type TourApiItem = {
   contentid: string;
@@ -49,7 +62,8 @@ export type TourApiAdapterOptions = {
   now?: () => Date;
 };
 
-const endpoint = "https://apis.data.go.kr/B551011/KorService2/areaBasedList2";
+const areaEndpoint = "https://apis.data.go.kr/B551011/KorService2/areaBasedList2";
+const locationEndpoint = "https://apis.data.go.kr/B551011/KorService2/locationBasedList2";
 const attribution = "한국관광공사 TourAPI";
 
 export function createTourApiAdapter(
@@ -62,7 +76,11 @@ export function createTourApiAdapter(
     sourceKey: "tour_api",
 
     validateQuery(query) {
-      if (!/^\d{1,3}$/.test(query.areaCode)) throw new Error("invalid areaCode");
+      if (query.searchMode === "location") {
+        validateLocationQuery(query);
+      } else if (!/^\d{1,3}$/.test(query.areaCode)) {
+        throw new Error("invalid areaCode");
+      }
       if (query.contentTypeId !== undefined && !/^\d{1,3}$/.test(query.contentTypeId)) {
         throw new Error("invalid contentTypeId");
       }
@@ -70,16 +88,25 @@ export function createTourApiAdapter(
     },
 
     cacheKey(query) {
-      return [query.areaCode, query.contentTypeId ?? "all", query.pageNo ?? 1, query.numOfRows ?? 20].join(":");
+      const scope = query.searchMode === "location"
+        ? ["location", query.latitude, query.longitude, query.radiusM]
+        : ["area", query.areaCode];
+      return [...scope, query.contentTypeId ?? "all", query.pageNo ?? 1, query.numOfRows ?? 20].join(":");
     },
 
     async fetch(query, context) {
-      const url = new URL(endpoint);
+      const url = new URL(query.searchMode === "location" ? locationEndpoint : areaEndpoint);
       url.searchParams.set("serviceKey", serviceKey);
       url.searchParams.set("MobileOS", "ETC");
       url.searchParams.set("MobileApp", "silsigan");
       url.searchParams.set("_type", "json");
-      url.searchParams.set("areaCode", query.areaCode);
+      if (query.searchMode === "location") {
+        url.searchParams.set("mapX", String(query.longitude));
+        url.searchParams.set("mapY", String(query.latitude));
+        url.searchParams.set("radius", String(query.radiusM));
+      } else {
+        url.searchParams.set("areaCode", query.areaCode);
+      }
       url.searchParams.set("pageNo", String(query.pageNo ?? 1));
       url.searchParams.set("numOfRows", String(query.numOfRows ?? 20));
       if (query.contentTypeId) url.searchParams.set("contentTypeId", query.contentTypeId);
@@ -183,6 +210,18 @@ function responseParts(raw: unknown): {
 function validatePage(pageNo?: number, numOfRows?: number): void {
   if (pageNo !== undefined && (!Number.isInteger(pageNo) || pageNo < 1 || pageNo > 10_000)) throw new Error("invalid pageNo");
   if (numOfRows !== undefined && (!Number.isInteger(numOfRows) || numOfRows < 1 || numOfRows > 100)) throw new Error("invalid numOfRows");
+}
+
+function validateLocationQuery(query: TourApiLocationQuery): void {
+  if (!Number.isFinite(query.latitude) || query.latitude < -90 || query.latitude > 90) {
+    throw new Error("invalid latitude");
+  }
+  if (!Number.isFinite(query.longitude) || query.longitude < -180 || query.longitude > 180) {
+    throw new Error("invalid longitude");
+  }
+  if (!Number.isInteger(query.radiusM) || query.radiusM < 10 || query.radiusM > 20_000) {
+    throw new Error("invalid radiusM");
+  }
 }
 
 function optionalCoordinate(value: unknown, min: number, max: number): number | undefined {

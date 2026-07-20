@@ -8,6 +8,7 @@ import {
   type ListHashtagParams,
   type LiveSignalDimension,
 } from "../../packages/contracts/src/index.ts";
+import type { OfficialTourismPlace } from "./travel-guide";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -236,6 +237,7 @@ export type CloudflarePlaceStatus = {
   independentSourceCount: number;
   confidenceScore: number;
   reasonCodes: string[];
+  officialTourismPlace: OfficialTourismPlace | null;
   observedAt: string | null;
   computedAt: string;
 };

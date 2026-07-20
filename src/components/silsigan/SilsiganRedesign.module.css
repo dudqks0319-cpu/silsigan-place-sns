@@ -210,6 +210,7 @@
 .ctaCard,
 .placeSummaryCard,
 .trustCard,
+.travelGuideCard,
 .sourceEvidenceCard,
 .fieldQuestCard,
 .warningCard,
@@ -3134,6 +3135,109 @@ a.samplePhotoCredit:hover {
 
 .trustRing svg {
   position: relative;
+}
+
+.travelGuideCard {
+  display: grid;
+  gap: 12px;
+  padding: 17px;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  background:
+    radial-gradient(circle at 100% 0, rgba(45, 212, 191, 0.18), transparent 38%),
+    linear-gradient(145deg, #f0fdfa, #ffffff 62%);
+}
+
+.travelGuideHeader {
+  display: grid;
+  gap: 7px;
+}
+
+.travelGuideHeader > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.travelGuideHeader > strong {
+  color: #0f172a;
+  font-size: 22px;
+  letter-spacing: -0.04em;
+}
+
+.travelGuideCard > p {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.travelGuideGrounding {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.travelGuideGrounding strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.travelGuideGrounding span,
+.travelGuideSource {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.travelGuideTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.travelGuideTags span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #ccfbf1;
+  color: #115e59;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.travelGuideCard > button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 15px;
+  background: #0f766e;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.travelGuide_alternatives {
+  border-color: rgba(234, 88, 12, 0.22);
+  background: linear-gradient(145deg, #fff7ed, #ffffff 65%);
+}
+
+.travelGuide_alternatives > button,
+.travelGuide_wait > button {
+  background: #c2410c;
+}
+
+.travelGuide_insufficient {
+  border-color: rgba(100, 116, 139, 0.24);
+  background: linear-gradient(145deg, #f8fafc, #ffffff 65%);
 }
 
 .sourceEvidenceCard {

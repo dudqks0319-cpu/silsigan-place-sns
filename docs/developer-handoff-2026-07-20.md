@@ -26,7 +26,7 @@ Always fetch the canonical branch and work from a clean clone or worktree. Do no
 
 ## Verified at handoff
 
-- committed test set: 422/422 passed, 0 skipped.
+- current working test set: 428/428 passed, 0 skipped.
 - `pnpm lint`: passed.
 - `pnpm typecheck`: passed.
 - `pnpm build`: passed, 26 routes generated.
@@ -41,7 +41,7 @@ Always fetch the canonical branch and work from a clean clone or worktree. Do no
 - The repository Actions permission is enabled with `allowed_actions=all`, and the canonical branch contains `.github/workflows/ci.yml`.
 - Runs `29710281873`, `29710857132`, and `29711040447` ended as `startup_failure` with zero jobs and the synthetic workflow path `BuildFailed`; they did not execute repository tests.
 - The run page classifies this as an unexpected GitHub error and provides support request ID `26A3:1D8F6:DC98B8:11ECDBC:6A5D7984`. At the same time, [GitHub Status](https://www.githubstatus.com/) reports an active Actions incident in which new workflows may be delayed or fail to start.
-- Therefore committed-set `422/422` evidence is verified, but a green GitHub CI run is not claimed. After GitHub marks the incident resolved, rerun CI without changing the workflow. If startup failure persists, send the request ID above to GitHub Support.
+- Therefore current local `428/428` evidence is verified, but a green GitHub CI run is not claimed. After GitHub marks the incident resolved, rerun CI without changing the workflow. If startup failure persists, send the request ID above to GitHub Support.
 - Do not weaken or remove the CI audit/verification steps merely to produce a green badge.
 
 ## Safe resume commands
@@ -68,7 +68,7 @@ pnpm release:status
 1. Read-only Cloudflare state check: confirm whether R2 is actually enabled in Wrangler/CLI and that direct public `r2.dev` and R2 custom domains are disabled.
 2. Preserve the protected pre-change Staging backup and the empty archived legacy table. Backup-gated recovery preserved the old table and normal Wrangler migrations applied `0018`~`0026`; the latest read-only evidence verifies no pending migration, aligned registry, and core seed evidence with zero remote writes from the verification. Do not add or rewrite migration registry rows.
 3. Dedicated `COST_GUARD_STATE` KV is provisioned for staging/production. The exact-host Turnstile widget/public key and both staging secret names are provisioned without committing values. R2 enablement, configured application deployment, and live upload-ticket success/failure evidence remain.
-4. Log in again directly in the NAVER Cloud browser session after the expired-session registration failure, then finish NAVER Maps using an owner-controlled domain and exact HTTPS origins; shared `workers.dev`, `pages.dev`, and `vercel.app` origins are not acceptable release evidence.
+4. Open the existing NAVER Cloud `Silsigan` Dynamic Map application. The approved daily/monthly hard limits and 70% alerts are already saved; now verify the representative account, add an actual notification recipient, replace preview `workers.dev` origins with an owner-controlled domain and exact HTTPS origins, and capture valid-origin success plus invalid-origin rejection. Shared `workers.dev`, `pages.dev`, and `vercel.app` origins are not acceptable release evidence.
 5. Deploy the staging API Worker only after preflight passes. Run read-only smoke first, then separately authorize write smoke.
 6. Complete private R2 upload/read/delete evidence, moderation smoke, iPhone and Android real-device QA, source-rights review, and legal/store sign-off.
 7. Promote to production only after every release-ledger P0 blocker is closed and rollback evidence is current.
