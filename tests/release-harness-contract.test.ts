@@ -135,6 +135,13 @@ test("application verification runs lint typecheck root tests and production bui
   assert.equal(packageJson.scripts["verify:app"], "pnpm lint && pnpm typecheck && pnpm test && pnpm build");
 });
 
+test("security audit covers root and mobile lockfiles", () => {
+  assert.equal(
+    packageJson.scripts["audit:security"],
+    "pnpm audit --audit-level low && pnpm --dir apps/mobile audit --audit-level low",
+  );
+});
+
 test("release provenance command is strict by default", () => {
   assert.equal(
     packageJson.scripts["release:provenance"],
@@ -307,6 +314,7 @@ test("CI installs the lockfile exactly and runs the root verification gate", () 
   assert.match(workflow, /pnpm install --frozen-lockfile/);
   assert.match(workflow, /pnpm --dir apps\/mobile install --frozen-lockfile/);
   assert.match(workflow, /pnpm --dir apps\/webview install --frozen-lockfile/);
+  assert.match(workflow, /pnpm audit:security/);
   assert.match(workflow, /pnpm verify/);
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
