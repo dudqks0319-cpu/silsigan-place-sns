@@ -5,9 +5,9 @@
 - Canonical remote branch: `codex/silsigan-progress-20260710`
 - Current authoritative worktree: `/Users/jyb-m3max/Desktop/codex/silsigan/.worktrees/external-staging-20260721`
 - Current integration branch: `agent/external-staging-20260721`
-- Committed baseline before this uncommitted change set: `d7f0499ee1e83d4f53ef533f556a84d75b6a6f2e`
-- Upstream divergence at reconciliation: `0/0`; the working tree is **dirty**, so this is not a clean release candidate and the uncommitted changes are not remote
-- Source commit and final release-record commit: fill after verification and push
+- Verified source commit: `3107e15e73c94db11c46b0bca302cf3ea68ece64`
+- Final release-record commit: use the remote `codex/silsigan-progress-20260710` branch tip; it changes handoff records only after the source commit
+- Working tree after the release-record commit: tracked source clean; `artifacts/ui-truth-20260722/` contains four intentionally untracked local PNGs and is not a release input
 - Commit/push gate: manual source/diff security gate, secret scan, dependency audit, and negative-path regressions pass; optional Codex Security UI scan remains unclaimed
 - Release state: `staging_running_kv_remediated_photo_turnstile_smoke_pending_production_blocked`
 - Production deploy, production D1 migration, provider-source activation, and traffic promotion were not performed.

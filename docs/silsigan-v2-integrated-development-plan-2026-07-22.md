@@ -21,13 +21,13 @@
 | --- | --- |
 | 권위 worktree | `.worktrees/external-staging-20260721` |
 | 현재 브랜치 | `agent/external-staging-20260721` |
-| 현재 HEAD | `d7f0499` |
-| upstream 차이 | `0/0` |
-| 감사 시작 시 작업 상태 | 수정된 tracked 파일 20개, untracked 0개 |
-| release ledger의 후보 source commit | `48e672aa3f9ece06e31f40305fc6e080c69fb479` |
+| 검증된 source commit | `3107e15e73c94db11c46b0bca302cf3ea68ece64` |
+| upstream 차이 | push 뒤 원격 branch tip 일치 확인 |
+| 감사 시작 시 작업 상태 | 수정된 tracked 파일 20개, untracked 0개; historical |
+| release ledger의 최종 source commit | `3107e15e73c94db11c46b0bca302cf3ea68ece64` |
 | production 변경 | 없음 |
 
-현재 HEAD, 작업 트리 변경, ledger에 적힌 release candidate source commit은 서로 다른 값이다. 최종 인계 때는 커밋별 source SHA와 해당 SHA에서 실행한 검증 증거를 다시 결합해야 한다.
+Source commit은 기능·테스트·정책 변경을 담고, 그 다음 branch tip은 이 인수인계 기록만 갱신한다. 다른 개발자는 원격 branch tip에서 시작하되 기능 회귀 증거는 위 source SHA에 결합해 판단한다.
 
 ### 1.2 확인된 증거와 남은 경계
 

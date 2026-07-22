@@ -11,11 +11,10 @@ Updated: 2026-07-22
 - Version: `0.1.0`
 - Working branch: `agent/external-staging-20260721`
 - Upstream branch: `origin/codex/silsigan-progress-20260710`
-- Committed baseline before this uncommitted change set: `d7f0499ee1e83d4f53ef533f556a84d75b6a6f2e`
-- Working tree: **dirty**; the verified changes are not yet a clean release candidate
-- Upstream divergence at reconciliation: `0/0`; this proves the committed baseline matches upstream, not that the uncommitted working tree is remote
-- Source commit: fill after full verification
-- Final release-record commit: fill after push
+- Verified source commit: `3107e15e73c94db11c46b0bca302cf3ea68ece64`
+- Working tree after the release-record commit: tracked source is clean; four local UI truth PNGs under `artifacts/ui-truth-20260722/` remain intentionally untracked and are not release inputs
+- Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
+- Final release-record commit: the docs-only commit containing this record; use the remote branch tip as the continuation point
 - Security gate: manual source/diff review, dependency audit, negative-path regressions, and high-confidence secret scan passed; optional Codex Security UI scan remains a separate review aid and is not represented as completed
 - Production deploy/migration/traffic change: none
 - Deferred and disabled: ads, rewards, Q&A, live streams, social feed, demo data, Seoul realtime activation

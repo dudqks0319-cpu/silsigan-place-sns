@@ -2,8 +2,8 @@
 
 Updated: 2026-07-22
 Working branch: `agent/external-staging-20260721`; upstream: `origin/codex/silsigan-progress-20260710`
-Committed baseline: `d7f0499ee1e83d4f53ef533f556a84d75b6a6f2e`; upstream divergence at reconciliation: `0/0`
-Working-tree status: **dirty**. No final source SHA exists for this change set. The earlier candidate `48e672aa3f9ece06e31f40305fc6e080c69fb479` is retained below as historical evidence only.
+Verified source commit: `3107e15e73c94db11c46b0bca302cf3ea68ece64`; the earlier candidate `48e672aa3f9ece06e31f40305fc6e080c69fb479` is retained below as historical evidence only.
+Working-tree status after the release-record commit: tracked source clean. Four local UI truth PNGs under `artifacts/ui-truth-20260722/` are intentionally untracked, were not scanned as source, and are not release inputs. Verify the remote branch tip before continuation.
 Commit/push gate: manual source/diff security gate, high-confidence secret scan, dependency audit, and negative-path regressions pass. The optional Codex Security UI scan is not claimed as completed.
 
 ## Objective
@@ -136,7 +136,7 @@ Production promotion remains prohibited until every external blocker is checked.
 
 ## Latest Local Verification
 
-Historical verification rows below retain their original test counts for traceability; the current dirty working-tree verification source is the 2026-07-22 post-remediation state with root `453/453` and mobile `4/4`. It becomes a source candidate only after commit, push, and remote SHA verification; the optional Codex Security UI scan is not represented as completed.
+Historical verification rows below retain their original test counts for traceability; source commit `3107e15e73c94db11c46b0bca302cf3ea68ece64` is the 2026-07-22 post-remediation state with root `453/453` and mobile `4/4`. The remote branch tip contains the later docs-only release record; the optional Codex Security UI scan is not represented as completed.
 
 The current browser source of truth is the 2026-07-20 390x844 run with 58 required checks, 614 redacted network events, `storesPostData=false`, `sensitiveHits=[]`, and artifact timestamp `1784510945721`; the browser required explicit report-place selection, directly clicked the per-photo shooting/publishing-rights confirmation before file input activation, uploaded and linked the photo through the unified publication contract, reopened the exact approved report deep link, rendered `#지금` while the legacy social feed was disabled, persisted its follow through the Worker preference API, returned from My, merged a cursor-based next page, explicitly selected a mocked NAVER result to prefill only name/address/category, proved that prefill sent no place-request POST, then submitted one exact-contract private place request and showed its owner-only `needs_verification` state in My. It also verified user-safe map fallback, required the exact `계정 삭제` phrase before permanent deletion, removed all mock-owned content including place requests, rotated to a new server-bound session, rejected the previous proof with 403, authenticated to the local admin surface, rendered aggregate-only plus Tier A/B fresh-coverage KPIs, exercised the five-meter R2/D1/Images stop-and-resume flow, and proved the three-meter global API guard stop -> fresh Cloudflare reconciliation -> below-70% resume flow. Evidence is under `artifacts/cloudflare-pages-smoke-worker-report-local`. This is local mock evidence; staging-live deletion and native real-device evidence remain open. Older dated rows are retained only as historical evidence.
 

@@ -17,13 +17,13 @@ candidate:
   phase: "staging_running_kv_remediated_photo_turnstile_smoke_pending_production_blocked"
   version: "0.1.0"
   build_number: "not_applicable"
-  git_sha: "d7f0499ee1e83d4f53ef533f556a84d75b6a6f2e"
+  git_sha: "3107e15e73c94db11c46b0bca302cf3ea68ece64"
   branch: "agent/external-staging-20260721"
-  dirty_state: "dirty"
-  state_note: "git_sha is the committed upstream-aligned baseline, not a final source candidate; current verified changes remain uncommitted. Manual source/diff security review, secret scan, dependency audit, and negative-path regressions pass; the optional Codex Security UI scan is not claimed"
+  dirty_state: "clean_tracked_source_after_release_record; intentionally_untracked_ui_pngs_excluded"
+  state_note: "git_sha is the verified source commit. The remote branch tip contains a later documentation-only release record; four local UI truth PNGs are intentionally untracked and are not release inputs. Manual source/diff security review, secret scan, dependency audit, and negative-path regressions pass; the optional Codex Security UI scan is not claimed"
   upstream_branch: "origin/codex/silsigan-progress-20260710"
-  upstream_divergence_at_reconciliation: "0/0"
-  final_source_sha: "pending_after_commit_and_remote_verification"
+  upstream_divergence_at_reconciliation: "verify_remote_branch_tip_after_push"
+  final_source_sha: "3107e15e73c94db11c46b0bca302cf3ea68ece64"
   source_of_truth: "docs/current-release-state.md"
 
 local_checks:
