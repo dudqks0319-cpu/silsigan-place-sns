@@ -11,11 +11,11 @@ Updated: 2026-07-22
 - Version: `0.1.0`
 - Working branch: `agent/external-staging-20260721`
 - Upstream branch: `origin/codex/silsigan-progress-20260710`
-- Verified source commit: `3107e15e73c94db11c46b0bca302cf3ea68ece64`
+- Verified source commit: `656eb315cbde4505b6c7db342a0185bb2762baea`
 - Working tree after the release-record commit: tracked source is clean; four local UI truth PNGs under `artifacts/ui-truth-20260722/` remain intentionally untracked and are not release inputs
 - Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
 - Final release-record commit: the docs-only commit containing this record; use the remote branch tip as the continuation point
-- Security gate: manual source/diff review, dependency audit, negative-path regressions, and high-confidence secret scan passed; optional Codex Security UI scan remains a separate review aid and is not represented as completed
+- Security gate: manual source/diff review, dependency audit, negative-path regressions, and high-confidence secret scan passed. Codex Security scan `7fe0ad74-161b-44e7-bbfb-fb0eeb07c6c2` completed 15/15 review items; its one Medium stale-client-cache finding is remediated and independently re-reviewed at the verified source commit
 - Production deploy/migration/traffic change: none
 - Deferred and disabled: ads, rewards, Q&A, live streams, social feed, demo data, Seoul realtime activation
 
@@ -53,16 +53,18 @@ Staging URLs:
 - Global D1 route reservations were recalibrated from staging evidence: the heaviest observed public query averaged 59 rows, while the previous 10,000-row high-cost weight drove the conservative ledger to 3,500,000 rows against about 87,870 actual rows. The deployed high-cost ceiling is now 500 rows and must still be reconciled through the audited admin path.
 - Background live refresh is now visible-tab-only, single-leader across same-origin tabs, non-overlapping, 60-second, and limited to places plus at most five status requests after initial load.
 - Public API cost-guard admission reuses its preloaded control row, so one request no longer performs the same `COST_GUARD_STATE` KV read twice; D1 remains the authoritative atomic reservation ledger.
+- Security-sensitive client mutations now use explicit full reconciliation before success; the low-cost `places_status` scope remains limited to four map/search/bounds/background callers, and account deletion synchronously clears owned UGC caches.
 
 ## 검증
 
 - Focused provider-budget, provider-quota, and D1 route-calibration regressions: passed.
 - TypeScript: passed.
-- OpenNext/Cloudflare build: passed, Next.js `16.2.6`, 26 pages/routes.
+- OpenNext/Cloudflare build: passed, Next.js `16.2.6`, 27 pages/routes and 148 web assets.
 - Browser smoke: passed, `65/80` API requests.
 - Real NAVER map: passed after five-second wait, no false resource fallback.
 - First immediate post-deploy smoke: failed once on a transient stale HTML/removed-chunk reference; exact root then returned the current chunk three times and the cache-busted release smoke passed. The failure is retained as rollout evidence.
-- Full verification: root `453/453` was re-run and passed on 2026-07-22 outside the loopback-restricted sandbox; mobile `4/4`, root/mobile lint and typecheck, Next.js build, WebView check, OpenNext build, and clean staging/production web/API dry-runs passed on the current change set. Added regressions prove single-leader visible-only refresh and exactly one cost-guard KV read per public request.
+- Full verification: root `454/454` was re-run and passed on 2026-07-22 outside the loopback-restricted sandbox; mobile `4/4`, root/mobile lint and typecheck, Next.js build, WebView check, OpenNext build, and clean staging/production web dry-runs passed on the current change set. Added regressions prove single-leader visible-only refresh, exactly one cost-guard KV read per public request, and full visibility-cache reconciliation after block, unblock, moderation, and account deletion.
+- Codex Security closure: the source-state PoC reproduced on `f5abc50e999d0a8f349d56326a8e9ecb4af6491e`, no longer matches the vulnerable transition on `656eb315cbde4505b6c7db342a0185bb2762baea`, and the independent post-fix re-review reports no remaining actionable finding in the scoped diff.
 - Dependency audit: no known root or mobile vulnerability.
 - High-confidence credential-prefix and provider-assignment scan: no matching file; `.env.example` is the only tracked env-shaped file.
 

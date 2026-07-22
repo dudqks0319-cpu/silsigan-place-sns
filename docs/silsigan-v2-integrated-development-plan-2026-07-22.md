@@ -8,10 +8,10 @@
 - 공개 production 출시 준비도: **55/100**
 - 권고 판정: **조건부 HOLD** — 아래 P0 게이트를 닫은 뒤 광안리 소규모 베타로 진입
 - production 변경: **별도 승인 전 금지**
-- 현재 가장 큰 결함: 실제 최근 사진이 없는데도 기본 광안리 이미지가 `최근 방금 전`인 현장 사진처럼 보이는 신뢰 훼손
+- 최근 해소한 핵심 결함: 사진 없는 live 홈의 허위 최신성, 업로드 포커스, 작성자 차단 후 stale UGC가 로컬 코드·회귀 테스트에서 수정됨. 실제 360·390·430px 및 사용자 행동 검증은 별도 증거로 남음
 - 현재 가장 큰 외부 게이트: 사람 Turnstile을 포함한 사진 전체 생명주기, 실제 WAF·비용 경보, 실기기, 법률 공개문서
 
-이 점수는 테스트 통과율이 아니라 **실제 사용자·운영·법률·production 게이트의 증거 충족률**이다. 자동 테스트 453개 통과와 production 출시 완료를 같은 의미로 사용하지 않는다.
+이 점수는 테스트 통과율이 아니라 **실제 사용자·운영·법률·production 게이트의 증거 충족률**이다. 자동 테스트 454개 통과와 production 출시 완료를 같은 의미로 사용하지 않는다.
 
 ## 1. 감사 범위와 기준점
 
@@ -21,10 +21,10 @@
 | --- | --- |
 | 권위 worktree | `.worktrees/external-staging-20260721` |
 | 현재 브랜치 | `agent/external-staging-20260721` |
-| 검증된 source commit | `3107e15e73c94db11c46b0bca302cf3ea68ece64` |
+| 검증된 source commit | `656eb315cbde4505b6c7db342a0185bb2762baea` |
 | upstream 차이 | push 뒤 원격 branch tip 일치 확인 |
 | 감사 시작 시 작업 상태 | 수정된 tracked 파일 20개, untracked 0개; historical |
-| release ledger의 최종 source commit | `3107e15e73c94db11c46b0bca302cf3ea68ece64` |
+| release ledger의 최종 source commit | `656eb315cbde4505b6c7db342a0185bb2762baea` |
 | production 변경 | 없음 |
 
 Source commit은 기능·테스트·정책 변경을 담고, 그 다음 branch tip은 이 인수인계 기록만 갱신한다. 다른 개발자는 원격 branch tip에서 시작하되 기능 회귀 증거는 위 source SHA에 결합해 판단한다.
@@ -33,7 +33,7 @@ Source commit은 기능·테스트·정책 변경을 담고, 그 다음 branch t
 
 | 증거 | 상태 | 해석 |
 | --- | --- | --- |
-| 전체 테스트 | 453/453 통과 | 현재 작업 트리의 강한 로컬 회귀 증거 |
+| 전체 테스트 | 454/454 통과 | 현재 작업 트리의 강한 로컬 회귀 증거 |
 | 모바일 테스트 | 4/4 통과 | 모바일 셸 계약 증거이며 실기기 증거는 아님 |
 | lint·typecheck·Next/OpenNext 빌드 | 통과 | 정적·빌드 게이트 통과 |
 | 의존성 감사 | 0건 기록 | package/lockfile 불변 기준의 기록이며 최종 후보에서 재확인 필요 |
@@ -44,10 +44,10 @@ Source commit은 기능·테스트·정책 변경을 담고, 그 다음 branch t
 | 390px 지도 | 현재 in-app browser에서는 안전한 fallback 표시 | 과거 실제 NAVER 지도 성공 기록과 환경이 다르므로 표준 Chrome·실기기에서 재확인 필요 |
 | 사진 업로드 | Turnstile 자동화 거부로 R2 전 중단 | 우회하지 않은 것은 적절하나, 성공 E2E는 미검증 |
 | 수동 security gate | 통과 | source/diff 검토, 비밀 패턴, 의존성, negative-path 회귀 검증 |
-| Codex Security UI diff scan | 미완료 | 독립 검토 보조 증거이며 완료로 주장하지 않음 |
-| Git commit/push | 진행 대상 | 수동 security gate와 전체 검증 뒤 수행 |
+| Codex Security UI diff scan | 완료·1건 수정 | `d7f0499..f5abc50` 15/15 검토에서 Medium 1건 발견; source `656eb315...`에서 수정하고 독립 재검토 PASS |
+| Git commit/push | source commit 완료·handoff/push 진행 | source `656eb315...` 고정; 문서 전용 commit과 원격 `0/0` 확인이 남음 |
 | 실기기·법률·운영자 승인 | 미완료 | 공개 출시 차단 |
-| 근거 문서 정합성 | P0-00 반영 | 최신 active truth와 과거 증거를 분리했고, baseline candidate와 dirty working tree를 별도 표시함. 최종 source SHA는 commit·push·원격 검증 뒤에만 기록 |
+| 근거 문서 정합성 | P0-00 반영 | 최신 active truth와 과거 증거를 분리했고, baseline candidate와 dirty working tree를 별도 표시함. source SHA는 source commit으로 고정됐고 원격 branch-tip 일치만 push 뒤 확인 |
 
 ### 1.3 감사 원칙
 
@@ -78,8 +78,8 @@ Source commit은 기능·테스트·정책 변경을 담고, 그 다음 branch t
 | 분야 | 점수 | 현재 판정 | 가장 큰 차단 요인 |
 | --- | ---: | --- | --- |
 | 마케팅 | 66/100 | 통제형 광안리 베타 준비 중 | 실사용·리텐션·커버리지 실측 없음 |
-| 디자인 | 76/100 | 시각 기반은 강하나 출시 준비 아님 | 빈 데이터가 최신 사진처럼 보이는 P0 신뢰 결함 |
-| 사용성 | 62/100 | 핵심 흐름은 이해되나 실제 행동 검증 부족 | 사진 오인, 업로드 맥락·스크롤, 실기기 접근성 |
+| 디자인 | 76/100 | P0 truth 수정 완료·실사용 증거 대기 | 3개 viewport와 실제 live 사진 없음 상태의 사람 검증 |
+| 사용성 | 62/100 | 핵심 흐름 수정 완료·실제 행동 검증 부족 | 실기기 접근성, 업로드 맥락의 실제 사용자 성공률 |
 | 개발 진행 | 77/100 | 코드 92·로컬 QA 94, 외부 게이트가 병목 | 실기기 55·release/ops 43 |
 | 법률 | 61/100 | 권리 동의 기반은 있으나 공개 약관 미완료 | 개인정보·위치·UGC·미성년자·운영자 정보 |
 | 백엔드 | 78/100 | 강한 staging/비용 방어 기반 | 사람 사진 E2E, WAF, 분산 breaker, 운영 관측 |
@@ -139,9 +139,9 @@ Source commit은 기능·테스트·정책 변경을 담고, 그 다음 branch t
 - 390px live staging은 전반적으로 정돈되어 있지만, desktop은 좁은 휴대폰 열과 큰 빈 공간으로 보여 독립 데스크톱 경험이 미완료다.
 - 일부 터치 대상은 44px 미만이고 10~11px 메타 텍스트와 낮은 대비 색이 남아 있다.
 
-### 4.2 P0 신뢰 결함
+### 4.2 해결된 P0 신뢰 결함과 남은 검증
 
-`leadPost`와 실제 사진이 없는데도 CSS 기본 배경 `/silsigan/fallback/gwangalli.png`가 나타나고 메타가 `최근 방금 전`으로 생성된다.
+이전에는 `leadPost`와 실제 사진이 없는데도 CSS 기본 배경 `/silsigan/fallback/gwangalli.png`와 `최근 방금 전` 메타가 표시됐다. 현재 source는 live에서 사진 근거가 없으면 bitmap·최신 시각·방문 판단을 숨기고 정직한 빈 상태를 사용하며, sample fallback은 현재 사진이 아님을 명시한다. 회귀 계약은 통과했지만 360·390·430px 실제 브라우저 및 사용자 오인 0건 증거는 남아 있다.
 
 - 데이터 분기와 접근성 이름: `src/components/silsigan/SilsiganRedesign.tsx:3410-3450`
 - 기본 bitmap: `src/components/silsigan/SilsiganRedesign.module.css:337-355`
@@ -229,18 +229,18 @@ Source commit은 기능·테스트·정책 변경을 담고, 그 다음 branch t
 | 개발 축 | 진행도 | 근거 |
 | --- | ---: | --- |
 | 제품 코드 | 92% | 핵심 웹·API·사진·moderation·cost guard 구현 |
-| 로컬 QA | 94% | 453/453, 모바일 4/4, lint/typecheck/build 통과 |
+| 로컬 QA | 94% | 454/454, 모바일 4/4, lint/typecheck/build 통과 |
 | Cloudflare staging | 82% | D1 0026, private R2, API/web, 지도 설정, cost guard generation 5 |
 | 모바일·실기기 | 55% | 셸 테스트는 통과, 서명 빌드·양 플랫폼 실기기 증거 부족 |
-| release·운영 | 43% | final scan, WAF, tail/alert, legal, rollback, production 승인 미완료 |
+| release·운영 | 43% | final scan은 완료됐으나 WAF, tail/alert, legal, rollback, production 승인 미완료 |
 
 ### 6.2 즉시 실행 순서
 
 1. P0 truth/scroll 회귀 테스트를 먼저 추가한다.
 2. hero empty state와 upload scroll/focus를 최소 diff로 수정한다.
 3. `P0-00 evidence-ledger reconciliation`으로 `docs/security-gate.md`, `docs/real-device-qa.md`, `release-ledger.yaml`, `RELEASE_STATUS.md`, `docs/current-release-state.md`, `docs/developer-handoff-2026-07-21.md`의 active truth를 맞춘다. 역사 기록은 지우지 말고 superseded로 표시한다.
-4. 453개 통합 테스트, 모바일 4개, lint, typecheck, Next/OpenNext build를 다시 실행한다.
-5. source/diff 수동 보안 게이트, 비밀 패턴·history 검사, 의존성 감사, negative-path 회귀를 실행한다. Codex Security UI diff scan은 독립 보조 검토로 별도 기록한다.
+4. 454개 통합 테스트, 모바일 4개, lint, typecheck, Next/OpenNext build를 다시 실행한다.
+5. source/diff 수동 보안 게이트, 비밀 패턴 검사, 의존성 감사, negative-path 회귀를 실행한다. Codex Security diff scan의 15/15 검토와 Medium 1건 수정·독립 재검토 결과를 별도 기록한다.
 6. source 변경을 먼저 커밋하고 evidence 문서에 exact source commit SHA를 넣는다.
 7. source SHA를 넣은 문서 전용 delta에 `git diff --check`·비밀 패턴 scan·정합성 검사를 다시 실행한 뒤 evidence/인수인계 커밋을 만든다.
 8. GitHub push 후 upstream `0/0`과 두 commit SHA를 ledger에 기록한다.
@@ -250,7 +250,7 @@ Source commit은 기능·테스트·정책 변경을 담고, 그 다음 branch t
 ### 6.3 개발 완료 정의
 
 - 신규·기존 테스트 전부 통과, lint/typecheck/build 통과
-- 수동 security gate에서 차단 finding 0건; Codex Security UI scan은 실행 여부와 결과를 별도 표시
+- 수동 security gate에서 미해결 actionable finding 0건; Codex Security 원본 scan finding과 후속 fix SHA를 함께 표시
 - live 390px에서 hero truth와 upload context 직접 검증
 - commit별 source SHA, test report, browser evidence가 연결됨
 - GitHub push 뒤 upstream 차이 `0/0`
@@ -372,7 +372,7 @@ external invited beta 전에 `/privacy`, `/support`, `/terms`의 live HTTPS 내�
 - upload scroll/focus/selected-place context
 - evidence-ledger active truth 정합성 복구와 historical section superseded 표시
 - 360·390·430px browser/accessibility 증거
-- full local verification, manual source/diff security gate; optional Codex Security UI diff scan
+- full local verification, manual source/diff security gate, completed Codex Security diff scan and fixed-finding evidence
 - source/evidence 두 커밋, push, upstream `0/0`
 
 Exit gate:
@@ -381,7 +381,7 @@ Exit gate:
 - [x] `docs/security-gate.md`의 이전 `422`, `docs/real-device-qa.md`의 `R2_NOT_ENABLED`/staging 미배포 문구를 historical/superseded 상태로 분리
 - [x] `release-ledger.yaml`이 committed baseline과 dirty working tree를 분리하고, 최종 source commit 뒤 candidate SHA를 갱신하도록 pending 상태를 명시
 - 신규 포함 전체 테스트, lint, typecheck, Next/OpenNext build 통과
-- manual security gate 차단 finding 0건; optional UI scan status is explicit
+- manual security gate 미해결 actionable finding 0건; 원본 scan finding과 fixed source SHA가 명시됨
 - source SHA와 증거 문서가 일치
 
 Rollback:
@@ -484,10 +484,10 @@ Rollback:
 
 | ID | 작업 | 책임 | 목표일 | 선행조건 | 완료 증거 |
 | --- | --- | --- | --- | --- | --- |
-| P0-00 | evidence-ledger 정합성 복구 | Orchestrator + Release | 2026-07-24 | P0-01~02 결과 | 6개 truth surface의 SHA·branch·dirty·453·API/R2 상태 일치 |
+| P0-00 | evidence-ledger 정합성 복구 | Orchestrator + Release | 2026-07-24 | P0-01~02 결과 | 6개 truth surface의 SHA·branch·dirty·454·API/R2 상태 일치 |
 | P0-01 | 허위 최신성 hero 제거 | Design + Frontend | 2026-07-24 | 없음 | empty-state tests + 3 viewport screenshots |
 | P0-02 | upload scroll/focus/장소 맥락 | UX + Frontend | 2026-07-24 | 없음 | cross-entry browser + screen reader 결과 |
-| P0-03 | final diff security gate | Security + Orchestrator | 2026-07-24 | P0-00~02 | source/diff, secret/history, dependency, negative-path finding 0건; optional UI scan status explicit |
+| P0-03 | final diff security gate | Security + Orchestrator | 2026-07-24 | P0-00~02 | 완료: 15/15 scan, Medium 1건 fix, 독립 재검토 PASS, secret/dependency/negative-path 통과 |
 | P0-04 | source/evidence commit·push | Orchestrator | 2026-07-24 | P0-03 | 2 SHA + upstream 0/0 |
 | P0-05 | exact SHA staging web 배포 | Frontend + Cloudflare Operator | 2026-07-25 | P0-04 | web version + source SHA + smoke |
 | P0-06 | 사람 Turnstile binary 사진 E2E | Operator + Backend | 2026-07-27 | P0-05 + 사용자 mutation 승인 | real picker, non-legacy endpoints, redacted artifact, R2/D1 0 residual |

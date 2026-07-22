@@ -5,10 +5,10 @@
 - Canonical remote branch: `codex/silsigan-progress-20260710`
 - Current authoritative worktree: `/Users/jyb-m3max/Desktop/codex/silsigan/.worktrees/external-staging-20260721`
 - Current integration branch: `agent/external-staging-20260721`
-- Verified source commit: `3107e15e73c94db11c46b0bca302cf3ea68ece64`
+- Verified source commit: `656eb315cbde4505b6c7db342a0185bb2762baea`
 - Final release-record commit: use the remote `codex/silsigan-progress-20260710` branch tip; it changes handoff records only after the source commit
 - Working tree after the release-record commit: tracked source clean; `artifacts/ui-truth-20260722/` contains four intentionally untracked local PNGs and is not a release input
-- Commit/push gate: manual source/diff security gate, secret scan, dependency audit, and negative-path regressions pass; optional Codex Security UI scan remains unclaimed
+- Commit/push gate: manual source/diff security gate, secret scan, dependency audit, and negative-path regressions pass. Codex Security scan `7fe0ad74-161b-44e7-bbfb-fb0eeb07c6c2` completed 15/15 review items, and its single Medium stale-client-cache finding is remediated and independently re-reviewed at the verified source commit
 - Release state: `staging_running_kv_remediated_photo_turnstile_smoke_pending_production_blocked`
 - Production deploy, production D1 migration, provider-source activation, and traffic promotion were not performed.
 
@@ -86,11 +86,13 @@ Do not reset, clean, or copy the primary directory wholesale. `/Users/jyb-m3max/
 - Official-source calls are guarded by persistent daily provider budgets before network access, including shared ITS traffic/CCTV accounting and a `0` kill switch.
 - Global D1 route reservations are calibrated to observed staging query cost with safety headroom; the audited 60/70/80 state machine and atomic resume predicates remain unchanged.
 - Public API admission reuses the pre-authentication cost-guard control row so each request reads the KV mirror once instead of twice.
+- Client refresh scope is explicit: only four map/search/bounds/background callers use `places_status`; creator block/unblock, both moderation-report paths, and account deletion fully reconcile visibility-dependent caches before showing success. Account deletion also clears owned report/post/question/comment/photo caches synchronously.
 
 ## Verification completed in this handoff
 
 - Focused provider-budget, provider-quota, and D1 route-calibration regressions passed. The sandbox-only full run failed four local-listen tests with `EPERM`; the authorized loopback run passed.
-- Full root suite: `453/453` passed, 0 failed, 0 skipped. A sandbox-only run failed four loopback-listen tests with `EPERM`; the authorized loopback rerun passed. Added regressions cover the truthful no-photo home state, upload focus restoration, final terms surface/URL contract, mobile policy-table containment, provider-budget boundaries, reservation-rebase safety, single-leader visible-only background refresh, and exactly one cost-guard KV read per public request.
+- Full root suite: `454/454` passed, 0 failed, 0 skipped. A sandbox-only run failed four loopback-listen tests with `EPERM`; the authorized loopback rerun passed. Added regressions cover the truthful no-photo home state, upload focus restoration, final terms surface/URL contract, mobile policy-table containment, provider-budget boundaries, reservation-rebase safety, single-leader visible-only background refresh, exactly one cost-guard KV read per public request, and full post-mutation visibility-cache reconciliation.
+- Codex Security diff scan: completed on `d7f0499ee1e8..f5abc50e999d` with 15/15 review receipts and one Medium finding. The non-mutating PoC reproduced on `f5abc50e999d0a8f349d56326a8e9ecb4af6491e`, exits nonzero on `656eb315cbde4505b6c7db342a0185bb2762baea`, and the post-fix independent review passed with no remaining actionable finding in the scoped diff.
 
 ## 2026-07-22 KV incident handoff
 
