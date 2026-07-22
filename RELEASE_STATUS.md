@@ -117,7 +117,7 @@ Staging에 존재하는 이름:
 - [ ] moderation/cost alert recipients, WAF/rate-limit, and tail evidence
 - [ ] Complete the exact-host managed Turnstile human check, then one bounded upload/moderate/read/delete cleanup smoke and re-prove R2/D1 zero residuals
 - [ ] owner-controlled domain and NAVER notification/production-origin evidence
-- [ ] signed iPhone/Android real-device QA
+- [ ] finish signed iPhone/Android real-device QA (iPhone 12 Pro development-signed build/install/launch/startup smoke passed 2026-07-23; screenshots, permissions, photo lifecycle, Android, and TestFlight archive remain)
 - [ ] named legal/operations sign-off
 - [ ] production D1/API/R2 and traffic promotion, each separately approved
 

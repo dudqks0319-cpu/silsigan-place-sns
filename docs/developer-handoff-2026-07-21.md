@@ -152,7 +152,7 @@ The current broad implementation request is not a substitute for confirmation at
 8. Keep the reconciled photo guard enabled only while its R2/D1 counters remain within bounds.
 9. After the visible Turnstile human check succeeds, run one 1 MiB-or-smaller upload/moderate/read/delete smoke and confirm zero residual R2 bytes.
 10. Complete moderation webhook, cost-alert recipient, WAF/rate-limit, and tail-redaction evidence.
-11. Run iPhone and Android real-device QA, legal/operations sign-off, and TestFlight preparation.
+11. Preserve the 2026-07-23 iPhone 12 Pro Apple Development-signed build/install/launch/startup pass, then finish screenshot-backed location, camera/library, photo lifecycle, mutation/deletion, and full-session crash QA after the user unlocks iPhone Mirroring. Android real-device QA, legal/operations sign-off, TestFlight release archive/privacy evidence, and push delivery remain separate gates.
 12. Consider production only after every P0 in `release-ledger.yaml` is closed and separately approved.
 
 ## Security gate

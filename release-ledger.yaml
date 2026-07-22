@@ -103,8 +103,8 @@ runtime_checks:
     evidence: "Staging web version ad980039-5ba0-4ffb-9616-6f60eb6aea54 and API version dc07bf4a-879a-421c-aea1-5418f9c8bc0e are deployed. The web embeds the exact staging API base, uses a visible single-leader 60-second lightweight background refresh, and the API reads the cost-guard KV mirror once per public request. Two unattended staging tabs were closed. The exposed Turnstile secret was rotated and installed in staging only without outputting the value; the retired value may remain accepted for the provider's up-to-two-hour grace period. Photo R2/D1 zero-state reconciliation passed, but the human Turnstile upload/moderate/read/delete zero-residual smoke remains pending. Production and official provider activation remain untouched"
   - name: "Capacitor real-device QA"
     target: "ios-android"
-    status: "partial_simulator_pass_real_device_blocked"
-    evidence: "The actual staging URL/origin is synchronized into both native shells. On 2026-07-20 WebView check and Android :app:lintDebug/:app:assembleDebug pass with Homebrew JDK 21, allowBackup=false, packaged backup/data-extraction exclusions, and app-scoped FileProvider paths; the debug APK SHA-256 remains 7439ae76464271f4dd26ae1ef7c4b5753b92ea52d49811b8d12244e53c4ae90f, but no Android emulator/device is attached. The last clean unsigned iOS Simulator Debug build/install/launch is the 2026-07-19 iPhone 17 evidence in artifacts/ios-simulator/staging-home.png. A 2026-07-20 rerun resolves the project and packages and validates Info.plist/PrivacyInfo.xcprivacy, but CoreSimulatorService repeatedly fails device-set allocation with Cannot allocate memory before asset compilation, including after a service-only restart. Release signing, final archive privacy report, store-console answers, push delivery, and real-device execution remain required"
+    status: "partial_ios_real_device_startup_pass"
+    evidence: "The actual staging URL/origin is synchronized into both native shells. On 2026-07-20 WebView check and Android :app:lintDebug/:app:assembleDebug pass with Homebrew JDK 21, allowBackup=false, packaged backup/data-extraction exclusions, and app-scoped FileProvider paths; the debug APK SHA-256 remains 7439ae76464271f4dd26ae1ef7c4b5753b92ea52d49811b8d12244e53c4ae90f, but no Android emulator/device is attached. On 2026-07-23 Xcode 26.3 recognized an iPhone 12 Pro running iOS 17.6.1, built an Apple Development-signed arm64 Debug app for kr.silsigan.mobile version 1.0 (1), validated its signature and exact HTTPS staging config, installed it, listed it as a developer app, launched it, and observed exact staging URL load plus WebView loaded without a startup crash for a bounded 12 seconds. Device and provisioning identifiers, tokens, coordinates, and account values are excluded from release evidence. Screenshot-backed location/camera/library/photo/user-flow QA, Android real-device QA, TestFlight release signing, final archive privacy report, store-console answers, and push delivery remain required"
 
 external_checks:
   - name: "Cloudflare read-only state"
@@ -207,7 +207,7 @@ blockers:
   - id: "P0-SILSIGAN-REAL-DEVICE-QA"
     severity: "P0"
     status: "open"
-    title: "Capacitor release signing, final privacy report, push delivery, and iPhone/Android real-device evidence are incomplete."
+    title: "iPhone startup smoke passes, but full iPhone/Android real-device flows, TestFlight release signing, final privacy report, and push delivery are incomplete."
     owner: "mobile-release"
     evidence: "docs/current-release-state.md"
     due: "before_internal_testing"

@@ -1,7 +1,7 @@
 # #실시간 real-device QA ledger
 
-Updated: 2026-07-22
-Status: staging API/web and private R2 are live, while the human Turnstile photo lifecycle, signed builds, and real devices remain pending. The last clean simulator launch and local browser account-deletion E2E passed; the current Android build recheck passes, while the 2026-07-20 iOS recheck remains environment-blocked by CoreSimulator memory allocation.
+Updated: 2026-07-23
+Status: staging API/web and private R2 are live. An Apple Development-signed staging build now compiles, installs, and launches on a physical iPhone 12 Pro running iOS 17.6.1; its console reached the exact staging URL and `WebView loaded` without a startup crash during a bounded 12-second observation. Screenshot-backed navigation, permission, camera/library, photo lifecycle, mutation, deletion, and full-session crash evidence remain pending, as do TestFlight release signing and Android real-device QA.
 
 The staging API/R2 statements below supersede the 2026-07-20 `R2_NOT_ENABLED` and API-not-deployed snapshot. Production and real-device evidence remain separate and unchanged.
 
@@ -20,9 +20,10 @@ This ledger records the device evidence required before TestFlight internal test
 | Production D1 through `0026` | current read-only classifier returns `D1_0006_NOT_APPLIED`; production apply requires separate approval after clean staging evidence |
 | Capacitor native skeleton | local iOS/Android projects, permissions, and `SilsiganShell.openSettings` adapter present |
 | Native static checks | `swiftc -parse`, plist/XML validation, WebView check, and mobile shell verify pass |
-| Native build prerequisites | Homebrew OpenJDK 21/Android SDK compile successfully; iOS project/package resolution and plist validation pass. The last clean unsigned iOS Simulator Debug build is from 2026-07-19; the 2026-07-20 rerun cannot initialize CoreSimulatorService (`Cannot allocate memory`) before asset compilation. |
+| Native build prerequisites | Homebrew OpenJDK 21/Android SDK compile successfully. On 2026-07-23 Xcode 26.3 resolved the Capacitor Swift packages and built the arm64 iPhoneOS Debug target with Apple Development automatic signing. `Info.plist`, `PrivacyInfo.xcprivacy`, bundle id `kr.silsigan.mobile`, version `1.0 (1)`, and the exact HTTPS staging URL were inspected before installation. |
 | TestFlight build | not selected |
 | iOS Simulator evidence | actual staging URL injected; the last clean iPhone 17 / iOS 26.2 Debug build, install, and launch pass is `artifacts/ios-simulator/staging-home.png`. A 2026-07-20 service-only restart did not recover CoreSimulator device-set allocation, so no newer simulator result is claimed. |
+| iPhone real-device evidence | iPhone 12 Pro / iOS 17.6.1 recognized as an Xcode destination; signed Debug build, signature validation, install, developer-app inventory, launch, exact staging URL load, network reachability, and `WebView loaded` pass. No device identifier, provisioning identifier, raw token, coordinate, or personal account value is retained in this ledger. Full UI evidence remains partial until iPhone Mirroring is user-unlocked and the matrix below is exercised. |
 | Android internal/debug build | actual staging URL injected; 2026-07-20 local debug APK regenerated with JDK 21, while no emulator/real device is attached and release signing, installation, and real-device run remain pending |
 | Android local build evidence | 2026-07-20 `:app:lintDebug` and `:app:assembleDebug` pass with packaged backup/device-transfer rules and app-scoped FileProvider; SHA-256 remains `7439ae76464221f4dd26ae1ef7c4b5753b92ea52d49811b8d12244e53c4ae90f` |
 | Local account-deletion evidence | 390x844 mock-only browser E2E passed: exact phrase gate, permanent deletion request, zero owned content, new anonymous session, and old proof rejected with 403; screenshot `artifacts/cloudflare-pages-smoke-account-deletion-final/pages-smoke-account-deletion-1784495121454.png` |
@@ -31,7 +32,7 @@ This ledger records the device evidence required before TestFlight internal test
 
 | Flow | Required evidence | Result |
 | --- | --- | --- |
-| App launch | Build number, device model, iOS version, first screen screenshot | simulator-pass; real-device pending |
+| App launch | Build number, device model, iOS version, first screen screenshot | real-device build/install/launch pass; first-screen screenshot pending |
 | Naver map display | Map or fallback map visible, marker hit-test works | simulator-render-pass; live API/real-device pending |
 | Location allow | Permission prompt, current-location marker, no raw coordinate display | blocked-staging |
 | Location deny | Region selection remains usable | blocked-staging |
@@ -45,7 +46,7 @@ This ledger records the device evidence required before TestFlight internal test
 | Report/moderation | User report succeeds, admin hide/delete affects public UI | blocked-staging |
 | Account/data deletion | Exact confirmation, owned-data purge, new session, old-proof rejection | local-browser-pass; staging/native pending |
 | Privacy redaction | No raw coordinate, original filename, token, or anonymous id visible in UI/log sample | blocked-staging |
-| Crash check | No crash during the full script | blocked-staging |
+| Crash check | No crash during the full script | startup-smoke-pass for 12 seconds through `WebView loaded`; full script pending |
 
 ## Android QA Matrix
 
