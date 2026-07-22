@@ -899,6 +899,7 @@ export default function SilsiganRedesign() {
     bounds?: MapBounds | null;
     query?: string | null;
     allowLiveRecovery?: boolean;
+    scope?: "places_status" | "full";
   } = {}) => {
     if (options.silent && hasLoadedDirectoryRef.current && !options.allowLiveRecovery) {
       return "directory" as const;
@@ -907,6 +908,7 @@ export default function SilsiganRedesign() {
     const normalizedScopedQuery = normalizePlaceSearchQuery(options.query);
     const isScopedLiveRefresh = Boolean(
       cloudflareApiConfigured
+      && options.scope === "places_status"
       && options.silent
       && hasLoadedLiveDataRef.current
     );
@@ -1407,6 +1409,7 @@ export default function SilsiganRedesign() {
         silent: true,
         bounds: activeView === "map" ? mapBoundsRef.current : null,
         query: activeView === "map" ? normalizedMapSearchQuery : null,
+        scope: "places_status",
       }).finally(() => {
         backgroundRefreshInFlightRef.current = false;
       });
@@ -1441,6 +1444,7 @@ export default function SilsiganRedesign() {
         bounds: mapBoundsRef.current,
         query: normalizedMapSearchQuery,
         allowLiveRecovery: true,
+        scope: "places_status",
       });
       setToast(result === "directory"
         ? "실시간 연결을 다시 확인했지만 보호 모드를 유지합니다. 기본 장소 위치만 표시합니다."
@@ -1468,7 +1472,7 @@ export default function SilsiganRedesign() {
 
     const timer = window.setTimeout(() => {
       lastMapBoundsFetchKeyRef.current = fetchKey;
-      void loadData({ silent: true, bounds: mapBounds, query: normalizedMapSearchQuery });
+      void loadData({ silent: true, bounds: mapBounds, query: normalizedMapSearchQuery, scope: "places_status" });
     }, 450);
 
     return () => window.clearTimeout(timer);
@@ -1490,7 +1494,7 @@ export default function SilsiganRedesign() {
     }
 
     const timer = window.setTimeout(() => {
-      void loadData({ silent: true, bounds: mapBoundsRef.current, query: normalizedMapSearchQuery });
+      void loadData({ silent: true, bounds: mapBoundsRef.current, query: normalizedMapSearchQuery, scope: "places_status" });
     }, 450);
 
     return () => window.clearTimeout(timer);
@@ -2012,8 +2016,8 @@ export default function SilsiganRedesign() {
         [place.id]: (current[place.id] ?? []).filter((item) => item.workerCommentId !== comment.workerCommentId),
       }));
       trackEvent("user_blocked", { targetType: "comment", targetId: comment.workerCommentId });
+      await loadData({ silent: true, scope: "full" });
       setToast("작성자를 차단했습니다. 이 작성자의 댓글과 게시물이 내 화면에서 숨겨집니다.");
-      await loadData({ silent: true });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "사용자 차단에 실패했습니다.");
     }
@@ -2065,9 +2069,9 @@ export default function SilsiganRedesign() {
         targetType: report.targetType,
         targetId: report.targetId,
       });
-      setToast(`${target.title}가 운영 검토 큐에 접수됐습니다.`);
       setPendingModerationTarget(null);
-      await loadData({ silent: true });
+      await loadData({ silent: true, scope: "full" });
+      setToast(`${target.title}가 운영 검토 큐에 접수됐습니다.`);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "신고 접수에 실패했습니다.");
     }
@@ -2505,8 +2509,8 @@ export default function SilsiganRedesign() {
       setUserBlocks((current) => current.some((item) => item.id === block.id) ? current : [block, ...current]);
       hidePostCreatorLocally(post);
       trackEvent("user_blocked", { targetType: "post", targetId: post.id });
+      await loadData({ silent: true, scope: "full" });
       setToast("작성자를 차단했습니다. 이 작성자의 게시물과 댓글이 내 화면에서 숨겨집니다.");
-      await loadData({ silent: true });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "사용자 차단에 실패했습니다.");
     }
@@ -2523,8 +2527,8 @@ export default function SilsiganRedesign() {
         method: "DELETE",
       });
       setUserBlocks((current) => current.filter((block) => block.id !== blockId));
+      await loadData({ silent: true, scope: "full" });
       setToast("사용자 차단을 해제했습니다.");
-      await loadData({ silent: true });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "차단 해제에 실패했습니다.");
     }
@@ -2583,6 +2587,12 @@ export default function SilsiganRedesign() {
       preferencesSyncLoadedRef.current = false;
       setHiddenCreatorNames(new Set());
       setUserBlocks([]);
+      setReports([]);
+      setMyReports([]);
+      setPosts([]);
+      setAllPosts([]);
+      setQuestions([]);
+      setMyQuestions([]);
       setWorkerCommentsByPlaceId({});
       setWorkerPhotos([]);
       setSelectedHashtagName(null);
@@ -2591,9 +2601,9 @@ export default function SilsiganRedesign() {
       setPlaceAdditionRequests([]);
       placeAdditionRequestIdsRef.current.clear();
       trackEvent("account_deletion_requested", {});
-      setToast("이 기기의 익명 활동과 사진 삭제를 완료했습니다.");
       setActiveView("home");
-      await loadData({ silent: true });
+      await loadData({ silent: true, scope: "full" });
+      setToast("이 기기의 익명 활동과 사진 삭제를 완료했습니다.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "계정 삭제에 실패했습니다.";
       setToast(message);
@@ -2654,8 +2664,9 @@ export default function SilsiganRedesign() {
         });
         trackEvent("flag_post", { postId: post.id, reason });
         hidePostCreatorLocally(post);
-        setToast("신고가 접수됐습니다. 이 작성자의 게시물을 내 화면에서 숨겼습니다.");
         setPendingFlagPost(null);
+        await loadData({ silent: true, scope: "full" });
+        setToast("신고가 접수됐습니다. 이 작성자의 게시물을 내 화면에서 숨겼습니다.");
         return;
       }
 
@@ -2668,9 +2679,9 @@ export default function SilsiganRedesign() {
       });
       trackEvent("flag_post", { postId: post.id, reason });
       hidePostCreatorLocally(post);
-      setToast(result.hidden ? "신고가 접수되어 게시물을 임시 숨김 처리했고, 이 작성자의 게시물을 내 화면에서 숨겼습니다." : `신고가 접수됐습니다. 이 작성자의 게시물을 내 화면에서 숨겼습니다. 누적 ${result.flagCount}건`);
       setPendingFlagPost(null);
-      await loadData();
+      await loadData({ scope: "full" });
+      setToast(result.hidden ? "신고가 접수되어 게시물을 임시 숨김 처리했고, 이 작성자의 게시물을 내 화면에서 숨겼습니다." : `신고가 접수됐습니다. 이 작성자의 게시물을 내 화면에서 숨겼습니다. 누적 ${result.flagCount}건`);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "신고 처리에 실패했습니다.");
     }

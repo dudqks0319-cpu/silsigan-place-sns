@@ -136,7 +136,9 @@ test("admin login and logout mutations enforce same-origin requests", () => {
 test("map search and bounds refresh only places and status after the initial live load", () => {
   const loadDataFlow = sourceBetween(redesignSource, "const loadData", "useEffect(() => {\n    const scrollTop");
 
+  assert.match(loadDataFlow, /scope\?: "places_status" \| "full"/);
   assert.match(loadDataFlow, /const isScopedLiveRefresh = Boolean/);
+  assert.match(loadDataFlow, /options\.scope === "places_status"/);
   assert.match(loadDataFlow, /options\.silent/);
   assert.match(loadDataFlow, /hasLoadedLiveDataRef\.current/);
   assert.doesNotMatch(loadDataFlow, /&& \(options\.bounds \|\| normalizedScopedQuery\)/);
@@ -145,6 +147,42 @@ test("map search and bounds refresh only places and status after the initial liv
 
   const scopedRefreshFlow = sourceBetween(loadDataFlow, "if (isScopedLiveRefresh)", "if (!options.silent)");
   assert.doesNotMatch(scopedRefreshFlow, /\/api\/reports|\/api\/sources|\/api\/hashtags|fetchWorkerPhotosForPlaces|fetchWorkerCommentsForPlaces/);
+  assert.equal(redesignSource.match(/scope: "places_status"/g)?.length, 4);
+});
+
+test("security-sensitive mutations fully reconcile visibility caches", () => {
+  const blockCommentCreator = sourceBetween(redesignSource, "const blockCommentCreator", "const openPhotoReport");
+  const reportModerationTarget = sourceBetween(redesignSource, "const reportModerationTarget", "const requestFieldVerification");
+  const blockPostCreator = sourceBetween(redesignSource, "const blockPostCreator", "const unblockUser");
+  const unblockUser = sourceBetween(redesignSource, "const unblockUser", "const voteOnReport");
+  const deleteCurrentAccount = sourceBetween(redesignSource, "const deleteCurrentAccount", "const submitPlaceAdditionRequest");
+  const flagPost = sourceBetween(redesignSource, "const flagPost", "const applyQuickReportPreset");
+
+  for (const [mutation, successToast] of [
+    [blockCommentCreator, /setToast\("작성자를 차단했습니다\. 이 작성자의 댓글과 게시물이 내 화면에서 숨겨집니다\."\)/],
+    [reportModerationTarget, /setToast\(`\$\{target\.title\}가 운영 검토 큐에 접수됐습니다\.`\)/],
+    [blockPostCreator, /setToast\("작성자를 차단했습니다\. 이 작성자의 게시물과 댓글이 내 화면에서 숨겨집니다\."\)/],
+    [unblockUser, /setToast\("사용자 차단을 해제했습니다\."\)/],
+    [deleteCurrentAccount, /setToast\("이 기기의 익명 활동과 사진 삭제를 완료했습니다\."\)/],
+  ] as const) {
+    assert.match(mutation, new RegExp(`await loadData\\(\\{ silent: true, scope: "full" \\}\\);\\s*${successToast.source}`));
+  }
+
+  assert.equal(flagPost.match(/await loadData\(\{ silent: true, scope: "full" \}\);/g)?.length, 1);
+  assert.equal(flagPost.match(/await loadData\(\{ scope: "full" \}\);/g)?.length, 1);
+  assert.match(flagPost, /await loadData\(\{ silent: true, scope: "full" \}\);\s*setToast\("신고가 접수됐습니다\. 이 작성자의 게시물을 내 화면에서 숨겼습니다\."\)/);
+  assert.match(flagPost, /await loadData\(\{ scope: "full" \}\);\s*setToast\(result\.hidden/);
+
+  for (const cacheClear of [
+    "setReports([])",
+    "setMyReports([])",
+    "setPosts([])",
+    "setAllPosts([])",
+    "setQuestions([])",
+    "setMyQuestions([])",
+  ]) {
+    assert.match(deleteCurrentAccount, new RegExp(cacheClear.replace(/[()[\]]/g, "\\$&")));
+  }
 });
 
 test("background live refresh is visible-tab-only, single-leader, and cost bounded", () => {
