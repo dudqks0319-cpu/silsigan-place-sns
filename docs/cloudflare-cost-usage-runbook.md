@@ -1,6 +1,6 @@
 # #실시간 Cloudflare cost and usage runbook
 
-Updated: 2026-07-20
+Updated: 2026-07-22
 Scope: Cloudflare-backed TestFlight MVP cost and usage monitoring for staging and production. This runbook does not authorize App Store production submission.
 
 ## Ownership
@@ -25,6 +25,27 @@ Use Cloudflare Dashboard > Manage Account > Usage & billing as the primary sourc
 
 Check staging and production separately. Staging evidence must be collected before TestFlight internal testing expands beyond the operator device.
 
+## 2026-07-22 Workers KV incident
+
+The account reached the Workers KV free-tier 50% warning before public launch. This was staging traffic, not R2 storage and not production traffic.
+
+- Two unattended staging web tabs each performed a full 30-second live refresh of about 22 API requests.
+- Each admitted public request read the same `COST_GUARD_STATE` KV mirror in both pre-authentication and reservation, even though D1 is the authoritative atomic ledger.
+- Estimated idle load was about `176 KV reads/min`: `2 tabs × 22 requests × 2 ticks/min × 2 KV reads`.
+- The web now performs background refresh only in one visible same-origin leader tab, once per 60 seconds, without overlap, using places plus at most five statuses.
+- The API passes the preloaded control row to reservation, resulting in one cost-guard KV read per public request.
+- The same idle two-tab scenario is therefore bounded near `6 KV reads/min`, excluding initial load, cron, and user actions, about `96.6%` below the incident path.
+- Close staging tabs after smoke. Do not leave a staging app tab as a monitor; use the dashboard or a bounded explicit health check.
+- Treat rolling dashboard figures as historical-window evidence. Record the post-fix slope only after enough new samples or after the daily free-tier reset at `00:00 UTC` (`09:00 KST`).
+- On secret exposure, rotate the provider secret immediately, pipe the replacement directly into Wrangler secret input, verify only the secret name and public configuration, delete temporary token files, and record the provider grace period. Never copy the replacement into chat, Git, D1, a release document, or shell history.
+
+Incident deployment evidence:
+
+- staging API version: `dc07bf4a-879a-421c-aea1-5418f9c8bc0e`
+- staging web version: `ad980039-5ba0-4ffb-9616-6f60eb6aea54`
+- root tests: `453/453`; mobile tests: `4/4`
+- production changes: none
+
 ## Baseline Thresholds
 
 Cloudflare's current official free allowances are 100,000 Workers requests per day; D1 Free allows 5 million rows read and 100,000 rows written per day; R2 Standard includes 10 GB-month storage, 1 million Class A operations, and 10 million Class B operations per month; and Images Free allows 5,000 unique transformations per month before new transformations are refused. Sources: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/), [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/), [R2 pricing](https://developers.cloudflare.com/r2/pricing/), and [Images pricing](https://developers.cloudflare.com/images/pricing/). R2 is usage-based: these allowances do not guarantee a zero invoice after activation if account-wide usage exceeds them.
@@ -36,6 +57,8 @@ The API therefore stops well before the account-wide free allowance:
 - these are not 80% of Cloudflare's full account allowances: the application intentionally stops much earlier and therefore leaves account-wide margin for staging, dashboard actions, other routes, and other products
 - D1 migration `0015_photo_storage_budget.sql` creates the atomic storage/write ledger; `0016_photo_abuse_protection.sql` adds one-use ticket claims, per-IP daily HMAC ledgers, and the global upload control row; `0017_photo_read_budget.sql` adds monthly/daily read counters and a separate global read control row; `0020_photo_transform_budget.sql` adds the account-wide Images transformation ledger; `0021_photo_read_abuse_budget.sql` adds a hashed per-IP daily read ledger; `0022_photo_storage_release_ledger.sql` fences storage release by object key and release token so retries and concurrent delete paths cannot subtract the same bytes twice; `0024_anonymous_session_cost_guard.sql` adds the exact D1-wide UTC-day session issuance budget; `0025_place_addition_requests.sql` adds an owner-only request queue with per-session 3/day and exact global 1,600/day triggers before queue growth; `0026_global_api_cost_guard.sql` adds account-wide Workers/D1 reservations, observed-usage reconciliation, one-time warning state, and audited manual control
 - the global API guard uses the configured free ceilings of 100,000 Workers requests/day, 5,000,000 D1 rows read/day, and 100,000 D1 rows written/day: 60% emits one redacted warning per UTC day, 70% degrades non-essential reads/writes, and 80% stops the final critical reserve. While the API Worker still runs, essential nationwide place/config/source/status reads switch to its in-memory, D1-write-free snapshot. If the API Worker is exhausted or unreachable, the web client instead reads `/silsigan/snapshots/nationwide-places.v1.json`, a strict allowlisted catalog containing only verified place identity, address, category, region, launch stage, and coordinates. That mode has no reports, photos, scores, observed timestamps, user data, telemetry transport, automatic API polling, realtime connection, Naver SDK, external place search, or write requests. Health probes use the public limiter and global ledger, format-valid forged anonymous proofs reserve authentication lookup cost before D1, and administrative routes verify their exact minimum role before capacity reservation
+- route reservations are deliberately higher than recent D1 Insights rather than arbitrary table-size guesses: the 2026-07-21 staging sample reported about 87.9k actual rows for the billing period and the heaviest public query averaged 59 rows/read, so standard reads reserve 100 rows and high-cost reads reserve 500 rows. This keeps roughly eightfold headroom on the observed high-cost query while avoiding the former 1,000/10,000 weights that falsely degraded staging at 3.5M reserved rows after 1,583 requests. Re-check Insights after schema, index, query, data-volume, or traffic-shape changes; raise a weight only with evidence, and never raise the 5M account ceiling
+- official-source ingestion has an additional provider-call boundary before every network request: each append-only ingestion run reserves the gateway's maximum two attempts for the Korea Standard Time calendar day, KMA/TourAPI/parking/ITS/Seoul each have deploy-time checked ceilings, ITS traffic and CCTV share one budget, malformed timestamps fail closed, and `0` is a source-specific kill switch. Provider quotas are separate from Cloudflare usage and must never be inferred from these application defaults; see `docs/source-ingestion-scheduler-runbook.md`
 - `GET/PATCH /api/admin/api-cost-guard` exposes and controls the three meters; `POST /api/admin/api-cost-guard/reconciliations` records Cloudflare Dashboard or GraphQL observations. Resume requires a reconciliation no older than 15 minutes and all reconciled meters below 70%; observed Cloudflare counts override lower application estimates. Freshness and all three meter predicates are repeated in the same D1 transaction as the resume update, closing a check-then-update race
 - staging and production must bind a dedicated `COST_GUARD_STATE` KV that is separate from ranking `CACHE`, plus distinct `ADMIN_API_RATE_LIMITER` and `HIGH_COST_API_RATE_LIMITER` bindings. A missing D1 ledger, mirror, or required limiter fails the guarded route or deployment preflight closed
 - every non-control API request, including health and CORS preflight, passes a Cloudflare binding capped at 120 requests per minute per hashed client IP before routing or D1 access; the emergency global-cost control routes instead pass the dedicated admin limiter so a public flood cannot consume operator recovery capacity. `SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED=1` makes a missing binding fail closed, ordinary JSON bodies stop at 64 KiB while streaming, and oversized multipart photo requests stop before form-data parsing even without `Content-Length`
@@ -60,6 +83,7 @@ Use these TestFlight MVP thresholds until live traffic establishes a better base
 | Workers requests | daily increase under 2x the previous daily smoke baseline | daily increase under 2x the previous production baseline | investigate route logs and recent smoke/tester activity. |
 | D1 writes | daily writes match expected smoke/tester actions | daily writes match expected tester actions | check abuse, retry loops, and duplicate ranking signals. |
 | Global Workers/D1 guard | 60% warning, 70% degradation, 80% stop | 60% warning, 70% degradation, 80% stop | inspect `GET /api/admin/api-cost-guard`; record current Cloudflare values, keep non-essential routes stopped, and resume only after a fresh below-70% reconciliation. |
+| D1 route reservation calibration | standard 100 rows/read; high-cost 500 rows/read; weekly D1 Insights comparison | same values until production observations justify a reviewed change | stop and recalibrate if the observed route average exceeds half its reservation or if reserved and actual daily totals diverge by more than 10x. |
 | R2 storage | storage growth matches uploaded photo evidence | storage growth matches accepted user photos | sample object count and verify hidden/deleted photo cleanup. |
 | App photo storage ledger | automatic stop at about 3.2 GiB; compiled cap 4 GiB | automatic stop at about 3.2 GiB; compiled cap 4 GiB | inspect `GET /api/admin/photo-cost-guard`; reconcile against R2 and re-enable only after review. |
 | App monthly photo writes | automatic stop at 12,800; compiled cap 16,000 | automatic stop at 12,800; compiled cap 16,000 | inspect retry/abuse patterns; never raise the ceiling on a free-account release. |
@@ -69,6 +93,7 @@ Use these TestFlight MVP thresholds until live traffic establishes a better base
 | Per-IP daily R2 cache misses | reject after 1,000 per UTC day; configuration may only lower this ceiling | reject after 1,000 per UTC day; configuration may only lower this ceiling | block one scraper without stopping reads for every user; inspect shared-NAT false positives before lowering. |
 | Anonymous session issuance | exact D1-wide stop after 5,000 per UTC day; `0` is an immediate kill switch | exact D1-wide stop after 5,000 per UTC day; `0` is an immediate kill switch | inspect bot/distributed signup traffic; do not rely on the POP-local edge limiter as an accounting counter. |
 | Private place-addition requests | reject after 3 per anonymous session per UTC day and stop globally at 1,600/day | reject after 3 per anonymous session per UTC day and stop globally at 1,600/day | inspect bot-generated place submissions; never bypass the queue by auto-creating public places. |
+| Official provider requests | KMA 5,000; TourAPI 500; parking 100; ITS traffic+CCTV 500 shared; Seoul 500 reservations/day, each reserving up to two attempts | same ceilings, but all production targets and scheduled source ingestion remain disabled until separate approval | lower the source variable or set it to `0`; compare the run ledger with the provider console before any resume. |
 | R2 egress | egress stays near preview/read smoke volume | egress stays near real tester view volume | check public photo proxy cache and hotlinked URLs. |
 | Cloudflare Images | transformations stay at or below the D1 ledger | transformations stay at or below the D1 ledger | check duplicate re-encodes, failed transform loops, and ledger drift. |
 | Durable Objects | room traffic follows active page sessions | room traffic follows active TestFlight sessions | check polling/WebSocket reconnect loops. |
@@ -131,6 +156,7 @@ Stop before the next TestFlight expansion when:
 - Health, forged-proof, exact-admin-role, or atomic-resume security regressions in `artifacts/security-validation-global-api-cost-guard-20260720/validation_report.md` no longer pass.
 - D1 writes grow faster than expected user actions.
 - Workers requests, errors, or CPU indicate a retry loop.
+- A provider request count cannot be reconciled to `api_ingestion_runs`, exceeds its approved key quota, or continues after its source-specific daily limit is set to `0`.
 - Durable Objects traffic suggests reconnect loops.
 - Cloudflare Images transformations repeat for the same photo without a user action.
 - Any cost/usage evidence contains secrets, payment details, raw coordinates, anonymous IDs, original filenames, or request bodies.

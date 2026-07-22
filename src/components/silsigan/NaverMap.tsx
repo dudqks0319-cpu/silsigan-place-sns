@@ -497,6 +497,7 @@ function FallbackMap<TPlace extends MapPlace>({
 function isCriticalNaverMapResource(source: string) {
   return (
     source.includes("nrbe.map.naver.net") ||
+    source.includes("nrbe.pstatic.net") ||
     source.includes("oapi.map.naver.com/openapi/v3/maps.js") ||
     source.includes("oapi.map.naver.com/v3/auth")
   );
@@ -523,7 +524,12 @@ function hasLoadedNaverMapVisual(mapElement: HTMLElement) {
 
     return (
       !source.includes("auth_fail") &&
-      (source.includes("nrbe.map.naver.net") || source.includes("static.naver.net/maps")) &&
+      (
+        source.includes("nrbe.map.naver.net")
+        || source.includes("nrbe.pstatic.net")
+        || source.includes("static.naver.net/maps")
+        || source.includes("ssl.pstatic.net/static/maps")
+      ) &&
       image.complete &&
       image.naturalWidth > 8 &&
       image.naturalHeight > 8

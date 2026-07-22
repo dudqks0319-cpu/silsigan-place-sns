@@ -17,6 +17,7 @@ const DEFAULT_V2_DECISION_REGISTER_PATH = "docs/v2-decision-register.md";
 const DEFAULT_V2_LEGAL_OPERATIONS_GATE_PATH = "docs/v2-legal-operations-gate.md";
 const DEFAULT_PRIVACY_PAGE_PATH = "src/app/privacy/page.tsx";
 const DEFAULT_SUPPORT_PAGE_PATH = "src/app/support/page.tsx";
+const DEFAULT_TERMS_PAGE_PATH = "src/app/terms/page.tsx";
 const DEFAULT_PUBLIC_ENV_PATH = ".env.example";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
 const REQUIRED_LEDGER_SECTIONS = [
@@ -251,9 +252,20 @@ const REQUIRED_SUPPORT_PAGE_TOKENS = [
   "support URL",
   "privacy policy URL",
 ];
+const REQUIRED_TERMS_PAGE_TOKENS = [
+  "이용약관",
+  "현장 정보의 한계",
+  "사용자 콘텐츠와 권리",
+  "금지되는 콘텐츠와 행위",
+  "신고, 운영 조치와 이의제기",
+  "위치 권한과 개인정보",
+  "미성년자",
+  "production",
+];
 const REQUIRED_POLICY_SUPPORT_URLS = {
   SILSIGAN_PRIVACY_POLICY_URL: "privacy_policy",
   SILSIGAN_SUPPORT_URL: "support",
+  SILSIGAN_TERMS_URL: "terms",
 };
 const REQUIRED_ENV_URLS = {
   SILSIGAN_STAGING_PAGES_URL: "staging.pages",
@@ -297,6 +309,7 @@ const v2DecisionRegisterPath = options.get("v2-decision-register") ?? DEFAULT_V2
 const v2LegalOperationsGatePath = options.get("v2-legal-operations-gate") ?? DEFAULT_V2_LEGAL_OPERATIONS_GATE_PATH;
 const privacyPagePath = options.get("privacy-page") ?? DEFAULT_PRIVACY_PAGE_PATH;
 const supportPagePath = options.get("support-page") ?? DEFAULT_SUPPORT_PAGE_PATH;
+const termsPagePath = options.get("terms-page") ?? DEFAULT_TERMS_PAGE_PATH;
 const cloudflareExternalStateReportPath = options.get("cloudflare-external-state-report") ?? options.get("external-state-report");
 const strict = flags.has("strict");
 const checks = [];
@@ -312,7 +325,7 @@ await checkStorePrivacyDisclosure(storePrivacyDisclosurePath);
 await checkRealDeviceQaLedger(realDeviceQaLedgerPath);
 await checkV2DecisionRegister(v2DecisionRegisterPath);
 await checkV2LegalOperationsGate(v2LegalOperationsGatePath);
-await checkPublicPolicySupportPages(privacyPagePath, supportPagePath);
+await checkPublicPolicyPages(privacyPagePath, supportPagePath, termsPagePath);
 checkPolicySupportUrls();
 await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
@@ -341,6 +354,7 @@ const summary = {
   v2LegalOperationsGatePath,
   privacyPagePath,
   supportPagePath,
+  termsPagePath,
   publicEnvPath,
   publicEnvUrlNames: [...publicReleaseUrlDefaults.keys()],
   policySupportUrlEnvNames: Object.keys(REQUIRED_POLICY_SUPPORT_URLS),
@@ -667,7 +681,7 @@ async function checkRealDeviceQaLedger(path) {
   recordNoSecretLikePatterns("real_device_qa.ledger.redaction", ledger, path);
 }
 
-async function checkPublicPolicySupportPages(privacyPagePath, supportPagePath) {
+async function checkPublicPolicyPages(privacyPagePath, supportPagePath, termsPagePath) {
   await checkTokenizedPage(
     privacyPagePath,
     "public_policy_page.privacy",
@@ -681,6 +695,13 @@ async function checkPublicPolicySupportPages(privacyPagePath, supportPagePath) {
     "Support page",
     REQUIRED_SUPPORT_PAGE_TOKENS,
     "Support page covers TestFlight support, device issues, content reports, deletion requests, and final URL language.",
+  );
+  await checkTokenizedPage(
+    termsPagePath,
+    "public_policy_page.terms",
+    "Terms page",
+    REQUIRED_TERMS_PAGE_TOKENS,
+    "Terms page covers beta limitations, UGC rights, prohibited conduct, appeals, location, minors, and the production boundary.",
   );
 }
 
@@ -715,6 +736,8 @@ function checkPolicySupportUrls() {
   }
 
   recordSeparatedUrls(parsedUrls, "privacy_policy", "support", "privacy policy and support URLs must be different.", "policy_url");
+  recordSeparatedUrls(parsedUrls, "privacy_policy", "terms", "privacy policy and terms URLs must be different.", "policy_url");
+  recordSeparatedUrls(parsedUrls, "support", "terms", "support and terms URLs must be different.", "policy_url");
 }
 
 function recordNoSecretLikePatterns(name, content, path) {

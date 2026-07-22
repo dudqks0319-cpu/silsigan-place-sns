@@ -91,7 +91,7 @@ export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit)
   const cloudflareRequest = cloudflareApiRequestContext(input, init);
   const boundSessionBaseUrl = cloudflareRequest?.requiresSession ? cloudflareRequest.baseUrl : null;
 
-  if (!(init?.body instanceof FormData) && !headers.has("content-type")) {
+  if (init?.body != null && !(init.body instanceof FormData) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 

@@ -215,6 +215,11 @@ type Env = {
   SILSIGAN_COST_GUARD_DEGRADE_PERCENT?: string;
   SILSIGAN_COST_GUARD_STOP_PERCENT?: string;
   SILSIGAN_SOURCE_INGESTION_SCHEDULED?: string;
+  SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT?: string;
+  SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT?: string;
+  SILSIGAN_NATIONAL_PARKING_DAILY_PROVIDER_REQUEST_LIMIT?: string;
+  SILSIGAN_ITS_DAILY_PROVIDER_REQUEST_LIMIT?: string;
+  SILSIGAN_SEOUL_REALTIME_DAILY_PROVIDER_REQUEST_LIMIT?: string;
   SILSIGAN_PHOTO_STORAGE_MAX_BYTES?: string;
   SILSIGAN_PHOTO_MONTHLY_WRITE_LIMIT?: string;
   SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT?: string;
@@ -814,6 +819,7 @@ type ApiCostGuardDecision = {
 type ApiCostGuardReservationOptions = {
   authenticationAttemptReserved?: boolean;
   criticalAdmission?: boolean;
+  control?: ApiCostGuardControlRow;
 };
 
 type ApiCostGuardReservationPlan = {
@@ -1312,6 +1318,7 @@ const realtimeEventMaximumBytes = 16 * 1024;
 const realtimeEventRetentionLimit = 50;
 const realtimeEventRetentionMs = 10 * 60_000;
 const kmaPublicationSafetyMinute = 45;
+const officialSourceMaxAttempts = 2;
 const adminRoles = ["operator", "moderator", "admin"] as const;
 const adminRoleRank: Record<AdminRole, number> = {
   operator: 1,
@@ -3013,11 +3020,12 @@ async function ingestOfficialSource(sourceKey: string, request: Request, env: En
   const requestStartedAt = Date.now();
 
   try {
+    await enforceOfficialSourceDailyRequestBudget(db, source.sourceKey, env, startedAt);
     const result = await gateway.execute(adapter, query, {
       freshTtlSeconds: Math.min(sourceTtlSeconds, 300),
       staleTtlSeconds: sourceTtlSeconds,
       timeoutMs: 5_000,
-      maxAttempts: 2,
+      maxAttempts: officialSourceMaxAttempts,
     });
     if (!result.payloadHash) {
       throw new PublicDataGatewayError("SOURCE_INVALID_RESPONSE", "출처 응답 증거값을 생성하지 못했습니다.", false);
@@ -3120,24 +3128,8 @@ async function ingestOfficialSource(sourceKey: string, request: Request, env: En
       status,
     }, { storage: "d1", ingestionRunId: runId }, 201);
   } catch (error) {
-    const finishedAt = new Date().toISOString();
-    const errorCode = error instanceof PublicDataGatewayError ? error.code : "INGESTION_FAILED";
-    await db.prepare(`
-      UPDATE api_ingestion_runs
-      SET status = 'failed', error_code = ?, finished_at = ?
-      WHERE id = ?
-    `).bind(errorCode, finishedAt, runId).run();
-    await persistD1SourceHealth(db, {
-      sourceId: source.id,
-      status: error instanceof PublicDataGatewayError && error.code === "SOURCE_QUOTA_EXCEEDED" ? "degraded" : "down",
-      message: "official source ingestion failed",
-      responseTimeMs: Date.now() - requestStartedAt,
-      checkedAt: finishedAt,
-    });
-    if (error instanceof PublicDataGatewayError) {
-      throw new HttpError(error.code === "SOURCE_QUOTA_EXCEEDED" ? 503 : 502, error.code, error.message);
-    }
-    throw error;
+    await failOfficialIngestion(db, source, runId, error, requestStartedAt);
+    throwOfficialIngestionError(error);
   }
 }
 
@@ -3175,7 +3167,12 @@ async function ingestOfficialStaticSource(
   }
 
   const gateway = new PublicDataGateway({ cache: env.CACHE });
-  const policy = { freshTtlSeconds: 300, staleTtlSeconds: 86_400, timeoutMs: 5_000, maxAttempts: 2 };
+  const policy = {
+    freshTtlSeconds: 300,
+    staleTtlSeconds: 86_400,
+    timeoutMs: 5_000,
+    maxAttempts: officialSourceMaxAttempts,
+  };
   const runId = `ingestion_${crypto.randomUUID()}`;
   const startedAt = new Date().toISOString();
   await db.prepare(`
@@ -3185,6 +3182,7 @@ async function ingestOfficialStaticSource(
   const requestStartedAt = Date.now();
 
   try {
+    await enforceOfficialSourceDailyRequestBudget(db, source.sourceKey, env, startedAt);
     let result: {
       items: StaticSourceMetadata[];
       fetchedAt: string;
@@ -3379,6 +3377,7 @@ async function ingestNationalTrafficSource(
   const requestStartedAt = Date.now();
 
   try {
+    await enforceOfficialSourceDailyRequestBudget(db, source.sourceKey, env, startedAt);
     const result = await new PublicDataGateway({ cache: env.CACHE }).execute(
       createNationalTrafficAdapter({ serviceKey, ttlSeconds: source.defaultTtlSeconds }),
       query,
@@ -3386,7 +3385,7 @@ async function ingestNationalTrafficSource(
         freshTtlSeconds: Math.min(source.defaultTtlSeconds, 300),
         staleTtlSeconds: source.defaultTtlSeconds,
         timeoutMs: 5_000,
-        maxAttempts: 2,
+        maxAttempts: officialSourceMaxAttempts,
       },
     );
     if (!result.payloadHash) {
@@ -3506,6 +3505,7 @@ async function ingestSeoulRealtimeSource(
   const requestStartedAt = Date.now();
 
   try {
+    await enforceOfficialSourceDailyRequestBudget(db, source.sourceKey, env, startedAt);
     const result = await new PublicDataGateway({ cache: env.CACHE }).execute(
       createSeoulRealtimeAdapter({
         serviceKey,
@@ -3516,7 +3516,7 @@ async function ingestSeoulRealtimeSource(
         freshTtlSeconds: Math.min(source.defaultTtlSeconds, 300),
         staleTtlSeconds: source.defaultTtlSeconds,
         timeoutMs: 5_000,
-        maxAttempts: 2,
+        maxAttempts: officialSourceMaxAttempts,
       },
     );
     if (!result.payloadHash) {
@@ -3617,6 +3617,100 @@ function requiredSourceCredential(raw: string | undefined): string {
   return credential;
 }
 
+type OfficialSourceBudgetSpec = {
+  sourceIds: string[];
+  limit: number;
+};
+
+function officialSourceBudgetSpec(sourceKey: string, env: Env): OfficialSourceBudgetSpec {
+  switch (sourceKey) {
+    case "kma_weather":
+      return {
+        sourceIds: ["source-kma-weather"],
+        limit: boundedOfficialSourceDailyLimit(env.SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT, 5_000, 5_000),
+      };
+    case "tour_api":
+      return {
+        sourceIds: ["source-tour-api"],
+        limit: boundedOfficialSourceDailyLimit(env.SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT, 500, 500),
+      };
+    case "national_parking":
+      return {
+        sourceIds: ["source-national-parking"],
+        limit: boundedOfficialSourceDailyLimit(env.SILSIGAN_NATIONAL_PARKING_DAILY_PROVIDER_REQUEST_LIMIT, 100, 500),
+      };
+    case "national_traffic":
+    case "national_cctv":
+      return {
+        sourceIds: ["source-national-traffic", "source-national-cctv"],
+        limit: boundedOfficialSourceDailyLimit(env.SILSIGAN_ITS_DAILY_PROVIDER_REQUEST_LIMIT, 500, 500),
+      };
+    case "seoul_realtime_city":
+      return {
+        sourceIds: ["source-seoul-realtime"],
+        limit: boundedOfficialSourceDailyLimit(env.SILSIGAN_SEOUL_REALTIME_DAILY_PROVIDER_REQUEST_LIMIT, 500, 500),
+      };
+    default:
+      throw new HttpError(503, "SOURCE_DAILY_REQUEST_BUDGET_UNAVAILABLE", "데이터 출처 일일 사용 한도를 확인할 수 없습니다.");
+  }
+}
+
+function boundedOfficialSourceDailyLimit(raw: string | undefined, fallback: number, ceiling: number): number {
+  if (raw === undefined || raw.trim() === "") return Math.min(fallback, ceiling);
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return 0;
+  return Math.min(parsed, ceiling);
+}
+
+export function resolveOfficialSourceQuotaWindow(startedAt: string): { dayStart: string; dayEnd: string } {
+  const startedAtMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedAtMs)) {
+    throw new HttpError(
+      503,
+      "SOURCE_DAILY_REQUEST_BUDGET_UNAVAILABLE",
+      "데이터 출처 일일 사용 한도를 확인할 수 없습니다.",
+    );
+  }
+  const koreaOffsetMs = 9 * 60 * 60 * 1_000;
+  const koreaDate = new Date(startedAtMs + koreaOffsetMs).toISOString().slice(0, 10);
+  const dayStartMs = Date.parse(`${koreaDate}T00:00:00.000Z`) - koreaOffsetMs;
+  return {
+    dayStart: new Date(dayStartMs).toISOString(),
+    dayEnd: new Date(dayStartMs + 24 * 60 * 60 * 1_000).toISOString(),
+  };
+}
+
+async function enforceOfficialSourceDailyRequestBudget(
+  db: D1Database,
+  sourceKey: string,
+  env: Env,
+  startedAt: string,
+): Promise<void> {
+  const spec = officialSourceBudgetSpec(sourceKey, env);
+  const { dayStart, dayEnd } = resolveOfficialSourceQuotaWindow(startedAt);
+  const placeholders = spec.sourceIds.map(() => "?").join(", ");
+  const reserved = await db.prepare(`
+    SELECT COUNT(*) AS runCount
+    FROM api_ingestion_runs
+    WHERE source_id IN (${placeholders})
+      AND started_at >= ?
+      AND started_at < ?
+      AND (
+        status <> 'quota_exceeded'
+        OR error_code IS NULL
+        OR error_code <> 'SOURCE_DAILY_REQUEST_BUDGET_EXHAUSTED'
+      )
+  `).bind(...spec.sourceIds, dayStart, dayEnd).first<{ runCount: number }>();
+  const reservedAttempts = Number(reserved?.runCount ?? 0) * officialSourceMaxAttempts;
+  if (spec.limit === 0 || reservedAttempts > spec.limit) {
+    throw new HttpError(
+      429,
+      "SOURCE_DAILY_REQUEST_BUDGET_EXHAUSTED",
+      "공공데이터 일일 안전 한도에 도달해 다음 갱신을 중단했습니다.",
+    );
+  }
+}
+
 function requiredSourceBbox(body: JsonObject): { minLng: number; maxLng: number; minLat: number; maxLat: number } {
   const bbox = optionalSourceBbox(body);
   if (!bbox) throw new HttpError(400, "VALIDATION_ERROR", "bbox 좌표가 필요합니다.");
@@ -3649,11 +3743,14 @@ async function failOfficialIngestion(
 ): Promise<void> {
   const finishedAt = new Date().toISOString();
   const errorCode = error instanceof PublicDataGatewayError || error instanceof HttpError ? error.code : "INGESTION_FAILED";
+  const status = errorCode === "SOURCE_QUOTA_EXCEEDED" || errorCode === "SOURCE_DAILY_REQUEST_BUDGET_EXHAUSTED"
+    ? "quota_exceeded"
+    : "failed";
   await db.prepare(`
     UPDATE api_ingestion_runs
-    SET status = 'failed', error_code = ?, finished_at = ?
+    SET status = ?, error_code = ?, finished_at = ?
     WHERE id = ?
-  `).bind(errorCode, finishedAt, runId).run();
+  `).bind(status, errorCode, finishedAt, runId).run();
   if (!(error instanceof HttpError)) {
     await persistD1SourceHealth(db, {
       sourceId: source.id,
@@ -6772,6 +6869,11 @@ function apiCostRouteWeight(routeClass: ApiCostRouteClass): {
   highCost: boolean;
   mutation: boolean;
 } {
+  // These are conservative reservations, not provider-reported usage. Staging
+  // D1 Insights on 2026-07-21 showed the highest public query averaging 59
+  // rows read. Keep at least ~8x headroom for high-cost routes without using
+  // the former 1,000/10,000 estimates that stopped staging at 3.5M reserved
+  // rows while Cloudflare reported only ~87.9k actual rows for the period.
   switch (routeClass) {
     case "CONTROL":
       return { admittedRequests: 0, workersRequests: 0, rowsRead: 0, rowsWritten: 0, critical: false, highCost: false, mutation: false };
@@ -6781,17 +6883,17 @@ function apiCostRouteWeight(routeClass: ApiCostRouteClass): {
       return { admittedRequests: 0, workersRequests: 0, rowsRead: 8, rowsWritten: 0, critical: false, highCost: false, mutation: false };
     case "ESSENTIAL_PUBLIC":
     case "STANDARD_PUBLIC_READ":
-      return { admittedRequests: 1, workersRequests: 1, rowsRead: 1_000, rowsWritten: 2, critical: false, highCost: false, mutation: false };
+      return { admittedRequests: 1, workersRequests: 1, rowsRead: 100, rowsWritten: 2, critical: false, highCost: false, mutation: false };
     case "HIGH_COST_READ":
-      return { admittedRequests: 1, workersRequests: 1, rowsRead: 10_000, rowsWritten: 2, critical: false, highCost: true, mutation: false };
+      return { admittedRequests: 1, workersRequests: 1, rowsRead: 500, rowsWritten: 2, critical: false, highCost: true, mutation: false };
     case "PERSONAL_READ":
-      return { admittedRequests: 1, workersRequests: 1, rowsRead: 2_000, rowsWritten: 2, critical: false, highCost: false, mutation: false };
+      return { admittedRequests: 1, workersRequests: 1, rowsRead: 200, rowsWritten: 2, critical: false, highCost: false, mutation: false };
     case "USER_WRITE":
-      return { admittedRequests: 1, workersRequests: 1, rowsRead: 2_000, rowsWritten: 32, critical: false, highCost: false, mutation: true };
+      return { admittedRequests: 1, workersRequests: 1, rowsRead: 250, rowsWritten: 32, critical: false, highCost: false, mutation: true };
     case "HIGH_COST_WRITE":
-      return { admittedRequests: 1, workersRequests: 1, rowsRead: 5_000, rowsWritten: 64, critical: false, highCost: true, mutation: true };
+      return { admittedRequests: 1, workersRequests: 1, rowsRead: 500, rowsWritten: 64, critical: false, highCost: true, mutation: true };
     case "CRITICAL_WRITE":
-      return { admittedRequests: 1, workersRequests: 1, rowsRead: 2_000, rowsWritten: 32, critical: true, highCost: false, mutation: true };
+      return { admittedRequests: 1, workersRequests: 1, rowsRead: 250, rowsWritten: 32, critical: true, highCost: false, mutation: true };
   }
 }
 
@@ -6826,7 +6928,7 @@ async function prepareApiCostGuardBeforeAuthentication(
   }
 
   if (routeClass === "ESSENTIAL_PUBLIC" || routeClass === "STANDARD_PUBLIC_READ" || routeClass === "HIGH_COST_READ") {
-    const reservation = await reserveApiCostGuard(routeClass, env, ctx);
+    const reservation = await reserveApiCostGuard(routeClass, env, ctx, { control });
     return { fallbackToSnapshot: reservation.fallbackToSnapshot, reserveAfterAuthentication: false };
   }
   return { fallbackToSnapshot: false, reserveAfterAuthentication: true };
@@ -6872,7 +6974,7 @@ async function reserveApiCostGuard(
   options: ApiCostGuardReservationOptions = {},
 ): Promise<{ fallbackToSnapshot: boolean }> {
   const db = requireD1(env);
-  const control = await readApiCostGuardControl(env);
+  const control = options.control ?? await readApiCostGuardControl(env);
   const plan = createApiCostGuardReservationPlan(db, routeClass, env, options);
   if (control.mode !== "running" && !plan.criticalAdmission) {
     return apiCostGuardBlockedReservation(routeClass, control);
@@ -7454,6 +7556,8 @@ async function recordApiCostGuardReconciliation(request: Request, env: Env, ctx:
     "observedAt",
     "source",
     "note",
+    "rebaseReservedEstimates",
+    "expectedGeneration",
   ]);
   const observedWorkersRequests = integerField(body, "observedWorkersRequests", 0, workersDailyRequestFreeSafetyCeiling * 10, 0);
   const observedD1RowsRead = integerField(body, "observedD1RowsRead", 0, d1DailyReadFreeSafetyCeiling * 10, 0);
@@ -7469,23 +7573,65 @@ async function recordApiCostGuardReconciliation(request: Request, env: Env, ctx:
   if (note.length < 5) {
     throw new HttpError(400, "API_COST_GUARD_NOTE_REQUIRED", "사용량 대조 메모를 5자 이상 입력해 주세요.");
   }
+  const rebaseReservedEstimates = body.rebaseReservedEstimates === undefined
+    ? false
+    : booleanField(body, "rebaseReservedEstimates");
+  const expectedGeneration = body.expectedGeneration === undefined
+    ? null
+    : integerField(body, "expectedGeneration", 1, Number.MAX_SAFE_INTEGER, 1);
   const dayUtc = normalizedObservedAt.slice(0, 10);
   const createdAt = new Date().toISOString();
-  await runAtomicD1Batch(db, [
+  let reservationBefore: ApiCostGuardDailyRow | null = null;
+  if (rebaseReservedEstimates) {
+    if (expectedGeneration === null) {
+      throw new HttpError(
+        400,
+        "API_COST_GUARD_REBASE_GENERATION_REQUIRED",
+        "예약 원장 재기준화에는 최신 비용 보호 세대번호가 필요합니다.",
+      );
+    }
+    if (dayUtc !== utcDayKey(new Date()) || Date.now() - observedAtMs > apiCostGuardReconciliationFreshnessMs) {
+      throw new HttpError(
+        400,
+        "API_COST_GUARD_REBASE_OBSERVATION_STALE",
+        "예약 원장 재기준화에는 15분 이내의 당일 Cloudflare 관측값이 필요합니다.",
+      );
+    }
+    const control = await readApiCostGuardControlFromD1(db);
+    if (control.generation !== expectedGeneration) {
+      throw new HttpError(
+        409,
+        "API_COST_GUARD_GENERATION_CONFLICT",
+        "비용 보호 상태가 변경되었습니다. 최신 상태를 다시 확인해 주세요.",
+      );
+    }
+    if (control.mode === "running") {
+      throw new HttpError(
+        409,
+        "API_COST_GUARD_REBASE_NOT_ALLOWED",
+        "예약 원장은 비용 보호가 중단 또는 축소된 동안에만 재기준화할 수 있습니다.",
+      );
+    }
+    reservationBefore = await readApiCostGuardDaily(db, dayUtc);
+  }
+
+  const adminSubjectValue = adminSubject(request);
+  const reconciliationId = `api_cost_reconcile_${crypto.randomUUID()}`;
+  const statements: D1PreparedStatement[] = [
     db.prepare(
       `INSERT INTO api_cost_guard_reconciliations (
          id, day_utc, observed_workers_requests, observed_d1_rows_read, observed_d1_rows_written,
          observed_at, source, admin_subject, note, created_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      `api_cost_reconcile_${crypto.randomUUID()}`,
+      reconciliationId,
       dayUtc,
       observedWorkersRequests,
       observedD1RowsRead,
       observedD1RowsWritten,
       normalizedObservedAt,
       source,
-      adminSubject(request),
+      adminSubjectValue,
       note,
       createdAt,
     ),
@@ -7499,7 +7645,58 @@ async function recordApiCostGuardReconciliation(request: Request, env: Env, ctx:
          observed_rows_written = MAX(api_cost_guard_daily.observed_rows_written, excluded.observed_rows_written),
          updated_at = excluded.updated_at`,
     ).bind(dayUtc, observedWorkersRequests, observedD1RowsRead, observedD1RowsWritten, createdAt),
-  ], "API_COST_GUARD_RECONCILIATION_UNAVAILABLE", "Cloudflare 사용량 대조를 안전하게 저장할 수 없습니다.");
+  ];
+  let rebaseAuditId: string | null = null;
+  if (rebaseReservedEstimates && expectedGeneration !== null) {
+    rebaseAuditId = `admin_${crypto.randomUUID()}`;
+    const rebaseReason = [
+      "rebase_reserved_estimates=1",
+      `reserved_workers_before=${reservationBefore?.reservedWorkersRequests ?? 0}`,
+      `reserved_rows_read_before=${reservationBefore?.reservedRowsRead ?? 0}`,
+      `reserved_rows_written_before=${reservationBefore?.reservedRowsWritten ?? 0}`,
+      `source=${source}`,
+    ].join(";");
+    statements.push(
+      db.prepare(
+        `UPDATE api_cost_guard_daily
+         SET reserved_workers_requests = observed_workers_requests,
+             reserved_rows_read = observed_rows_read,
+             reserved_rows_written = observed_rows_written,
+             updated_at = ?
+         WHERE day_utc = ?
+           AND EXISTS (
+             SELECT 1 FROM api_cost_guard_control
+             WHERE id = 1 AND generation = ? AND mode <> 'running'
+           )`,
+      ).bind(createdAt, dayUtc, expectedGeneration),
+      db.prepare(
+        `INSERT INTO admin_actions (
+           id, admin_subject, action_type, target_type, target_id, reason, created_at
+         )
+         SELECT ?, ?, 'api_cost_guard_reconciliation', 'api_cost_guard', 'global', ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM api_cost_guard_control
+           WHERE id = 1 AND generation = ? AND mode <> 'running'
+         )`,
+      ).bind(rebaseAuditId, adminSubjectValue, rebaseReason, createdAt, expectedGeneration),
+    );
+  }
+  await runAtomicD1Batch(
+    db,
+    statements,
+    "API_COST_GUARD_RECONCILIATION_UNAVAILABLE",
+    "Cloudflare 사용량 대조를 안전하게 저장할 수 없습니다.",
+  );
+  if (rebaseAuditId) {
+    const audit = await db.prepare("SELECT id FROM admin_actions WHERE id = ?").bind(rebaseAuditId).first<{ id: string }>();
+    if (!audit) {
+      throw new HttpError(
+        409,
+        "API_COST_GUARD_GENERATION_CONFLICT",
+        "비용 보호 상태가 변경되었습니다. 최신 상태를 다시 확인해 주세요.",
+      );
+    }
+  }
 
   if (dayUtc === utcDayKey(new Date())) {
     const row = await readApiCostGuardDaily(db, dayUtc);

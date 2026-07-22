@@ -3,6 +3,7 @@
 ## Status And Scope
 
 - 상태: `draft`. 이 문서는 현재 저장소 구현을 기준으로 작성한 제출 초안이며 App Store Connect 또는 Google Play Console에 제출했다는 증거가 아닙니다.
+- 정책 표면 버전: `privacy-beta-2026-07-22-v1`, `terms-beta-2026-07-22-v1`, `support-beta-2026-07-22-v1`. 2026-07-22는 내부 베타 적용일이며 외부 공개 효력 발생일이 아닙니다.
 - 범위: iOS/Android 네이티브 셸, 웹 앱, Worker API, D1/R2 및 현재 포함된 SDK입니다.
 - 출시 전 모바일 릴리스 담당자와 `legal-safety` named reviewer가 실제 빌드, 제3자 SDK, 처리업체 계약 및 공개 UGC 동작을 다시 대조해야 합니다.
 - 광고, 데이터 판매 및 제3자 광고 추적은 현재 범위에 없으며 `tracking`은 비활성 상태로 신고하는 초안입니다.
@@ -24,6 +25,28 @@
 `Linked`는 안정적인 익명 세션과 연결될 가능성을 기준으로 보수적으로 작성했습니다. 공개 UGC 노출과 서비스 처리업체 전송이 각 스토어의 “공유” 정의에 해당하는지는 최종 법무 검토에서 확정해야 하며, 이 초안만으로 “공유하지 않음”을 확정하지 않습니다.
 
 사진 권한 확인은 익명 행위자와 현재 `community` 정책 버전의 약관 이력으로 중복 없이 기록됩니다. 이 기록은 사용자의 확인 사실을 남길 뿐 실제 저작권 보유를 자동 증명하지 않으며, 최종 문구·철회·분쟁 절차는 named `legal-safety` 검토 전까지 승인본으로 취급하지 않습니다.
+
+## Controller, Processor And Transfer Review
+
+- 운영자의 법적 명칭·주소·대표 연락처, 개인정보 보호책임자와 검증된 권리 요청 채널은 아직 입력되지 않았습니다. 임의 값을 만들지 않으며, 확정 전 외부 TestFlight와 production 제출을 차단합니다.
+- Cloudflare Workers, D1, R2, KV는 서비스 제공과 보안·운영을 위한 처리업체 후보입니다. 실제 계약 주체, DPA, 처리 국가·지역, 이전 일시·방법, 보유 기간과 삭제 설정을 계약 및 runtime 증거로 대조해야 합니다.
+- Cloudflare 처리가 개인정보 보호법상 위탁 또는 국외 이전에 해당하는지, 필요한 고지·동의·계약·보호조치와 이용자의 거부 방법은 named `legal-safety` reviewer가 확정해야 합니다.
+- 공개 UGC 표시가 각 스토어의 “공유” 정의에 해당하는지는 App Store Connect 및 Google Play Console의 최신 정의와 실제 동작을 기준으로 별도 판정합니다.
+
+## Retention, Deletion And Rights
+
+| Data class | Current product behavior | External release requirement |
+| --- | --- | --- |
+| field reports | 기본 3시간 뒤 공개 목록에서 제외 | 비공개 전환 뒤 D1 물리 삭제 시점과 최대 보유 기간 확정 |
+| photo variants | 승인된 재인코딩본만 R2 저장, 삭제 시 공개 중단·object 정리 | backup/cache 포함 삭제 SLA와 예외 사유 확정 |
+| comments and reports | 작성자·운영 조치로 숨김·복원·삭제 가능 | 분쟁·신고별 최대 보유 기간과 파기 주기 확정 |
+| anonymous identifier | 기능 제공·오남용 방지·집계에 사용 | 마지막 활동 기준 만료, 기기 변경, 계정 연결·탈퇴 처리 확정 |
+| diagnostics and audit | redacted 최소 이벤트만 처리 | log별 보유 기간, 접근자, 자동 파기 증거 확정 |
+
+- 열람, 정정, 삭제, 처리정지, 동의 철회와 계정·익명 활동 삭제를 접수할 검증된 채널, 최소 본인 확인, 처리 결과와 이의제기 절차가 필요합니다.
+- 공개 노출 중단, D1 상태 갱신, R2 object 정리, KV/cache 무효화는 각각 증거를 남기며 한 단계의 성공을 전체 삭제로 보고하지 않습니다.
+- 만 14세 미만 이용자를 대상으로 하지 않습니다. 연령 확인, 법정대리인 동의·확인·철회 및 삭제 절차가 확정되기 전에는 해당 이용자의 개인정보를 의도적으로 수집하지 않습니다.
+- 위치정보법상 개인위치정보사업 또는 위치기반서비스 해당 여부, 별도 약관·신고·동의 의무는 named reviewer의 법적 판단 전까지 외부 위치 기반 출시 차단 조건입니다.
 
 ## Apple App Privacy
 
@@ -49,11 +72,14 @@
 
 ## Console Checklist
 
-1. 릴리스 후보 아카이브와 APK/AAB에서 개인정보 manifest 및 백업 규칙 포함을 확인합니다.
-2. Xcode privacy report와 Google Play SDK Index 결과를 이 문서의 Data Inventory와 대조합니다.
-3. App Store Connect App Privacy와 Google Play Console Data safety의 스크린샷 또는 내보낸 증거를 릴리스 증거 폴더에 보관합니다.
-4. `real-device` QA에서 위치 허용·거부, 사진 선택·취소, 삭제 요청, 신고·숨김 및 백업 복원 경계를 검증합니다.
-5. 모바일 릴리스 담당자와 named `legal-safety` reviewer가 날짜·이름·결론을 기록합니다.
+1. 운영자 법적 정보, 개인정보 보호책임자, 권리 요청 채널과 공개 `/privacy`, `/support`, `/terms` HTTPS URL을 확정합니다.
+2. Cloudflare 계약·처리 지역과 실제 D1/R2/KV/Workers 설정을 대조하고 위탁·국외 이전 분류를 기록합니다.
+3. 릴리스 후보 아카이브와 APK/AAB에서 개인정보 manifest 및 백업 규칙 포함을 확인합니다.
+4. Xcode privacy report와 Google Play SDK Index 결과를 이 문서의 Data Inventory와 대조합니다.
+5. App Store Connect App Privacy와 Google Play Console Data safety의 스크린샷 또는 내보낸 증거를 릴리스 증거 폴더에 보관합니다.
+6. `real-device` QA에서 위치 허용·거부, 사진 선택·취소, 삭제 요청, 신고·숨김·이의제기 및 백업 복원 경계를 검증합니다.
+7. 보유 기간, 위치정보법 적용 여부, 미성년자 절차와 UGC moderation SLA를 공개 정책·운영 runbook과 대조합니다.
+8. 모바일 릴리스 담당자와 named `legal-safety` reviewer가 날짜·이름·결론을 기록합니다.
 
 ## Stop Conditions
 
@@ -62,4 +88,7 @@
 - tracking 또는 광고 SDK가 켜졌는데 이 문서와 콘솔 답변이 갱신되지 않았으면 제출을 중단합니다.
 - 앱 데이터가 Android cloud backup 또는 device transfer에 포함되면 배포를 중단합니다.
 - named `legal-safety` 검토, `real-device` QA 및 스토어별 최종 확인이 없으면 이 `draft`를 승인본으로 취급하지 않습니다.
+- 운영자 법적 정보, 개인정보 보호책임자·권리 요청 채널, 항목별 보유·파기 기간, Cloudflare 위탁·국외 이전 분류가 비어 있으면 제출을 중단합니다.
+- 위치정보법 적용 여부, 미성년자 절차, UGC 신고·이의제기 담당자와 SLA가 승인되지 않으면 외부 위치·UGC 기능을 활성화하지 않습니다.
+- `/privacy`, `/support`, `/terms`가 서로 구분된 최종 HTTPS URL로 공개되지 않거나 문서 버전·효력 발생일이 일치하지 않으면 제출을 중단합니다.
 - 운영 앱의 데이터 흐름이 이 문서와 달라지면 수집을 중단하거나 고지·동의를 먼저 갱신합니다.

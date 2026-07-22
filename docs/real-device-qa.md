@@ -1,7 +1,9 @@
 # #실시간 real-device QA ledger
 
-Updated: 2026-07-20
-Status: last clean simulator launch and local browser account-deletion E2E passed; current Android build recheck passes, while the 2026-07-20 iOS recheck is environment-blocked by CoreSimulator memory allocation. Live API/R2, signed builds, and real devices remain blocked.
+Updated: 2026-07-22
+Status: staging API/web and private R2 are live, while the human Turnstile photo lifecycle, signed builds, and real devices remain pending. The last clean simulator launch and local browser account-deletion E2E passed; the current Android build recheck passes, while the 2026-07-20 iOS recheck remains environment-blocked by CoreSimulator memory allocation.
+
+The staging API/R2 statements below supersede the 2026-07-20 `R2_NOT_ENABLED` and API-not-deployed snapshot. Production and real-device evidence remain separate and unchanged.
 
 ## Scope
 
@@ -11,9 +13,9 @@ This ledger records the device evidence required before TestFlight internal test
 
 | Item | Current state |
 | --- | --- |
-| Staging Pages URL | `https://silsigan-web-staging.dudqks0319.workers.dev`; visible nationwide fallback-data UI confirmed |
-| Staging Worker API URL | missing; `silsigan-api-staging` is not deployed |
-| R2 staging bucket visibility | blocked; account check returns `R2_NOT_ENABLED` until the user completes payment/terms checkout and final activation |
+| Staging Pages URL | `https://silsigan-web-staging.dudqks0319.workers.dev`; live API mode reverified |
+| Staging Worker API URL | `https://silsigan-api-staging.dudqks0319.workers.dev`; live |
+| R2 staging bucket visibility | private bucket `silsigan-photos-staging`; `r2.dev` disabled, no direct custom domain, last reconciled size `0 B`. Human Turnstile upload/moderate/read/delete and zero-residual proof remain pending |
 | Staging D1 through `0026` | verified through `0026`; Wrangler pending 0 and boundary/registry/core seed evidence pass |
 | Production D1 through `0026` | current read-only classifier returns `D1_0006_NOT_APPLIED`; production apply requires separate approval after clean staging evidence |
 | Capacitor native skeleton | local iOS/Android projects, permissions, and `SilsiganShell.openSettings` adapter present |

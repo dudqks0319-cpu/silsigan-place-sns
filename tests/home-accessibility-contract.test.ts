@@ -17,18 +17,21 @@ function sourceBetween(source: string, startMarker: string, endMarker: string): 
   return source.slice(startIndex, endIndex);
 }
 
-test("home leads with a photo decision card and both primary actions", () => {
+test("home leads with a truthful photo evidence card and both primary actions", () => {
   const homeScreen = sourceBetween(redesignSource, "function HomeScreen({", "function SearchScreen");
   const photoIndex = homeScreen.indexOf('className={styles.photoLeadCard}');
   const decisionHeroIndex = homeScreen.indexOf('className={styles.homeDecisionHero}');
   const weatherIndex = homeScreen.indexOf('className={styles.homeWeather}');
 
   assert.notEqual(photoIndex, -1);
-  assert.ok(photoIndex < decisionHeroIndex, "recent photo must precede the explanatory hero");
-  assert.ok(photoIndex < weatherIndex, "recent photo must precede weather details");
-  assert.match(homeScreen, /photoLeadDecision/);
-  assert.match(homeScreen, /최근 \$\{leadPost \? minutesAgo\(leadPost\.createdAt\) : "방금 전"\}/);
-  assert.match(homeScreen, /실시간 사진 보기/);
+  assert.ok(photoIndex < decisionHeroIndex, "photo evidence must precede the explanatory hero");
+  assert.ok(photoIndex < weatherIndex, "photo evidence must precede weather details");
+  assert.match(homeScreen, /dataMode === "live" && <span className=\{styles\.photoLeadDecision\}>/);
+  assert.match(homeScreen, /최근 \$\{leadPost \? minutesAgo\(leadPost\.createdAt\) : "시각 확인 필요"\}/);
+  assert.doesNotMatch(homeScreen, /"방금 전"/);
+  assert.match(homeScreen, /아직 최근 현장 사진이 없습니다/);
+  assert.match(homeScreen, /예시 이미지 · 현재 사진 아님/);
+  assert.match(homeScreen, /사진 근거 보기/);
   assert.match(homeScreen, /지금컷 올리기/);
 });
 

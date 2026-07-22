@@ -580,12 +580,57 @@ const notificationEnabledKey = "silsigan.notificationEnabled.v1";
 const firstVisitSeenKey = "silsigan.firstVisitSeen.v1";
 const FUTURE_TIMESTAMP_TOLERANCE_MS = 2 * 60_000;
 const initialDataFetchTimeoutMs = 6_000;
-const workerPhotoPlaceScopeLimit = 20;
+const workerPhotoPlaceScopeLimit = 5;
 const workerPhotoLimitPerPlace = 12;
+const backgroundLiveRefreshIntervalMs = 60_000;
+const backgroundLiveRefreshLeaseMs = 90_000;
+const backgroundLiveRefreshLeaseKey = "silsigan.liveRefreshLeader.v1";
 // 운영 캠페인과 현장 질문은 서버의 기간·지역·승인 상태가 연결될 때까지 공개하지 않습니다.
 // 오래된 정적 fixture를 남겨 두면 기능 flag를 실수로 켰을 때 과거 이벤트가 재노출될 수 있습니다.
 const challenges: Challenge[] = [];
 const fieldQuests: FieldQuest[] = [];
+
+function tryClaimLiveRefreshLeadership(tabId: string, now = Date.now()): boolean {
+  try {
+    const currentRaw = window.localStorage.getItem(backgroundLiveRefreshLeaseKey);
+    if (currentRaw) {
+      const current = JSON.parse(currentRaw) as { tabId?: unknown; expiresAt?: unknown };
+      if (
+        typeof current.tabId === "string"
+        && current.tabId !== tabId
+        && typeof current.expiresAt === "number"
+        && current.expiresAt > now
+      ) {
+        return false;
+      }
+    }
+
+    window.localStorage.setItem(backgroundLiveRefreshLeaseKey, JSON.stringify({
+      tabId,
+      expiresAt: now + backgroundLiveRefreshLeaseMs,
+    }));
+    const persisted = JSON.parse(window.localStorage.getItem(backgroundLiveRefreshLeaseKey) ?? "null") as {
+      tabId?: unknown;
+    } | null;
+    return persisted?.tabId === tabId;
+  } catch {
+    // 비용이 발생하는 백그라운드 갱신은 리더 상태를 증명하지 못하면 실행하지 않습니다.
+    return false;
+  }
+}
+
+function releaseLiveRefreshLeadership(tabId: string): void {
+  try {
+    const current = JSON.parse(window.localStorage.getItem(backgroundLiveRefreshLeaseKey) ?? "null") as {
+      tabId?: unknown;
+    } | null;
+    if (current?.tabId === tabId) {
+      window.localStorage.removeItem(backgroundLiveRefreshLeaseKey);
+    }
+  } catch {
+    // 만료 시간이 지나면 다른 탭이 안전하게 리더를 인계받습니다.
+  }
+}
 
 function isChallengeActive(challenge: Pick<Challenge, "startsAt" | "endsAt">, now = new Date()) {
   return isDateRangeActive(challenge.startsAt, challenge.endsAt, now);
@@ -698,6 +743,8 @@ export default function SilsiganRedesign() {
   const previousMapSearchQueryRef = useRef("");
   const hasLoadedLiveDataRef = useRef(false);
   const hasLoadedDirectoryRef = useRef(false);
+  const backgroundRefreshInFlightRef = useRef(false);
+  const workerMediaLoadingPlaceIdsRef = useRef<Set<string>>(new Set());
   const preferencesSyncLoadedRef = useRef(false);
   const [mapPreviewPlaceId, setMapPreviewPlaceId] = useState("");
   const [mapLocationPermission, setMapLocationPermission] = useState<LocationPermissionState>("idle");
@@ -856,6 +903,42 @@ export default function SilsiganRedesign() {
     if (options.silent && hasLoadedDirectoryRef.current && !options.allowLiveRecovery) {
       return "directory" as const;
     }
+
+    const normalizedScopedQuery = normalizePlaceSearchQuery(options.query);
+    const isScopedLiveRefresh = Boolean(
+      cloudflareApiConfigured
+      && options.silent
+      && hasLoadedLiveDataRef.current
+    );
+
+    if (isScopedLiveRefresh) {
+      try {
+        const scopedPlaces = await fetchJsonWithTimeout<WorkerPlace[]>(
+          cloudflareApiUrl(buildScopedApiPath("/api/places", {
+            regionId: activeDataRegionId,
+            limit: 100,
+            bbox: options.bounds ? mapBoundsToBboxParam(options.bounds) : undefined,
+            q: normalizedScopedQuery,
+          })),
+        );
+        const mappedPlaces = mapPlaces(workerPlacesToAppPlaces(scopedPlaces), []);
+        const scopedStatuses = await fetchWorkerStatusesForPlaces(mappedPlaces.map((place) => place.id));
+
+        setPlaces(mappedPlaces);
+        setPlaceStatuses((current) => ({ ...current, ...scopedStatuses }));
+        setSelectedPlaceId((current) => mappedPlaces.some((place) => place.id === current)
+          ? current
+          : mappedPlaces[0]?.id ?? "");
+        setMapPreviewPlaceId((current) => mappedPlaces.some((place) => place.id === current) ? current : "");
+        return "live" as const;
+      } catch {
+        if (options.allowLiveRecovery) {
+          setToast("지도 영역을 새로 불러오지 못했습니다. 이전 결과를 유지합니다.");
+        }
+        return "live" as const;
+      }
+    }
+
     if (!options.silent) {
       setLoading(true);
     }
@@ -887,6 +970,7 @@ export default function SilsiganRedesign() {
       setPhotoUploadProtection({ ...FAIL_CLOSED_PHOTO_UPLOAD_PROTECTION });
       hasLoadedLiveDataRef.current = false;
       hasLoadedDirectoryRef.current = false;
+      workerMediaLoadingPlaceIdsRef.current.clear();
     };
     try {
       if (!cloudflareApiConfigured && process.env.NODE_ENV === "production") {
@@ -916,7 +1000,7 @@ export default function SilsiganRedesign() {
       const placesScope = {
         ...listScope,
         bbox: options.bounds ? mapBoundsToBboxParam(options.bounds) : undefined,
-        q: normalizePlaceSearchQuery(options.query),
+        q: normalizedScopedQuery,
       };
       const socialFeedEnabled = runtimeConfig.featureFlags.SOCIAL_FEED_ENABLED;
       const placesRequest: Promise<ApiPlaceInput[]> = cloudflareApiConfigured
@@ -1059,6 +1143,13 @@ export default function SilsiganRedesign() {
     return () => window.cancelAnimationFrame(frame);
   }, [activeView]);
 
+  const focusUploadFormStart = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      phoneBodyRef.current?.scrollTo({ top: 0, behavior: "auto" });
+      document.getElementById("report-form-heading")?.focus({ preventScroll: true });
+    });
+  }, []);
+
   const returnFromDetail = useCallback(() => {
     if (activeView === "ask") {
       pendingScrollRestoreRef.current = askReturnScrollRef.current;
@@ -1122,6 +1213,40 @@ export default function SilsiganRedesign() {
 
     return () => window.clearTimeout(timer);
   }, [loadData]);
+
+  useEffect(() => {
+    const placeId = selectedPlace?.id ?? "";
+    if (
+      activeView !== "place"
+      || !cloudflareApiConfigured
+      || dataMode !== "live"
+      || !placeId
+      || workerCommentsByPlaceId[placeId] !== undefined
+      || workerMediaLoadingPlaceIdsRef.current.has(placeId)
+    ) {
+      return;
+    }
+
+    let active = true;
+    workerMediaLoadingPlaceIdsRef.current.add(placeId);
+    void Promise.all([
+      fetchWorkerPhotosForPlaces([placeId]),
+      fetchWorkerCommentsForPlaces([placeId]),
+    ]).then(([photos, commentsByPlaceId]) => {
+      if (!active) return;
+      setWorkerPhotos((current) => mergeWorkerPhotos(photos, current).slice(0, 80));
+      setWorkerCommentsByPlaceId((current) => ({
+        ...current,
+        [placeId]: commentsByPlaceId[placeId] ?? [],
+      }));
+    }).finally(() => {
+      workerMediaLoadingPlaceIdsRef.current.delete(placeId);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [activeView, cloudflareApiConfigured, dataMode, selectedPlace?.id, workerCommentsByPlaceId]);
 
   useEffect(() => {
     if (loading) {
@@ -1265,15 +1390,42 @@ export default function SilsiganRedesign() {
     if (dataMode === "directory" || dataMode === "unavailable") {
       return;
     }
-    const timer = window.setInterval(() => {
+    const tabId = window.crypto.randomUUID();
+    const refreshIfLeader = () => {
+      if (document.visibilityState !== "visible") {
+        releaseLiveRefreshLeadership(tabId);
+        return;
+      }
+      if (!tryClaimLiveRefreshLeadership(tabId)) {
+        return;
+      }
+      if (backgroundRefreshInFlightRef.current) {
+        return;
+      }
+      backgroundRefreshInFlightRef.current = true;
       void loadData({
         silent: true,
         bounds: activeView === "map" ? mapBoundsRef.current : null,
         query: activeView === "map" ? normalizedMapSearchQuery : null,
+      }).finally(() => {
+        backgroundRefreshInFlightRef.current = false;
       });
-    }, 30_000);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        releaseLiveRefreshLeadership(tabId);
+        return;
+      }
+      refreshIfLeader();
+    };
+    const timer = window.setInterval(refreshIfLeader, backgroundLiveRefreshIntervalMs);
+    window.addEventListener("visibilitychange", handleVisibilityChange);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("visibilitychange", handleVisibilityChange);
+      releaseLiveRefreshLeadership(tabId);
+    };
   }, [activeView, dataMode, loadData, normalizedMapSearchQuery]);
 
   const requeryCurrentMap = useCallback(async () => {
@@ -1690,6 +1842,9 @@ export default function SilsiganRedesign() {
     setSelectedPlaceId(place.id);
     setReportPlaceId(place.id);
     setActiveView("upload");
+    if (activeView === "upload") {
+      focusUploadFormStart();
+    }
     reportStartedAtRef.current = Date.now();
     trackEvent("report_started", { placeId: place.id });
     setToast(`${place.name} 지금 상태를 올립니다. 위치 인증은 선택 사항입니다.`);
@@ -3067,6 +3222,7 @@ export default function SilsiganRedesign() {
                       }
                       setSelectedPlaceId(place.id);
                       setReportPlaceId(place.id);
+                      focusUploadFormStart();
                     }}
                     onApplyPreset={applyQuickReportPreset}
                     onOpenPlace={() => setActiveView("place")}
@@ -3339,6 +3495,9 @@ function HomeScreen({
   const leadPhotoReport = leadPost ? reports.find((report) => report.placeId === leadPost.placeId && report.hasPhoto) ?? null : null;
   const leadPhotoUrl = leadPost ? photoUrlForPost(leadPost, reports) : null;
   const leadIsSample = dataMode === "sample" || Boolean(leadPost?.isSample) || Boolean(leadPost?.id.startsWith("fallback_"));
+  const safeLeadPhotoUrl = safeHttpUrl(leadPhotoUrl);
+  const leadHasPhotoEvidence = Boolean(leadPost && leadPost.photoCount > 0 && safeLeadPhotoUrl && !leadIsSample);
+  const showLeadPhoto = dataMode === "sample" || (dataMode === "live" && leadHasPhotoEvidence);
   const leadDecision = leadPlace
     ? dataMode === "live"
       ? visitDecisionShortLabel(currentLivePlaceStatus(placeStatuses[leadPlace.id])?.status ?? "insufficient")
@@ -3356,47 +3515,60 @@ function HomeScreen({
 
   return (
     <div className={styles.screenStack}>
-      <section className={styles.photoLeadCard} aria-label={dataMode === "directory" ? "기본 장소 위치 안내" : "가장 최근 장소 사진과 방문 판단"}>
+      <section className={styles.photoLeadCard} aria-label={showLeadPhoto ? "가장 최근 장소 사진" : "최근 현장 사진 없음"}>
         <button
-          className={styles.photoLeadPreview}
-          style={photoBackgroundStyle(leadPhotoUrl)}
+          className={`${styles.photoLeadPreview} ${showLeadPhoto ? "" : styles.photoLeadEmpty} ${leadIsSample ? styles.photoLeadSample : ""}`}
+          style={showLeadPhoto ? photoBackgroundStyle(leadPhotoUrl) : undefined}
           type="button"
           onClick={() => leadPlace && onOpenPlace(leadPlace)}
           disabled={!leadPlace}
         >
-          <span className={styles.photoLeadDecision}>{leadDecision}</span>
-          <span className={styles.photoLeadMeta}>
-            {dataMode === "directory"
-              ? "기본 장소 · 실시간 근거 없음"
-              : leadIsSample
-                ? "체험용 사진 · 예시 데이터"
-                : `최근 ${leadPost ? minutesAgo(leadPost.createdAt) : "방금 전"}`}
-          </span>
-          <span className={styles.photoLeadKicker}>{dataMode === "directory" ? "장소 탐색 유지 중" : "출발 전 10초 확인"}</span>
-          <strong>{leadPlace?.name ?? "#실시간"}</strong>
-          <p>{leadPost?.caption ?? leadPost?.shareCard.headline ?? leadPlace?.summary ?? "지금 올라온 장소 사진을 기다리고 있어요."}</p>
-          <div className={styles.photoLeadTags}>
-            {leadTags.map((tag) => (
-              <span key={tag}>#{tag}</span>
-            ))}
-          </div>
+          {showLeadPhoto ? (
+            <>
+              {dataMode === "live" && <span className={styles.photoLeadDecision}>{leadDecision}</span>}
+              <span className={styles.photoLeadMeta}>
+                {leadIsSample ? "예시 이미지 · 현재 사진 아님" : `최근 ${leadPost ? minutesAgo(leadPost.createdAt) : "시각 확인 필요"}`}
+              </span>
+              <span className={styles.photoLeadKicker}>{leadIsSample ? "운영 판단 제외" : "출발 전 10초 확인"}</span>
+              <strong>{leadPlace?.name ?? "#실시간"}</strong>
+              <p>{leadPost?.caption ?? leadPost?.shareCard.headline ?? leadPlace?.summary ?? "현재 사진을 확인해 주세요."}</p>
+              <div className={styles.photoLeadTags}>
+                {leadTags.map((tag) => (
+                  <span key={tag}>#{tag}</span>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <span className={styles.photoLeadMeta}>
+                {dataMode === "directory" ? "기본 장소 · 실시간 근거 없음" : "아직 최근 현장 사진이 없습니다"}
+              </span>
+              <span className={styles.photoLeadKicker}>마지막 확인 정보 없음</span>
+              <strong>{leadPlace?.name ?? "#실시간"}</strong>
+              <p>승인된 현장 사진이 올라오면 촬영 시각과 함께 표시합니다.</p>
+            </>
+          )}
         </button>
         <div className={styles.photoLeadActions}>
           <button type="button" onClick={() => leadPlace && onOpenPlace(leadPlace)} disabled={!leadPlace}>
-            {dataMode === "directory" ? "장소 정보 보기" : "실시간 사진 보기"}
+            {showLeadPhoto ? "사진 근거 보기" : "장소 정보 보기"}
           </button>
           <button type="button" onClick={() => onGoReport(leadPlace ?? undefined)} disabled={dataMode !== "live"}>
             {dataMode === "directory" ? "연결 후 업로드" : "지금컷 올리기"}
           </button>
         </div>
-        {leadPhotoReport?.photoAttribution && (
-          safeLeadPhotoSourceUrl ? (
-            <a className={styles.photoLeadCredit} href={safeLeadPhotoSourceUrl} target="_blank" rel="noreferrer">
-              사진 출처 · {leadPhotoReport.photoAttribution}
-            </a>
-          ) : (
-            <span className={styles.photoLeadCredit}>사진 출처 · {leadPhotoReport.photoAttribution}</span>
-          )
+        {showLeadPhoto && (
+          <>
+            {leadPhotoReport?.photoAttribution && (
+              safeLeadPhotoSourceUrl ? (
+                <a className={styles.photoLeadCredit} href={safeLeadPhotoSourceUrl} target="_blank" rel="noreferrer">
+                  사진 출처 · {leadPhotoReport.photoAttribution}
+                </a>
+              ) : (
+                <span className={styles.photoLeadCredit}>사진 출처 · {leadPhotoReport.photoAttribution}</span>
+              )
+            )}
+          </>
         )}
       </section>
 
@@ -5052,7 +5224,7 @@ function ReportScreen({
       <section className={styles.formIntroCard}>
         <BadgeCheck size={22} />
         <div>
-          <h2>{place.name} 올리기</h2>
+          <h2 id="report-form-heading" tabIndex={-1}>{place.name} 올리기</h2>
           <p>사진 1장을 먼저 고르고, 장소와 해시태그, 한 줄만 남기면 됩니다.</p>
           <ol className={styles.uploadSteps} aria-label="지금컷 올리기 5단계">
             <li>사진</li>

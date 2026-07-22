@@ -22,6 +22,7 @@ export const htmlDocumentRoutes = [
   "/",
   "/privacy",
   "/support",
+  "/terms",
   "/place/:path*",
   "/share/:path*",
   "/admin/:path*",

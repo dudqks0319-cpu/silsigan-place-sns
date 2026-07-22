@@ -80,6 +80,11 @@ function checkEnvironment(config, envName) {
     assertCostGuardNumber(envConfig.vars?.SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT, 100_000, `${envName}.vars.SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT`);
     assertCostGuardNumber(envConfig.vars?.SILSIGAN_D1_DAILY_READ_LIMIT, 5_000_000, `${envName}.vars.SILSIGAN_D1_DAILY_READ_LIMIT`);
     assertCostGuardNumber(envConfig.vars?.SILSIGAN_D1_DAILY_WRITE_LIMIT, 100_000, `${envName}.vars.SILSIGAN_D1_DAILY_WRITE_LIMIT`);
+    assertProviderBudgetNumber(envConfig.vars?.SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT, 5_000, `${envName}.vars.SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT`);
+    assertProviderBudgetNumber(envConfig.vars?.SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT, 500, `${envName}.vars.SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT`);
+    assertProviderBudgetNumber(envConfig.vars?.SILSIGAN_NATIONAL_PARKING_DAILY_PROVIDER_REQUEST_LIMIT, 500, `${envName}.vars.SILSIGAN_NATIONAL_PARKING_DAILY_PROVIDER_REQUEST_LIMIT`);
+    assertProviderBudgetNumber(envConfig.vars?.SILSIGAN_ITS_DAILY_PROVIDER_REQUEST_LIMIT, 500, `${envName}.vars.SILSIGAN_ITS_DAILY_PROVIDER_REQUEST_LIMIT`);
+    assertProviderBudgetNumber(envConfig.vars?.SILSIGAN_SEOUL_REALTIME_DAILY_PROVIDER_REQUEST_LIMIT, 500, `${envName}.vars.SILSIGAN_SEOUL_REALTIME_DAILY_PROVIDER_REQUEST_LIMIT`);
     assertCostGuardPercent(envConfig.vars?.SILSIGAN_COST_GUARD_WARN_PERCENT, 60, `${envName}.vars.SILSIGAN_COST_GUARD_WARN_PERCENT`);
     assertCostGuardPercent(envConfig.vars?.SILSIGAN_COST_GUARD_DEGRADE_PERCENT, 70, `${envName}.vars.SILSIGAN_COST_GUARD_DEGRADE_PERCENT`);
     assertCostGuardPercent(envConfig.vars?.SILSIGAN_COST_GUARD_STOP_PERCENT, 80, `${envName}.vars.SILSIGAN_COST_GUARD_STOP_PERCENT`);
@@ -176,6 +181,16 @@ function rateLimitBy(items, bindingName) {
 function assertCostGuardNumber(value, ceiling, name) {
   const parsed = Number(value);
   assert(Number.isSafeInteger(parsed) && parsed > 0 && parsed <= ceiling, name, `${name} must be a positive integer no higher than ${ceiling}.`);
+}
+
+function assertProviderBudgetNumber(value, ceiling, name) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  const parsed = Number(normalized);
+  assert(
+    normalized.length > 0 && Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= ceiling,
+    name,
+    `${name} must be an integer from 0 (kill switch) through ${ceiling}.`,
+  );
 }
 
 function assertCostGuardPercent(value, expected, name) {

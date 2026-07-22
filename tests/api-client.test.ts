@@ -96,8 +96,13 @@ test("API client preserves actionable stability protection and success behavior"
   });
 });
 
-test("API client keeps public reads available without issuing a session and binds protected requests to proof", async () => {
-  const requests: Array<{ path: string; anonymousId: string | undefined; proof: string | undefined }> = [];
+test("API client keeps public reads simple without a preflight-only content type and binds protected requests to proof", async () => {
+  const requests: Array<{
+    path: string;
+    anonymousId: string | undefined;
+    proof: string | undefined;
+    contentType: string | undefined;
+  }> = [];
   const proof = "A".repeat(43);
   let blockSessionIssuance = true;
   const server = createServer((request, response) => {
@@ -106,6 +111,7 @@ test("API client keeps public reads available without issuing a session and bind
       path,
       anonymousId: typeof request.headers["x-silsigan-anon-id"] === "string" ? request.headers["x-silsigan-anon-id"] : undefined,
       proof: typeof request.headers["x-silsigan-anon-proof"] === "string" ? request.headers["x-silsigan-anon-proof"] : undefined,
+      contentType: typeof request.headers["content-type"] === "string" ? request.headers["content-type"] : undefined,
     });
     if (path === "/api/session/anonymous" && blockSessionIssuance) {
       response.writeHead(429, { "content-type": "application/json" });
@@ -146,7 +152,7 @@ test("API client keeps public reads available without issuing a session and bind
   try {
     await fetchJson(`${baseUrl}/api/places`);
     assert.deepEqual(requests, [
-      { path: "/api/places", anonymousId: undefined, proof: undefined },
+      { path: "/api/places", anonymousId: undefined, proof: undefined, contentType: undefined },
     ]);
     assert.equal(values.has("silsigan.anonymousSession.v2"), false);
     assert.equal(values.has("silsigan.anonymousId.v1"), false);
@@ -157,12 +163,12 @@ test("API client keeps public reads available without issuing a session and bind
     await fetchJson(`${baseUrl}/api/comments`, { method: "POST", body: JSON.stringify({}) });
     await fetchJson(`${baseUrl}/api/place-requests`, { method: "POST", body: JSON.stringify({}) });
     assert.deepEqual(requests, [
-      { path: "/api/places", anonymousId: undefined, proof: undefined },
-      { path: "/api/session/anonymous", anonymousId: undefined, proof: undefined },
-      { path: "/api/preferences", anonymousId: "anon_server_bound_client", proof },
-      { path: "/api/place-requests", anonymousId: "anon_server_bound_client", proof },
-      { path: "/api/comments", anonymousId: "anon_server_bound_client", proof },
-      { path: "/api/place-requests", anonymousId: "anon_server_bound_client", proof },
+      { path: "/api/places", anonymousId: undefined, proof: undefined, contentType: undefined },
+      { path: "/api/session/anonymous", anonymousId: undefined, proof: undefined, contentType: undefined },
+      { path: "/api/preferences", anonymousId: "anon_server_bound_client", proof, contentType: undefined },
+      { path: "/api/place-requests", anonymousId: "anon_server_bound_client", proof, contentType: undefined },
+      { path: "/api/comments", anonymousId: "anon_server_bound_client", proof, contentType: "application/json" },
+      { path: "/api/place-requests", anonymousId: "anon_server_bound_client", proof, contentType: "application/json" },
     ]);
     assert.match(values.get("silsigan.anonymousSession.v2") ?? "", /anon_server_bound_client/);
     assert.equal(values.has("silsigan.anonymousId.v1"), false);
@@ -175,6 +181,7 @@ test("API client keeps public reads available without issuing a session and bind
       path: "/api/account/deletion",
       anonymousId: "anon_server_bound_client",
       proof,
+      contentType: "application/json",
     });
     assert.equal(values.has("silsigan.anonymousSession.v2"), false);
   } finally {

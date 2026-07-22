@@ -27,6 +27,7 @@ const apiCostGuardPanelPath = resolve(testDir, "../src/app/admin/moderation/post
 const betaKpiPanelPath = resolve(testDir, "../src/app/admin/moderation/posts/BetaKpiPanel.tsx");
 const appErrorPath = resolve(testDir, "../src/app/error.tsx");
 const moderationPageCssPath = resolve(testDir, "../src/app/admin/moderation/posts/page.module.css");
+const policyPageCssPath = resolve(testDir, "../src/app/policy-page.module.css");
 const adminLoginPagePath = resolve(testDir, "../src/app/admin/login/page.tsx");
 const adminLoginRoutePath = resolve(testDir, "../src/app/api/admin/login/route.ts");
 const turnstileClientPath = resolve(testDir, "../src/lib/turnstile-client.ts");
@@ -46,6 +47,7 @@ const apiCostGuardPanelSource = readFileSync(apiCostGuardPanelPath, "utf8");
 const betaKpiPanelSource = readFileSync(betaKpiPanelPath, "utf8");
 const appErrorSource = readFileSync(appErrorPath, "utf8");
 const moderationPageCssSource = readFileSync(moderationPageCssPath, "utf8");
+const policyPageCssSource = readFileSync(policyPageCssPath, "utf8");
 const adminLoginPageSource = readFileSync(adminLoginPagePath, "utf8");
 const adminLoginRouteSource = readFileSync(adminLoginRoutePath, "utf8");
 const turnstileClientSource = readFileSync(turnstileClientPath, "utf8");
@@ -97,7 +99,7 @@ test("web responses enforce baseline browser attack protections without blocking
 test("HTML documents revalidate across deployments while hashed assets keep their platform cache policy", async () => {
   assert.equal(htmlDocumentCacheHeader.key, "Cache-Control");
   assert.equal(htmlDocumentCacheHeader.value, "public, max-age=0, must-revalidate");
-  assert.deepEqual(htmlDocumentRoutes, ["/", "/privacy", "/support", "/place/:path*", "/share/:path*", "/admin/:path*"]);
+  assert.deepEqual(htmlDocumentRoutes, ["/", "/privacy", "/support", "/terms", "/place/:path*", "/share/:path*", "/admin/:path*"]);
 
   const rules = await nextConfig.headers?.() as Array<{
     source: string;
@@ -120,10 +122,48 @@ test("HTML documents revalidate across deployments while hashed assets keep thei
   );
 });
 
+test("mobile policy tables scroll inside their card without widening the document", () => {
+  assert.match(policyPageCssSource, /\.section,\s*\.contactCard\s*\{\s*min-width: 0;/);
+  assert.match(policyPageCssSource, /\.tableWrap\s*\{\s*max-width: 100%;\s*overflow-x: auto;/);
+});
+
 test("admin login and logout mutations enforce same-origin requests", () => {
   assert.match(adminLoginRouteSource, /assertAdminMutationOrigin\(request\)/);
   assert.match(adminLoginRouteSource, /export async function DELETE\(request: Request\)/);
   assert.equal(adminLoginRouteSource.match(/assertAdminMutationOrigin\(request\)/g)?.length, 2);
+});
+
+test("map search and bounds refresh only places and status after the initial live load", () => {
+  const loadDataFlow = sourceBetween(redesignSource, "const loadData", "useEffect(() => {\n    const scrollTop");
+
+  assert.match(loadDataFlow, /const isScopedLiveRefresh = Boolean/);
+  assert.match(loadDataFlow, /options\.silent/);
+  assert.match(loadDataFlow, /hasLoadedLiveDataRef\.current/);
+  assert.doesNotMatch(loadDataFlow, /&& \(options\.bounds \|\| normalizedScopedQuery\)/);
+  assert.match(loadDataFlow, /fetchWorkerStatusesForPlaces\(mappedPlaces\.map/);
+  assert.match(loadDataFlow, /이전 결과를 유지합니다/);
+
+  const scopedRefreshFlow = sourceBetween(loadDataFlow, "if (isScopedLiveRefresh)", "if (!options.silent)");
+  assert.doesNotMatch(scopedRefreshFlow, /\/api\/reports|\/api\/sources|\/api\/hashtags|fetchWorkerPhotosForPlaces|fetchWorkerCommentsForPlaces/);
+});
+
+test("background live refresh is visible-tab-only, single-leader, and cost bounded", () => {
+  assert.match(redesignSource, /const backgroundLiveRefreshIntervalMs = 60_000/);
+  assert.match(redesignSource, /const backgroundLiveRefreshLeaseMs = 90_000/);
+  assert.match(redesignSource, /silsigan\.liveRefreshLeader\.v1/);
+  assert.match(redesignSource, /function tryClaimLiveRefreshLeadership/);
+  assert.match(redesignSource, /function releaseLiveRefreshLeadership/);
+  assert.match(redesignSource, /document\.visibilityState !== "visible"/);
+  assert.match(redesignSource, /if \(!tryClaimLiveRefreshLeadership\(tabId\)\)/);
+  assert.match(redesignSource, /if \(backgroundRefreshInFlightRef\.current\)/);
+  assert.match(redesignSource, /\.finally\(\(\) => \{\s*backgroundRefreshInFlightRef\.current = false/);
+  assert.match(redesignSource, /window\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
+});
+
+test("NAVER map render health accepts the current pstatic tile hosts", () => {
+  assert.match(naverMapSource, /source\.includes\("nrbe\.pstatic\.net"\)/);
+  assert.match(naverMapSource, /source\.includes\("ssl\.pstatic\.net\/static\/maps"\)/);
+  assert.match(naverMapSource, /!source\.includes\("auth_fail"\)/);
 });
 
 test("admin photo cost guard exposes an accessible immediate stop without leaking Worker credentials", () => {
@@ -312,6 +352,21 @@ test("home leads with a concise visit decision and exposes live-source freshness
   assert.match(redesignSource, /사진 출처/);
 });
 
+test("live home hero fails closed when no approved real photo evidence exists", () => {
+  const homeScreen = sourceBetween(redesignSource, "function HomeScreen({", "function SearchScreen");
+  const photoLeadCss = sourceBetween(redesignCss, ".photoLeadPreview {", ".photoLeadSample {");
+
+  assert.match(homeScreen, /const safeLeadPhotoUrl = safeHttpUrl\(leadPhotoUrl\)/);
+  assert.match(homeScreen, /const leadHasPhotoEvidence = Boolean\(leadPost && leadPost\.photoCount > 0 && safeLeadPhotoUrl && !leadIsSample\)/);
+  assert.match(homeScreen, /const showLeadPhoto = dataMode === "sample" \|\| \(dataMode === "live" && leadHasPhotoEvidence\)/);
+  assert.match(homeScreen, /아직 최근 현장 사진이 없습니다/);
+  assert.match(homeScreen, /마지막 확인 정보 없음/);
+  assert.match(homeScreen, /예시 이미지 · 현재 사진 아님/);
+  assert.doesNotMatch(photoLeadCss, /fallback\/gwangalli\.png/);
+  assert.match(redesignCss, /\.photoLeadSample \{\s*--photo-url: url\("\/silsigan\/fallback\/gwangalli\.png"\)/);
+  assert.match(redesignCss, /\.photoLeadEmpty/);
+});
+
 test("photo-first surfaces use visible photo assets before status-only fallbacks", () => {
   assert.match(redesignSource, /const hotRegions = \["광안리", "황리단길", "태화강", "주차", "웨이팅", "사진스팟"\];/);
   assert.doesNotMatch(redesignSource, /const hotRegions = .*"성수"/);
@@ -469,6 +524,20 @@ test("an uploaded photo locks its report place until the user deletes that photo
   assert.match(reportScreen, /사진이 연결된 뒤에는 장소를 바꿀 수 없습니다\./);
 });
 
+test("selecting a place inside upload resets the phone scroller and focuses the form heading", () => {
+  const redesign = sourceBetween(redesignSource, "export default function SilsiganRedesign", "function StatusBar");
+  const uploadRender = sourceBetween(redesignSource, 'activeView === "upload" && reportPlace &&', 'activeView === "ask"');
+  const reportScreen = sourceBetween(redesignSource, "function ReportScreen", "function AskScreen");
+
+  assert.match(redesign, /const focusUploadFormStart = useCallback/);
+  assert.match(redesign, /phoneBodyRef\.current\?\.scrollTo\(\{ top: 0, behavior: "auto" \}\)/);
+  assert.match(redesign, /document\.getElementById\("report-form-heading"\)\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(redesign, /if \(activeView === "upload"\) \{\s*focusUploadFormStart\(\);/);
+  assert.match(uploadRender, /setReportPlaceId\(place\.id\);\s*focusUploadFormStart\(\);/);
+  assert.match(reportScreen, /<h2 id="report-form-heading" tabIndex=\{-1\}>/);
+  assert.match(redesign, /pendingScrollRestoreRef\.current = target\.scrollTop/);
+});
+
 test("realtime event timestamps render in the device locale instead of slicing UTC text", () => {
   assert.doesNotMatch(placeDetailSheetSource, /event\.createdAt\.slice\(11, 16\)/);
   assert.match(placeDetailSheetSource, /formatRealtimeEventTime\(event\.createdAt\)/);
@@ -521,6 +590,8 @@ test("runtime truth never promotes missing production data to live or sample con
   assert.match(loadData, /clearTruthBearingData\(\);\s*setDataMode\("unavailable"\);/);
   assert.match(loadData, /운영 환경에서는 확인된 실시간 데이터만 표시할 수 있습니다\./);
   assert.match(redesignSource, /async function fetchWorkerStatusesForPlaces[\s\S]*fetchJsonWithTimeout<CloudflarePlaceStatus>/);
+  assert.match(redesignSource, /const workerPhotoPlaceScopeLimit = 5;/);
+  assert.match(redesignSource, /activeView !== "place"[\s\S]*fetchWorkerPhotosForPlaces\(\[placeId\]\)[\s\S]*fetchWorkerCommentsForPlaces\(\[placeId\]\)/);
   assert.match(loadData, /setDataMode\(runtimeConfig\.dataMode === "live" \? "live" : "sample"\)/);
   assert.match(loadData, /setDataMode\("directory"\)/);
   assert.match(loadData, /setDataMode\("unavailable"\)/);

@@ -634,13 +634,13 @@ export function findSensitiveTailLogFindings(text) {
 }
 
 async function requestJson(baseUrl, path, init = {}) {
-  return requestJsonAs(baseUrl, path, anonymousSession ?? anonymousId, init);
+  return requestJsonAs(baseUrl, path, anonymousSession, init);
 }
 
 async function requestBytes(baseUrl, path, init = {}) {
   const url = new URL(path, baseUrl);
   const headers = new Headers(init.headers ?? {});
-  applyAnonymousSessionHeaders(headers, anonymousSession ?? anonymousId);
+  applyAnonymousSessionHeaders(headers, anonymousSession);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);

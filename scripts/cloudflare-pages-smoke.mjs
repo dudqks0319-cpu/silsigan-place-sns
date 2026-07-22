@@ -10,6 +10,7 @@ const DEFAULT_PLACE_ID = "busan-gwangalli";
 const DEFAULT_PLACE_NAME = "광안리해수욕장";
 const DEFAULT_REGION_ID = "busan";
 const DEFAULT_TIMEOUT_MS = 20_000;
+const NON_MUTATING_API_REQUEST_BUDGET = 80;
 const anonymousSessionKey = "silsigan.anonymousSession.v2";
 const fieldReportScreenshotCopy = "주차장 입구는 지금 차량이 많지만 회전은 빠른 편이에요.";
 const fieldReportPhotoBase64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
@@ -438,6 +439,85 @@ async function runBrowserSmoke(client, config) {
   await clickTextButton(client, "바로 둘러보기").catch(() => {});
   await waitForEvaluate(client, `!document.querySelector('[aria-label="#실시간 첫 방문 안내"]')`, "onboarding.initialDismiss", config.timeoutMs);
   record(config.checks, "onboarding.dismiss", "pass", "첫 방문 안내를 닫고 V2 홈에서 지도로 이동할 준비를 마쳤습니다.");
+  const homeHeroTruth = await evaluate(
+    client,
+    `
+      (() => {
+        const emptyHero = document.querySelector('section[aria-label="최근 현장 사진 없음"]');
+        const photoHero = document.querySelector('section[aria-label="가장 최근 장소 사진"]');
+        const hero = emptyHero ?? photoHero;
+        if (!(hero instanceof HTMLElement)) {
+          const unavailable = document.body.innerText.includes('실시간 연결 안 됨');
+          return { valid: unavailable, mode: unavailable ? 'unavailable' : 'missing' };
+        }
+
+        const text = hero.innerText;
+        const preview = hero.querySelector('button');
+        const backgroundImage = preview instanceof HTMLElement ? getComputedStyle(preview).backgroundImage : '';
+        if (emptyHero) {
+          return {
+            valid:
+              (text.includes('아직 최근 현장 사진이 없습니다') || text.includes('기본 장소 · 실시간 근거 없음')) &&
+              text.includes('마지막 확인 정보 없음') &&
+              !/최근 (방금 전|\\d+(분|시간|일) 전)/.test(text) &&
+              !hero.querySelector('[class*="photoLeadDecision"]') &&
+              !backgroundImage.includes('/silsigan/fallback/'),
+            mode: 'empty',
+          };
+        }
+
+        const sample = text.includes('예시 이미지');
+        return {
+          valid: !sample || (text.includes('현재 사진 아님') && text.includes('운영 판단 제외')),
+          mode: sample ? 'sample' : 'live-photo',
+        };
+      })()
+    `,
+  );
+  if (!homeHeroTruth?.valid) {
+    throw new SmokeError("HOME_HERO_TRUTH_FAILED", "홈 대표 사진이 실제 사진, 명시적 예시, 정직한 빈 상태 중 하나로 표시되지 않았습니다.");
+  }
+  record(config.checks, "home.heroTruth", "pass", "홈 대표 사진의 실제·예시·빈 상태 표시 계약을 확인했습니다.", { mode: homeHeroTruth.mode });
+  await clickBottomNavButton(client, "올리기");
+  await delay(100);
+  const uploadPlaceGateVisible = Boolean(await evaluate(
+    client,
+    `Boolean(document.querySelector('[aria-label="최근 확인한 장소 선택"]'))`,
+  ));
+  if (uploadPlaceGateVisible) {
+    await evaluate(
+      client,
+      `
+        (() => {
+          const scroller = document.querySelector('[class*="phoneBody"]');
+          if (scroller instanceof HTMLElement) scroller.scrollTop = scroller.scrollHeight;
+        })()
+      `,
+    );
+    await clickHitTestedTextButton(client, config.placeName, {
+      withinSelector: '[aria-label="최근 확인한 장소 선택"]',
+    });
+    await waitForEvaluate(
+      client,
+      `
+        (() => {
+          const heading = document.querySelector('#report-form-heading');
+          const scroller = document.querySelector('[class*="phoneBody"]');
+          return heading instanceof HTMLElement &&
+            scroller instanceof HTMLElement &&
+            scroller.scrollTop === 0 &&
+            document.activeElement === heading;
+        })()
+      `,
+      "upload.placeSelectionFocus",
+      config.timeoutMs,
+    );
+    record(config.checks, "upload.placeSelectionFocus", "pass", "올리기 화면 안에서 장소 선택 후 맨 위 작성 제목으로 스크롤과 포커스가 이동했습니다.");
+  } else {
+    record(config.checks, "upload.placeSelectionFocus", "skip", "현재 데이터 모드에서는 쓰기가 닫혀 있어 장소 선택 포커스 검사를 건너뜁니다.");
+  }
+  await clickBottomNavButton(client, "홈");
+  await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '실시간'`, "upload.returnHome", config.timeoutMs);
   await resetWindowScroll(client);
   const homeScreenshot = await captureViewportScreenshot(client);
   await clickBottomNavButton(client, "지도");
@@ -493,13 +573,24 @@ async function runBrowserSmoke(client, config) {
     record(config.checks, "rankings.detail", "skip", "최신 근거가 없어 정적 디렉터리 랭킹 상세를 열지 않습니다.");
     record(config.checks, "place.detail", "skip", "Worker API가 없어 정적 장소 상세의 실시간 근거를 만들지 않습니다.");
   } else {
-    await assertRankingPanelsVisible(client, config);
-    record(config.checks, "rankings.visible", "pass", "전국 또는 현재 지도 범위의 최신 근거 TOP 10 랭킹 패널이 렌더링됐습니다.");
-    await clickRankingPlace(client, config.placeName);
-    await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "rankings.detail", config.timeoutMs);
-    record(config.checks, "rankings.detail", "pass", "랭킹 항목 클릭으로 장소 상세 시트를 브라우저에서 열었습니다.", { placeName: config.placeName });
-    await clickAriaButton(client, "상세 닫기");
-    await waitForEvaluate(client, `!document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)})`, "rankings.detailClose", config.timeoutMs);
+    const rankingState = await assertRankingPanelsVisible(client, config);
+    record(
+      config.checks,
+      "rankings.visible",
+      "pass",
+      rankingState === "populated"
+        ? "전국 또는 현재 지도 범위의 최신 근거 TOP 10 랭킹 패널이 렌더링됐습니다."
+        : "최신 근거가 없을 때 장소를 가짜 TOP 10으로 만들지 않는 빈 랭킹 상태가 렌더링됐습니다.",
+    );
+    if (rankingState === "populated") {
+      await clickRankingPlace(client, config.placeName);
+      await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "rankings.detail", config.timeoutMs);
+      record(config.checks, "rankings.detail", "pass", "랭킹 항목 클릭으로 장소 상세 시트를 브라우저에서 열었습니다.", { placeName: config.placeName });
+      await clickAriaButton(client, "상세 닫기");
+      await waitForEvaluate(client, `!document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)})`, "rankings.detailClose", config.timeoutMs);
+    } else {
+      record(config.checks, "rankings.detail", "skip", "최신 근거가 없어 가짜 랭킹 상세를 열지 않습니다.");
+    }
 
     await clickMapMarker(client, config.placeName, config.timeoutMs);
     await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "place.detail", config.timeoutMs);
@@ -564,6 +655,24 @@ async function runBrowserSmoke(client, config) {
 
   if (config.accountDeletion) {
     accountDeletionScreenshotBase64 = await runAccountDeletionChecks(client, config, networkEvents);
+  }
+
+  if (!config.mutating && config.apiBaseUrl) {
+    await delay(250);
+    const requestBudget = classifyNonMutatingApiRequestBudget(networkEvents, config.apiBaseUrl);
+    if (!requestBudget.ok) {
+      throw new SmokeError(
+        "BROWSER_API_REQUEST_BUDGET_EXCEEDED",
+        `비변경 탐색 요청이 안전 예산 ${requestBudget.limit}회를 초과했습니다.`,
+      );
+    }
+    record(
+      config.checks,
+      "browser.apiRequestBudget",
+      "pass",
+      "홈·지도·검색·상세 탐색이 비변경 API 요청 안전 예산 안에서 완료됐습니다.",
+      { requestCount: requestBudget.requestCount, limit: requestBudget.limit },
+    );
   }
 
   const screenshot = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
@@ -1149,34 +1258,31 @@ async function assertMapSurfaceVisible(client, timeoutMs, allowEmpty) {
 }
 
 async function assertRankingPanelsVisible(client, config, allowDirectorySuspension = false) {
-  const condition = allowDirectorySuspension
-    ? `
-    (() => {
-      const grid = document.querySelector('[aria-label="실시간 장소 랭킹"]');
-      if (!(grid instanceof HTMLElement)) return false;
-      const text = grid.innerText;
-      const buttons = [...grid.querySelectorAll('button')];
-      return text.includes('실시간 순위 일시 중단')
-        && text.includes('기본 장소 위치는 표시하지만 최신 근거가 없으므로 순위를 만들지 않습니다.')
-        && buttons.length === 0;
-    })()
-  `
-    : `
-    (() => {
-      const grid = document.querySelector('[aria-label="실시간 장소 랭킹"]');
-      if (!(grid instanceof HTMLElement)) return false;
-      const text = grid.innerText;
-      const buttons = [...grid.querySelectorAll('button')];
-      const hasTruthfulScopeTitle = text.includes('전국 최신 근거 TOP 10') || text.includes('지도 화면 안 TOP 10');
-      return hasTruthfulScopeTitle &&
-        !text.includes('전국 TOP 10') &&
-        buttons.length >= 1 &&
-        buttons.some((button) => button.textContent?.includes(${JSON.stringify(config.placeName)}));
-    })()
-  `;
+  let rankingState = null;
 
   try {
-    await waitForEvaluate(client, condition, "rankings.visible", config.timeoutMs);
+    await waitFor(async () => {
+      const observation = await evaluate(
+        client,
+        `
+          (() => {
+            const grid = document.querySelector('[aria-label="실시간 장소 랭킹"]');
+            if (!(grid instanceof HTMLElement)) return { found: false, text: '', buttons: [] };
+            return {
+              found: true,
+              text: grid.innerText,
+              buttons: [...grid.querySelectorAll('button')].map((button) => button.textContent?.trim() ?? ''),
+            };
+          })()
+        `,
+      );
+      rankingState = classifyRankingPanelObservation(observation, {
+        allowDirectorySuspension,
+        placeName: config.placeName,
+      });
+      return Boolean(rankingState);
+    }, "rankings.visible", config.timeoutMs);
+    return rankingState;
   } catch {
     const state = await evaluate(
       client,
@@ -1194,6 +1300,39 @@ async function assertRankingPanelsVisible(client, config, allowDirectorySuspensi
     );
     throw new SmokeError("RANKINGS_NOT_VISIBLE", `랭킹 패널 상태가 기대와 다릅니다. detail=${JSON.stringify(state)}`);
   }
+}
+
+export function classifyRankingPanelObservation(
+  observation,
+  { allowDirectorySuspension = false, placeName = "" } = {},
+) {
+  if (!observation?.found || typeof observation.text !== "string" || !Array.isArray(observation.buttons)) {
+    return null;
+  }
+
+  const { text, buttons } = observation;
+  if (allowDirectorySuspension) {
+    return text.includes("실시간 순위 일시 중단")
+      && text.includes("기본 장소 위치는 표시하지만 최신 근거가 없으므로 순위를 만들지 않습니다.")
+      && buttons.length === 0
+      ? "directory"
+      : null;
+  }
+
+  const hasTruthfulScopeTitle = text.includes("전국 최신 근거 TOP 10") || text.includes("지도 화면 안 TOP 10");
+  if (!hasTruthfulScopeTitle || text.includes("전국 TOP 10")) {
+    return null;
+  }
+
+  if (buttons.length >= 1 && buttons.some((button) => button.includes(placeName))) {
+    return "populated";
+  }
+
+  return buttons.length === 0
+    && text.includes("아직 순위를 만들 현장 정보가 없어요")
+    && text.includes("정보 없는 장소는 순위에 넣지 않습니다.")
+    ? "empty"
+    : null;
 }
 
 async function runMapControlChecks(client, config) {
@@ -2367,6 +2506,31 @@ function hasPageResponse(events, expectedUrl) {
 
 export function hasApiRequest(events, apiBaseUrl, path, method = "GET") {
   return events.some((event) => Boolean(matchingApiRequestUrl(event, apiBaseUrl, path, method)));
+}
+
+export function classifyNonMutatingApiRequestBudget(
+  events,
+  apiBaseUrl,
+  limit = NON_MUTATING_API_REQUEST_BUDGET,
+) {
+  const origin = new URL(apiBaseUrl).origin;
+  const requestCount = events.filter((event) => {
+    if (event.type !== "request" || typeof event.url !== "string") {
+      return false;
+    }
+
+    try {
+      return new URL(event.url).origin === origin;
+    } catch {
+      return false;
+    }
+  }).length;
+
+  return {
+    ok: requestCount <= limit,
+    requestCount,
+    limit,
+  };
 }
 
 function countApiRequests(events, apiBaseUrl, path, method = "GET") {

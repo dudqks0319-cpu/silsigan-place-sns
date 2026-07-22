@@ -1,6 +1,6 @@
 # #실시간 V2 법무 및 운영 게이트
 
-Updated: 2026-07-20
+Updated: 2026-07-22
 State: `blocked-external`
 
 이 문서는 법률 자문이나 승인을 대신하지 않는다. 로컬 구현이 끝난 항목과 실제 담당자의 검토·서명·콘솔 증거가 필요한 항목을 분리하고, 증거가 없는 기능은 활성화하지 않는 기준을 고정한다.
@@ -29,6 +29,37 @@ State: `blocked-external`
 - 공공데이터·지도·외부 이미지·CCTV·YouTube의 상업 이용, attribution, cache, embed, 재배포 조건.
 - App Store와 Play Console의 privacy label, data safety, 위치·카메라·알림 권한 설명.
 - 최종 `SILSIGAN_PRIVACY_POLICY_URL`과 `SILSIGAN_SUPPORT_URL`의 공개 접근성.
+
+## Public Policy Surfaces
+
+내부 베타의 현재 공개 정책 표면은 `/privacy`, `/support`, `/terms`다. 세 페이지는 각각 개인정보 처리, 지원·신고·이의제기, 서비스·UGC 이용 규칙을 설명하고 서로 연결한다. 문서 버전은 `2026-07-22-v1`이며 내부 베타 적용일만 2026-07-22로 고정한다. 외부 공개 효력 발생일은 아래 외부 입력과 named legal reviewer 승인이 기록된 뒤 별도로 정한다.
+
+정책 화면에 `pending`, 임시 이름·이메일·전화번호 또는 검증되지 않은 법률 결론을 실제 운영 정보처럼 넣지 않는다. 현재 화면은 미확정 항목을 명시하고 외부 TestFlight와 production 출시를 차단한다.
+
+| External input | Required evidence | Owner | Current state |
+| --- | --- | --- | --- |
+| 운영자 법적 명칭·주소·대표 연락처 | 사업자/법인 원본과 공개 표시 승인 | release owner + legal-safety | missing; blocked |
+| 개인정보 보호책임자·담당 부서·권리 요청 채널 | 담당자 승인, 수신 시험, 본인 확인·응답 절차 | legal-safety | missing; blocked |
+| Cloudflare 계약 주체·처리 지역·보유 설정 | 계약/DPA, 실제 data location, D1/R2/KV/Workers 설정 대조 | legal-safety + Cloudflare operator | classification pending; blocked |
+| 위탁·국외 이전 분류 | 법적 근거, 고지·동의·계약 및 거부 방법 검토 | named legal reviewer | pending; blocked |
+| 위치정보법 적용 여부 | 사업·서비스 분류, 별도 약관·신고·동의 필요 여부 | named legal reviewer | pending; blocked |
+| 항목별 보유·파기 기간 | 기능 TTL, 비공개 전환, 물리 삭제·backup/cache SLA 대조 | legal-safety + data-operations | exact schedule pending; blocked |
+| 미성년자 정책 | 연령 기준, 법정대리인 확인·동의·철회·삭제 절차 | named legal reviewer | pending; blocked |
+| UGC 이의제기 운영 | trust-safety 담당자, 재검토 분리, 응답 SLA, 도용·초상권 절차 | trust-safety lead | operator and SLA pending; blocked |
+| 약관 책임·분쟁 조항 | 준거법, 관할, 책임 제한의 유효성 검토 | named legal reviewer | pending; blocked |
+| 최종 정책 URL | 서로 구분된 `/privacy`, `/support`, `/terms` 공개 HTTPS 접근 증거 | release operator | external custom domain pending; blocked |
+
+정책 승인은 위 행을 묶어서 추정하지 않는다. 각 행은 reviewer 이름, 검토일, 근거 링크, 결론과 후속 조치가 release ledger에 있을 때만 `approved`로 바꾼다.
+
+## Retention And Rights Schedule
+
+현재 구현 경계와 법률상 최종 보유 기간을 분리한다.
+
+- 현장 제보는 기본 3시간 뒤 공개 목록에서 제외되지만, 비공개 전환과 물리 삭제는 같은 의미가 아니다. D1/R2/KV/cache별 삭제 시점과 최대 보유 기간을 확정해야 한다.
+- 사진 삭제는 공개 중단, D1 상태, R2 object, KV/cache를 모두 확인하며 원본 업로드 파일은 보관하지 않는다.
+- 댓글·신고·감사·오남용 기록은 분쟁과 법적 의무에 필요한 최소 범위만 보유하되, 항목별 최대 기간과 파기 주기가 확정되기 전에는 외부 UGC를 열지 않는다.
+- 열람·정정·삭제·처리정지·동의 철회·계정/익명 활동 삭제 요청은 검증된 채널, 최소 본인 확인, 처리 결과와 이의제기 안내를 가져야 한다.
+- backup, cache, log에 남는 잔존 데이터의 삭제 경계와 예외 사유를 최종 처리방침 및 store disclosure와 일치시킨다.
 
 ## Source Activation
 
@@ -65,8 +96,11 @@ NAVER Maps는 공공데이터 source와 분리해 `docs/naver-maps-release-opera
 
 | Gate | Named reviewer | Review date | Policy version | Evidence | Decision |
 | --- | --- | --- | --- | --- | --- |
-| 개인정보·위치·계정삭제 | pending | pending | 2026-07-10 draft | final public URLs required | blocked |
-| UGC 운영·온콜 | pending | pending | 2026-07-10 draft | staging queue drill required | blocked |
+| 개인정보·위치·계정삭제 | pending | pending | privacy-beta-2026-07-22-v1 | operator/controller, retention, Cloudflare classification, final public URL required | blocked |
+| 이용약관·미성년자·분쟁 | pending | pending | terms-beta-2026-07-22-v1 | operator identity, location-law decision, minors and disputes review required | blocked |
+
+외부 공개 후보는 `SILSIGAN_PRIVACY_POLICY_URL`, `SILSIGAN_SUPPORT_URL`, `SILSIGAN_TERMS_URL`을 서로 다른 최종 HTTPS URL로 고정하고 release-state 검사를 통과해야 한다. 현재 `workers.dev` 값은 후보 경로 검증용이며 owner-domain과 named legal review를 대신하지 않는다.
+| UGC 운영·온콜·이의제기 | pending | pending | support-beta-2026-07-22-v1 | named trust-safety owner, verified channel, SLA and staging queue drill required | blocked |
 | 공공데이터 source rights | research prepared | pending | `docs/source-rights-research-2026-07-19.md` | named reviewer + admin source audit required | blocked |
 | iOS/Android store disclosure | pending | pending | `docs/store-privacy-disclosure-draft.md` | archive privacy report + console answers + real-device QA required | blocked |
 | 광고 M6/M8 | pending | pending | not activated | `ADS_ENABLED=false` | blocked |
@@ -80,5 +114,8 @@ NAVER Maps는 공공데이터 source와 분리해 `docs/naver-maps-release-opera
 - raw coordinate, 원본 사진, 원본 IP, secret, 원본 파일명이 저장·로그·응답에 노출된다.
 - 신고 큐 담당자나 `MODERATION_ALERT_WEBHOOK_URL` 운영 증거가 없다.
 - privacy/support 최종 HTTPS URL 또는 store disclosure가 준비되지 않았다.
+- `/terms` 최종 HTTPS URL, 운영자 법적 정보, 개인정보 보호책임자·권리 요청 채널 또는 외부 효력 발생일이 비어 있다.
+- Cloudflare 위탁·국외 이전 분류, 위치정보법 적용 여부, 항목별 보유·파기 기간 또는 미성년자 절차가 named reviewer에게 승인되지 않았다.
+- UGC 신고·도용·초상권 처리, 재검토 담당자 분리, 이의제기 채널 또는 응답 SLA가 검증되지 않았다.
 - NAVER 소유 custom domain·대표 도메인 제한·이용 한도·알림, D1 V2 migration, R2, staging smoke, 실기기 QA가 완료되지 않았다.
 - 광고의 경우 M6 제품 승인과 M8 법무·스토어 승인이 모두 기록되지 않았다.

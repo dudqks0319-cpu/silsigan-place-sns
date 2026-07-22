@@ -1,184 +1,181 @@
 # Cloudflare staging operator packet
 
-Updated: 2026-07-20
-Scope: Cloudflare-backed TestFlight MVP evidence, not App Store production submission.
+Updated: 2026-07-22
+Scope: Cloudflare-backed staging and TestFlight MVP evidence. This packet never authorizes production deployment, production migration, provider activation, or traffic promotion.
 
-## Current Block
+## Current truth
 
-Wrangler OAuth is active. Backup-gated recovery preserved the empty legacy source table under an archive name and normal Wrangler migrations applied `0018`~`0026`. The latest corrected 2026-07-20 read-only check confirms both web Workers have deployment history, Staging D1 through `0026`, Wrangler pending 0건, migration registry alignment, core seed evidence, and zero writes from verification. R2 still returns `R2_NOT_ENABLED`, production API remains missing, separate staging/production `COST_GUARD_STATE` namespaces are provisioned and bound, and the deployment URL/origin shell is incomplete. The exact-host Turnstile widget now exists, its public site key is configured in staging/production, and staging secret storage lists both required secret names without exposing values. The staging API host has bootstrap/secret-change deployment history, but `/api/health` returns 404 and newer Wrangler version `1062068c-f06b-4090-9038-2b3d7b4cc9a1` is undeployed, so no application deployment is claimed. Current external blocks are the user-only R2 payment/terms activation hand-off, post-`0022` live R2/D1 reconciliation, first configured staging API application deployment, and live smoke evidence:
+| Surface | State |
+| --- | --- |
+| Staging API | Live at `https://silsigan-api-staging.dudqks0319.workers.dev`; the latest audited reconciliation used Workers `3,000`, D1 reads `504,922`, and D1 writes `37,386`, and generation `5` is `running`. |
+| Staging web | Live at `https://silsigan-web-staging.dudqks0319.workers.dev`; version `9058f53d-8fac-47e5-8878-795bc124a14b` embeds the exact staging API base and live mode was reverified. |
+| Staging D1 | Migrations through `0026`, aligned migration registry, no pending migration. |
+| Staging R2 | Private `silsigan-photos-staging`; zero objects/bytes, `r2.dev` disabled, no direct custom domain, bounded lifecycle rules. |
+| Turnstile | The managed widget contains the exact staging and production web hosts and the server-only staging secret name exists. A valid bounded JPEG reached the live challenge, but automation was rejected before a token was issued; do not weaken the widget. Human verification plus one bounded live upload and cleanup evidence remains pending. |
+| Official sources | KMA, TourAPI, and national-parking credentials are installed as staging secrets only. All six official provider rows and all ingestion targets remain disabled; provider applications, rights, quotas, attribution, and health approval remain separate. |
+| Production | Not promoted. Production API/migration/R2/source activation remain blocked and require separate approval. |
+
+## Resolved staging cost-guard incident
+
+The global API guard first entered `degraded` mode on 2026-07-21 with reason `automatic-70-percent-d1_rows_read`. After the first recovery it later degraded again when conservative write reservations reached the 70% boundary. This was not bypassed.
+
+- application ledger: 1,583 admitted requests and 3.5M reserved rows read
+- Cloudflare D1 dashboard: about 87.9k actual rows read for the visible billing period
+- D1 Insights: the heaviest public query averaged 59 rows read
+- cause: the previous standard/high-cost reservations were 1,000/10,000 rows, far above observed use
+- remediation code: standard reads now reserve 100 rows and high-cost reads 500 rows, retaining roughly eightfold headroom on the observed high-cost query
+- recovery evidence: role-separated staging admin credentials were installed without exposing values; Cloudflare GraphQL and D1 aggregates recorded Workers `2,595`, rows read `139,994`, and rows written `3,220` at `2026-07-21T12:08:29.507Z`
+- latest recovery evidence: on 2026-07-22 the Cloudflare dashboard and D1 Insights were re-read; actual bounded observations were Workers `3,000`, D1 rows read `504,922`, and rows written `37,386`
+- current safety state: the admin-only reconciliation rebased conservative reservations while non-running, the atomic resume advanced the guard to generation `5`, and the staging web returned to live data mode
+
+The incident is resolved for staging, but the control contract is unchanged: never update `api_cost_guard_control` directly. Any later stop/resume must use the admin API with fresh Cloudflare observations and remain fail-closed if the token, reconciliation, generation, or below-70% predicates cannot be verified. Live pre-Worker WAF and invocation-free static-routing evidence remains a separate release gate.
+
+## Secret inventory
+
+Verify names only:
 
 ```bash
-pnpm cf:external-state
+pnpm exec wrangler secret list --env staging --config workers/api/wrangler.jsonc
 ```
 
-The expected account-level blocker until the checkout hand-off is complete is R2:
+Expected existing names:
+
+- `KMA_SERVICE_KEY`
+- `TOUR_API_SERVICE_KEY`
+- `NATIONAL_PARKING_SERVICE_KEY`
+- `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET`
+- `SILSIGAN_TURNSTILE_SECRET_KEY`
+- `ADMIN_TOKENS`
+
+Pending staging-only names:
+
+- `ITS_SERVICE_KEY`
+
+Never print values. Never write them into `.env.example`, Git, D1, logs, browser storage, query strings, or release artifacts. `ADMIN_TOKENS` is a JSON object with independent `operator`, `moderator`, and `admin` values. Generate each token independently with cryptographic randomness and keep the temporary transfer file outside the repository with owner-only permissions; delete it after installation and smoke.
+
+## Provider application state
+
+- data.go.kr: user login and CAPTCHA are required before KMA and national-parking applications can be reviewed.
+- TourAPI: TourOnePass SNS login is required before application/OAuth review.
+- ITS: the logged-in form is prepared with `상업용 민간`, the staging web URL, and only traffic flow plus CCTV metadata. It has not been submitted.
+- Existing KMA, TourAPI, and national-parking credential candidates were installed by secret input on 2026-07-21 without printing their values. A read-only D1 check then confirmed all six official provider rows and every ingestion target remain disabled. The enabled `user_report` row is the separate UGC source. ITS remains unissued.
+
+Provider-specific daily application limits are checked at deployment and before network access:
+
+| Source | Daily reservation limit | Notes |
+| --- | ---: | --- |
+| KMA | 5,000 | Maximum two attempts are reserved per run. |
+| TourAPI | 500 | Keep below the key's approved quota. |
+| National parking | 100 | Static batch/incremental collection only. |
+| ITS traffic + CCTV | 500 shared | The two APIs cannot each consume 500. |
+| Seoul realtime | 500 | Feature flag and targets remain off. |
+
+Set a source limit to `0` for an immediate provider-specific kill switch. An invalid, negative, missing-in-production, or above-ceiling configuration fails deployment or runtime closed.
+
+## Read-only verification
+
+Run these before any mutation:
 
 ```bash
-pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000
-```
-
-Expected current result before the user finishes checkout: R2 is not enabled or not yet visible.
-
-Cloudflare requires adding the R2 subscription through Dashboard checkout before bucket evidence can pass:
-
-1. Open Cloudflare Dashboard.
-2. Go to `Storage & databases` -> `R2` -> `Overview`.
-3. The account owner enters payment/billing details, accepts the two billing/terms consents, and presses the final activation button. This step is never automated.
-4. Return to this packet and run the commands below.
-
-Do not run App Store submission steps from this packet.
-
-## After R2 Subscription
-
-First verify account-level R2 visibility:
-
-```bash
-pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000
-```
-
-If the account is enabled but the staging bucket is missing, create only the configured staging bucket:
-
-```bash
-pnpm cf:r2:evidence -- --env=staging --apply --timeout-ms=120000
-```
-
-Keep the bucket private. Do not enable `r2.dev`, a public custom domain, or direct client credentials; every file read stays behind the Worker.
-
-`pnpm cf:r2:evidence` now verifies this fail-closed: after bucket visibility it runs read-only `r2 bucket dev-url get` and `r2 bucket domain list` checks for every configured bucket. Any enabled `r2.dev` URL, direct R2 custom domain, or unrecognized/failed privacy response stops the release evidence instead of assuming the bucket is private.
-
-Production bucket creation is a separate production action:
-
-```bash
-pnpm cf:r2:evidence -- --env=production --apply --confirm-production --timeout-ms=120000
-```
-
-Keep production bucket creation separate from the staging MVP unblock unless production evidence is explicitly needed in the same run.
-
-## Staging Deploy Inputs
-
-After R2 is enabled, set the staging URLs in the shell that will run the release evidence:
-
-```bash
-export SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker-api>
-export SILSIGAN_STAGING_PAGES_URL=https://<staging-pages>
-```
-
-For mutation/admin smoke, also set:
-
-```bash
-export SILSIGAN_STAGING_ADMIN_TOKEN=<redacted-admin-token>
-export SILSIGAN_STAGING_TAIL_LOG_FILE=artifacts/cloudflare-tail/staging-tail.log
-```
-
-The following staging Worker-only secrets are installed without printing or committing their values:
-
-- `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET`: generated with cryptographic randomness
-- `SILSIGAN_TURNSTILE_SECRET_KEY`: the server-only secret for the exact-host widget
-- `COST_ALERT_WEBHOOK_URL`: operator-owned HTTPS notification bridge
-- `COST_ALERT_WEBHOOK_TOKEN`: optional bearer secret for that bridge
-
-The Turnstile widget is restricted to the selected staging/production web hosts, and source commit `30360956cd4aad29b145dce664f8bc7943bd5874` places its public site key as `SILSIGAN_TURNSTILE_SITE_KEY` in both environment configurations. Keep `SILSIGAN_PHOTO_TURNSTILE_REQUIRED=1`. The public key may be returned by `/api/config`; the staging secret is already in Worker secret storage and must never be printed or committed. `wrangler secret list --env staging` must show both required names immediately before deploying version `1062068c-f06b-4090-9038-2b3d7b4cc9a1` or a later equivalent version. Production secret installation remains a separate production action.
-
-The `PUBLIC_API_RATE_LIMITER`, `PHOTO_UPLOAD_RATE_LIMITER`, and `PHOTO_READ_RATE_LIMITER` bindings must all be present in the deployed Worker. `SILSIGAN_PUBLIC_RATE_LIMIT_REQUIRED=1` makes a missing general limiter fail closed in staging/production. The public limiter admits at most 120 requests per minute per hashed Cloudflare client IP before CORS preflight, routing, or any D1 access; photo traffic then passes its narrower dedicated limit. General JSON bodies are streamed through a 64 KiB ceiling before parsing, the legacy photo JSON path keeps its separately bounded image allowance, and multipart photo requests are bounded before `formData()` parsing even when `Content-Length` is absent. Missing bindings, Turnstile proof/configuration, or the photo HMAC secret fail closed.
-
-Do not commit these values.
-
-## Pre-Smoke Verification
-
-Run non-mutating checks first:
-
-```bash
+pnpm cf:preflight:staging
 pnpm cf:external-state
 pnpm cf:d1:evidence -- --env=staging --check --timeout-ms=120000
-pnpm cf:d1:evidence -- --env=production --check --timeout-ms=120000
-pnpm cf:preflight
+pnpm cf:r2:evidence -- --env=staging --check --timeout-ms=120000
+pnpm exec wrangler secret list --env staging --config workers/api/wrangler.jsonc
 ```
 
-The corrected remote D1 check uses only `sqlite_schema` and `pragma_table_info` to locate the first incomplete boundary before any table data query. The latest Staging run passes through `0026`; `wrangler d1 migrations list` reports no pending migrations, and registry plus core seed evidence agree. A mode-`0600` pre-change export with recorded SHA-256 exists outside the repository and must remain preserved. Because `0022` is present, compare D1 active/pending-cleanup bytes with live R2 and complete the audited resume acknowledgement before any Images/R2 write smoke. The dedicated `COST_GUARD_STATE` namespaces already exist separately from `CACHE`; verify public/admin/high-cost rate-limit bindings, keep `SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED=1`, and prove the 60% warning, 70% degradation, 80% stop, essential snapshot, and fresh below-70% reconciliation gate. Keep `SILSIGAN_ANON_SESSION_REQUIRED=1` and `SILSIGAN_ANON_SESSION_DAILY_LIMIT=5000` in staging/production.
+Inspect only aggregate cost state:
 
-Set all selected HTTPS endpoints before smoke:
+```sql
+SELECT mode, reason, automatic_metric, generation, updated_at
+FROM api_cost_guard_control
+WHERE id = 1;
+
+SELECT day_utc, admitted_requests, reserved_workers_requests,
+       reserved_rows_read, reserved_rows_written,
+       observed_workers_requests, observed_rows_read,
+       observed_rows_written, updated_at
+FROM api_cost_guard_daily
+ORDER BY day_utc DESC
+LIMIT 2;
+```
+
+Do not include account IDs, tokens, raw IPs, anonymous proofs, exact GPS, filenames, request bodies, or provider payloads in shared evidence.
+
+## Audited API guard recovery
+
+Prerequisites:
+
+1. Role-separated staging `ADMIN_TOKENS` is installed and operator/moderator/admin denial boundaries have been verified.
+2. Cloudflare dashboard or GraphQL observations are current and below 70% for Workers requests, D1 rows read, and D1 rows written.
+3. The calibrated Worker version is deployed.
+4. The operator records the observation through `POST /api/admin/api-cost-guard/reconciliations` using the admin role.
+5. If the application reservation is known to be an overestimate, send `rebaseReservedEstimates: true` with the current `expectedGeneration`. The server accepts this only while the guard is `degraded` or `stopped`, only for the current UTC day, and only with an observation no older than 15 minutes. It records the prior aggregate reservations in `admin_actions` before rebasing them to the monotonic observed counters. Never update D1 directly.
+6. The operator requests resume through `PATCH /api/admin/api-cost-guard`; the server repeats freshness, generation, and all below-70% predicates in the same D1 transaction.
+
+After recovery, run one read-only smoke:
 
 ```bash
-export SILSIGAN_STAGING_API_BASE_URL=https://<staging-worker-api>
-export SILSIGAN_STAGING_PAGES_URL=https://<staging-pages>
-export SILSIGAN_PRIVACY_POLICY_URL=https://<staging-pages>/privacy
-export SILSIGAN_SUPPORT_URL=https://<staging-pages>/support
+SILSIGAN_STAGING_API_BASE_URL=https://silsigan-api-staging.dudqks0319.workers.dev pnpm smoke:staging
 ```
 
-Do not use localhost, credentials, query strings, or fragments in these values, and do not commit them.
+If `/health` remains 429, do not retry repeatedly. Re-read the stable error code and aggregate guard state.
 
-## Staging Smoke
+## Photo write smoke
 
-Read-only Worker smoke:
+The API guard is running and the photo control was reconciled against R2 `0 B` plus zero active D1 photo bytes before uploads were re-enabled. A valid approximately 194 KiB JPEG was selected through the real staging web file picker on 2026-07-22. The exact-host managed Turnstile challenge appeared, but the automation environment was rejected before a token was issued, so no upload success or R2 object is claimed. Do not switch the widget to a weaker mode or bypass Turnstile. After a user completes the visible challenge, continue with the same image through the real upload-ticket flow; do not use the legacy `/api/photos/complete` harness against live staging. Verify the pending row, moderate with the admin-only endpoint, read through the guarded Worker, then reject/delete the smoke row and confirm R2 returns to `0 B`.
+
+Required evidence:
+
+- Turnstile success and invalid/mismatched-token rejection
+- one-use upload ticket and replay rejection
+- private original path never publicly reachable
+- MIME, magic-byte, size, dimensions, EXIF/GPS stripping, re-encoding, and duplicate checks
+- pending moderation before approval
+- role denial for operator/moderator/admin boundaries
+- approved read through the guarded Worker only
+- delete plus zero residual R2 objects/bytes
+- D1 storage release exactly once
+- no secret, raw location, original filename, request body, or object key in logs
+
+Stop and clean up immediately if any object remains, a public R2 route exists, a quota counter diverges, or a retry performs a second paid transformation/write.
+
+## Deployment commands
+
+Staging API only:
 
 ```bash
-pnpm smoke:staging
+pnpm exec wrangler deploy --env staging --config workers/api/wrangler.jsonc
 ```
 
-Mutation/admin smoke:
+Staging web only, after a fresh `pnpm cf:build`:
 
 ```bash
-SILSIGAN_STAGING_MUTATION=1 pnpm smoke:staging -- --require-admin
+pnpm exec wrangler deploy --env staging --config wrangler.jsonc
 ```
 
-This mutation smoke first issues server-bound anonymous credentials, attaches both `x-silsigan-anon-id` and `x-silsigan-anon-proof` to every user write and cleanup, rejects a forged proof, rotates the proof and rejects the old value, revokes it and rejects reuse, then revokes the main smoke sessions. Configuration and local tests must prove the 3 requests/60 seconds binding, hashed limiter key, fail-closed missing-binding path, exact D1-wide 5,000/day reservation, `0` kill switch, and no recent-session `last_seen_at` refresh more than once per 24 hours. Because Cloudflare's edge limiter is POP-local and eventually consistent, an exact fourth live rejection is observational evidence only, not the accounting gate; the `0024` D1 reservation is authoritative. The smoke records only pass/fail metadata and never prints either credential.
+These commands do not authorize their production equivalents. Before any staging deploy, run focused tests, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm verify:cloudflare` in proportion to the diff.
 
-Pages browser smoke:
+## Remaining release gates
 
-```bash
-pnpm smoke:pages
-```
+- provider submissions, issued keys, rights/attribution/quota/health proof, then one-source-at-a-time activation starting with KMA
+- role-separated admin setup, API guard recovery, and bounded R2 mutation smoke
+- Cloudflare WAF/rate-limit and billing alert evidence; application rejection cannot prevent a request already reaching Workers from counting
+- owner-controlled domain and NAVER valid-origin/invalid-origin plus notification-recipient evidence
+- Workers tail redaction and moderation/on-call drill
+- iPhone and Android real-device evidence
+- final privacy/support/location/UGC/data-retention/open-source/store disclosures with named legal/operations review
+- separate production D1/R2/API/source/traffic approval
 
-Tail redaction:
+## Stop conditions
 
-```bash
-pnpm smoke:tail-redaction -- --tail-file="${SILSIGAN_STAGING_TAIL_LOG_FILE}"
-```
+Keep the release blocked when any of these is true:
 
-Final staging release-candidate gate:
-
-```bash
-pnpm release:gate -- --release-candidate --tail-file="${SILSIGAN_STAGING_TAIL_LOG_FILE}" --timeout-ms=120000
-```
-
-## NAVER Maps custom-domain prerequisite
-
-Do not mark NAVER Maps ready on the current `workers.dev` URLs. NAVER's official Application guide registers a representative web domain rather than an exact subdomain, so a shared hosting suffix is not acceptable Client ID restriction evidence.
-
-Before adding NAVER variables to the staging candidate:
-
-1. Attach an owner-controlled custom domain to the staging and production web Workers.
-2. Complete the account-owner steps in `docs/naver-maps-release-operator-packet.md`.
-3. Set `SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN` to the owned registrable domain and `SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS` to the exact custom HTTPS web origins.
-4. Confirm the NAVER representative account, save monthly/daily hard limits no higher than `4,800,000`/`160,000`, choose an alert threshold no higher than `70%`, and configure a real notification recipient.
-5. Set `SILSIGAN_NAVER_MAP_REPRESENTATIVE_ACCOUNT_CONFIRMED=1`, `SILSIGAN_NAVER_MAP_MONTHLY_HARD_LIMIT`, `SILSIGAN_NAVER_MAP_DAILY_HARD_LIMIT`, `SILSIGAN_NAVER_MAP_ALERT_THRESHOLD_PERCENT`, and `SILSIGAN_NAVER_MAP_ALERT_RECIPIENT_CONFIRMED=1` only after masked console evidence matches those values.
-6. Keep the fallback map active until valid-origin success and invalid-origin rejection are both captured.
-
-## Evidence To Capture
-
-Record these outputs or artifact paths in `docs/current-release-state.md` and `RELEASE_STATUS.md`:
-
-- R2 staging check/apply result
-- `cf:external-state` blocker list after R2 and URL setup
-- staging Worker smoke JSON summary
-- Pages browser smoke screenshot, network artifact, and console artifact
-- tail redaction result
-- release gate result counts and failed steps
-
-## Stop Conditions
-
-Stop before App Store production submission.
-
-Stop and document the exact blocker if any of these remain true:
-
-- `CLOUDFLARE_AUTH_REQUIRED` is returned by `pnpm cf:external-state`
-- R2 still returns `R2_NOT_ENABLED`
-- R2 privacy evidence returns `R2_PUBLIC_DEV_URL_ENABLED`, `R2_PUBLIC_CUSTOM_DOMAIN_CONFIGURED`, `R2_DEV_URL_CHECK_FAILED`, or `R2_CUSTOM_DOMAIN_CHECK_FAILED`
-- production D1 still lacks required remote evidence at `D1_0006_NOT_APPLIED`; Staging passes through `0026`, but post-`0022` live R2/D1 reconciliation remains required before uploads resume
-- Local matching-static-asset and directory-mode contracts pass, and the 2026-07-20 local Chrome 503 harness under `artifacts/static-directory-failover` confirms zero post-fallback API/NAVER-provider/analytics requests; live WAF/rate-limit and invocation-free static asset routing evidence is still missing because application code cannot prevent a request already reaching the Worker from counting against the Workers allowance
-- staging loses the exact-host Turnstile widget, public site key, either verified secret name, or live action/hostname validation after application deployment
-- `SILSIGAN_STAGING_API_BASE_URL` is missing or non-HTTPS
-- `SILSIGAN_STAGING_PAGES_URL` is missing or non-HTTPS
-- `SILSIGAN_PRIVACY_POLICY_URL` or `SILSIGAN_SUPPORT_URL` is missing or non-HTTPS
-- `SILSIGAN_STAGING_ADMIN_TOKEN` is missing for mutation/admin smoke
-- captured Workers tail log is missing for release-candidate evidence
+- global API guard is degraded/stopped without a fresh audited reconciliation
+- R2 privacy or zero-residual cleanup cannot be proven
+- staging admin roles are missing or share one token
+- provider terms, quota, attribution, credential health, or ownership are unclear
+- an official source target becomes active before its policy audit
+- WAF, alert ownership, moderation SLA, real-device, or legal evidence is missing
+- any secret or sensitive identifier appears in source, logs, screenshots, or artifacts
+- a proposed action targets production without separate user approval

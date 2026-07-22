@@ -1,16 +1,16 @@
 # Official source ingestion scheduler runbook
 
-Updated: 2026-07-19  
+Updated: 2026-07-21
 Scope: staging-first automatic ingestion for approved public data sources. This runbook does not authorize a production deployment or source activation.
 
 ## Current state
 
-- Migrations `0018_source_ingestion_scheduler.sql` and `0019_background_job_delivery.sql` are applied to Staging; the Worker `scheduled()` handler is ready locally but the API Worker is not deployed.
+- Migrations through `0026_global_api_cost_guard.sql` are applied to staging and the staging API Worker is deployed.
 - Staging and production declare `*/5 * * * *` so photo cleanup and publication delivery can run in both environments. Root development has no Cron.
 - `SILSIGAN_SOURCE_INGESTION_SCHEDULED=1` exists only in staging. Production is fixed to `0`, so production Cron cannot call external data providers before separate rights approval.
-- Staging D1 now passes the scheduler and global cost-guard schema boundaries through `0026`, Wrangler reports no pending migrations, and zero unsafe active targets are verified. Source ingestion must remain disabled until provider rights, credentials, quota, health, and post-apply safety evidence pass.
+- Staging D1 passes the scheduler and global cost-guard schema boundaries through `0026`, Wrangler reports no pending migrations, and zero unsafe active targets are verified. Source ingestion must remain disabled until provider rights, credentials, quota, health, and post-apply safety evidence pass.
 - No scheduler target is seeded. Every new target defaults to `enabled=0`, so deploying the code alone cannot call a provider.
-- R2 is not enabled and the API Worker does not exist yet. No scheduled ingestion is currently running.
+- The private staging R2 bucket and staging API/Web Workers exist, but no official-source target is enabled. The Cron runs only cleanup/publication maintenance until a reviewed source target is explicitly enabled.
 
 ## Security invariants
 
@@ -27,6 +27,22 @@ The scheduler must preserve all of these conditions:
 9. Cron availability is not source authorization. External source ingestion runs only when `SILSIGAN_SOURCE_INGESTION_SCHEDULED=1`; photo cleanup and publication outbox processing remain independent.
 10. Cleanup and publication jobs use separate conditional leases and completion fencing. Failures use bounded backoff and dead-letter after the configured maximum; logs expose only aggregate counts and stable error codes.
 11. Photo cleanup releases reserved storage bytes at most once and only after the R2 object is gone or confirmed absent. Publication fanout is server-authored; clients cannot publish into realtime rooms.
+12. Every provider run writes its `api_ingestion_runs` reservation before network access. The daily count uses the Korea Standard Time calendar day and reserves the gateway's maximum two attempts, so a UTC/KST boundary or retry cannot silently double the provider quota. Rejected reservations are marked `quota_exceeded` and never call the provider.
+13. ITS traffic and CCTV consume one shared daily budget. Configuration can only lower compiled ceilings; `0` is an immediate provider-specific kill switch. Missing, invalid, or negative values fail closed to `0` rather than enabling unbounded calls.
+
+## Provider request budgets
+
+These limits are application safety ceilings, not promises about provider quotas. Confirm each approved key's actual quota in the provider console and lower the application setting when the provider quota is smaller.
+
+| Source | Environment variable | Current daily limit | Compiled maximum | Notes |
+| --- | --- | ---: | ---: | --- |
+| KMA | `SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT` | 5,000 | 5,000 | Each run reserves up to two attempts. |
+| TourAPI | `SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT` | 500 | 500 | Deliberately below the commonly shown development quota. |
+| National parking | `SILSIGAN_NATIONAL_PARKING_DAILY_PROVIDER_REQUEST_LIMIT` | 100 | 500 | Static collection should use batch/incremental refresh, not live polling. |
+| ITS traffic + CCTV | `SILSIGAN_ITS_DAILY_PROVIDER_REQUEST_LIMIT` | 500 shared | 500 | Traffic and CCTV cannot each consume the full amount. |
+| Seoul realtime | `SILSIGAN_SEOUL_REALTIME_DAILY_PROVIDER_REQUEST_LIMIT` | 500 | 500 | Keep the feature flag and targets off until regional approval. |
+
+The deployment preflight rejects missing, non-integer, or above-ceiling values. Runtime budget windows reset at `00:00 Asia/Seoul`; malformed timestamps fail closed before network access. Set a source value to `0` and deploy staging to stop that provider without disabling photo cleanup or publication jobs.
 
 ## Local fixture fallback evidence
 
@@ -45,6 +61,7 @@ Do not enable any target until all boxes are recorded in the release evidence:
 - [ ] Source registry `enabled`, `commercial_use_status`, `health_status`, and `enabled_regions_json` are correct and audited.
 - [ ] The provider credential is installed as a Worker secret (`KMA_SERVICE_KEY`, `ITS_SERVICE_KEY`, or `SEOUL_REALTIME_SERVICE_KEY`) and is absent from Git, D1, logs, and browser code.
 - [ ] Provider quota and expected calls per day are calculated from the effective refresh interval and enabled target count.
+- [ ] The provider-specific daily limit is no greater than the approved key quota, includes the two-attempt reservation, and has a tested `0` kill-switch rollback.
 - [ ] Provider `observedAt`, local `fetchedAt`, TTL, attribution, stale behavior, and circuit-breaker behavior pass staging evidence.
 - [ ] The target remains `enabled=0` during review, and its place/source mapping is verified.
 - [ ] For Seoul, `SEOUL_REALTIME_ENABLED` and the Seoul region flag remain off until the separate regional approval is complete.

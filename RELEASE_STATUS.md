@@ -1,76 +1,146 @@
 # Release Status
 
+Updated: 2026-07-22
+
 ## 한 줄 상태
 
-V2 로컬 구현은 전체 테스트를 통과했고, 전국 기본 탐색, 사진·해시태그·현장 상태의 단일 발행 묶음, 멱등 재시도, 환경별 정확한 브라우저 쓰기 origin 차단, 공개 API admission limiter, streamed JSON·multipart 상한, 웹 보안 헤더, 무료 R2·D1·Images 비용 및 분산 공격 방어까지 현재 작업 트리에 반영되어 있습니다. 사진 업로드는 server-side Turnstile action/hostname/IP 검증 후에만 5분 HMAC 티켓을 받고, 사진 조회는 query-insensitive Worker cache와 HMAC 기반 1,000 cache-miss/IP/day 원장을 통과합니다. iPhone HEIC/HEIF는 네이티브에서 bounded JPEG로 변환하고 JPEG magic byte까지 확인합니다. 외부 장소검색 결과는 저장하지 않으며, 사용자가 직접 입력한 미등록 장소만 비공개 검토 큐에 접수해 세션당 하루 3건과 전역 하루 1,600건에서 선차단하고 자동 공개하지 않습니다. `0026` 전역 API 비용 원장은 Workers/D1 추정치와 Cloudflare 관측치를 함께 사용해 60%에서 중복 없는 운영 알림, 70%에서 비필수 기능 제한, 80%에서 개인정보 삭제·비상 제어를 제외한 중단을 수행하며, 전국 핵심 조회는 D1 쓰기가 없는 Worker 내 snapshot으로 전환합니다. API Worker 자체가 한도 소진·공격·장애로 응답하지 못하면 웹은 Worker를 호출하지 않는 `/silsigan/snapshots/nationwide-places.v1.json`으로 전환해 검증된 5개 장소 위치만 표시하고, 실시간 상태·사진·제보·점수·사용자 데이터·분석 전송·자동 재시도·realtime·NAVER SDK·외부 검색·쓰기를 모두 중단합니다. 중단 후 재개는 브라우저 체크박스가 아니라 15분 이내 Cloudflare 사용량 대조와 Worker의 서버 검사를 요구합니다. 로컬 `0018` source scheduler부터 `0026` global API cost guard까지 준비됐고, 익명 ID만 훔친 요청, 잘못된·회전 전·폐기된 증명을 Worker와 하네스가 거부합니다. 익명 세션 신규 발급은 D1 접근 전에 IP 해시 기준 분당 3회로 우선 제한되며, POP가 다른 분산 요청도 D1의 원자적 UTC-day 원장에서 기본 5,000회까지만 허용됩니다. 공개 `GET/HEAD`는 세션 발급 없이 실행되므로 공격자가 신규 발급 예산을 소진해도 장소·지도·승인 사진 조회는 계속 동작하고, 쓰기와 개인정보성 조회만 서버 결합 proof를 지연 발급합니다. 설정값 `0`은 즉시 발급을 중단하고, 원장 누락은 세션 insert 전에 실패 폐쇄하며, 만료·오래된 폐기 세션과 과거 발급 원장은 5분 Cron으로 정리됩니다. 정상 세션의 `last_seen_at`은 최대 24시간에 한 번만 갱신합니다. 새 안전 경계 하네스로 기존 staging legacy 경계를 확인하고 외부 백업·로컬 복원 훈련을 마친 뒤 정상 Wrangler migration으로 `0018`~`0026`을 적용했습니다. 후속 읽기 전용 검증은 Staging 스키마 `0026`, pending 0건, migration registry 일치, core seed 보존을 확인했습니다. 변경 전 외부 백업은 보존되어 있습니다. 전용 `COST_GUARD_STATE` KV는 staging/production에 분리 생성·바인딩됐습니다. exact-host Turnstile widget/public key/staging secrets까지 준비됐지만 실제 계정 WAF/rate-limit·정적 routing 증거, R2 최종 활성화/버킷, staging API application/healthy URL/live Turnstile smoke, production Turnstile secret/API/D1, NAVER custom domain, source 권리, 법무·운영 서명, native 실기기 증거가 남아 public release는 `blocked-external`입니다.
-
-상세 source of truth는 [docs/current-release-state.md](docs/current-release-state.md), 통합 완성계획은 [docs/silsigan-v2-master-completion-plan-2026-07-21.md](docs/silsigan-v2-master-completion-plan-2026-07-21.md), 11개 결정은 [docs/v2-decision-register.md](docs/v2-decision-register.md), 법무·운영 중단 조건은 [docs/v2-legal-operations-gate.md](docs/v2-legal-operations-gate.md)이다.
+실시간 V2는 Cloudflare staging의 private R2, D1 `0026`, 웹, 전국 장소 조회, 비용 방어, 실제 NAVER 지도까지 연결됐습니다. 2026-07-22 미출시 상태의 열린 staging 탭 2개와 중복 KV 조회가 Workers KV 읽기를 지속 발생시킨 원인을 확인해 탭을 닫고, Turnstile secret을 회전해 staging에만 다시 설치했으며, 보이는 탭 1개만 60초마다 경량 갱신하고 공개 요청당 비용 가드 KV를 1회만 읽도록 수정·재배포했습니다. 사진 비용 원장은 R2 `0 B`와 대조해 쓰기를 재개했지만, 1 MiB 이하 실제 브라우저 업로드의 검수·공개·삭제 스모크는 아직 끝나지 않았습니다. 공공데이터 소스와 production은 계속 닫혀 있어 현재 상태는 `staging_running_kv_remediated_photo_turnstile_smoke_pending_production_blocked`입니다.
 
 ## 현재 후보
 
 - Version: `0.1.0`
-- Build: `not_applicable`
-- Base Git SHA: `48e672aa3f9ece06e31f40305fc6e080c69fb479`
-- Branch: `codex/silsigan-progress-20260710`
-- Phase: `v2_local_ready_external_blocked`
-- Local checks: full `pnpm verify` passed on source candidate `48e672a`: root tests `435/435`, mobile tests `4/4`, lint, typecheck, Next.js 16.2.6 build with 26 pages/routes, WebView check, OpenNext build, and staging/production web/API Wrangler dry-runs. `pnpm audit:security` reports no known root/mobile vulnerabilities; the final 399-file high-confidence secret-pattern scan found no hits and only `.env.example` is tracked. The final photo contract is 1 MiB server-side after bounded client re-encoding, with a 12 MiB local-source ceiling, 20 uploads and 20 MiB per IP fingerprint per day, one-use tickets, idempotency, Turnstile, and the existing global 60/70/80 controls.
-- GitHub Actions run `29788726774` passed both deterministic `verify` and Android lint/debug-shell build jobs. The only annotations are upstream Actions v4 Node 20 deprecation notices forced to Node 24 by the runner; no repository test or build failed.
-- Vercel preview: deployment `dpl_82KfB9KGLrpysFVRjGnr36qDHnHN` is `Ready`; authenticated home is `200`, while live API is intentionally `503 LIVE_BACKEND_REQUIRED`
-- External state: the latest 2026-07-21 read-only check confirms Wrangler auth, staging API/web and production web deployment histories, configured R2/D1/Worker names, staging D1 through `0026` with V2/core seed evidence, and both environment dry-runs. It still returns `R2_NOT_ENABLED`, missing production API deployment, missing staging/production URL and exact-origin environment values, and production `D1_0006_NOT_APPLIED`. Staging API history is not treated as a healthy application response.
-- Identity decision: anonymous-first with local server-bound 256-bit proof, proof rotation/revocation, exact daily issuance budget, and optional signed member-link seam; staging `0023`/`0024` schema evidence now passes, while API deployment, owner-domain live proof, and external member login remain pending
-- Deferred features: ads, rewards, Q&A, live streams, social feed, and demo data remain disabled; Seoul realtime adapter exists locally but its feature flag and source activation remain disabled
+- Working branch: `agent/external-staging-20260721`
+- Upstream branch: `origin/codex/silsigan-progress-20260710`
+- Committed baseline before this uncommitted change set: `d7f0499ee1e83d4f53ef533f556a84d75b6a6f2e`
+- Working tree: **dirty**; the verified changes are not yet a clean release candidate
+- Upstream divergence at reconciliation: `0/0`; this proves the committed baseline matches upstream, not that the uncommitted working tree is remote
+- Source commit: fill after full verification
+- Final release-record commit: fill after push
+- Security gate: manual source/diff review, dependency audit, negative-path regressions, and high-confidence secret scan passed; optional Codex Security UI scan remains a separate review aid and is not represented as completed
+- Production deploy/migration/traffic change: none
+- Deferred and disabled: ads, rewards, Q&A, live streams, social feed, demo data, Seoul realtime activation
 
-## 통과한 증거
+## 이번 staging 완료
 
-- D1 migration chain through local and staging `0026`, including the field-report publication aggregate, atomic photo storage/write and monthly/daily read budget ledgers, upload ticket claims, HMAC per-IP daily budget, upload/read emergency controls, V2 TTL/decision/conflict rules, server-owned radius and polygon/multipolygon verification plus coarse accuracy fallback, field-report pending/approve/reject visibility gates, neutral `unknown` handling for missing status/report observations, server feature gates, server-owned question-credit fail-closed behavior, source registry activation policy, public-data adapters, trust-safety identity, account deletion, analytics redaction/sink, persistent anonymous preferences, Capacitor bridge/navigation, and release guards pass in the full suite.
-- The local public-source fallback harness passes all six actual adapters through network, fresh cache, simulated outage, bounded stale/degraded fallback, and expired `insufficient`; its aggregate-only artifact reports `sensitiveHits=[]`. Real provider rights, credentials, quotas, and staging health/ingestion remain external.
-- Worker 고갈 비상 탐색은 별도 정적 자산에 검증된 core seed 5곳의 장소 기본정보만 포함합니다. 엄격한 allowlist parser가 live score/report/photo/time/user 필드, 중복·unsafe ID, 미검증 또는 국내 범위 밖 좌표, 500개 초과 catalog를 거부합니다. `wrangler.jsonc`의 matching asset은 `run_worker_first=false` 기본 계약을 유지하며, 보호 모드에서는 API polling/realtime/analytics/NAVER SDK/외부검색/모든 쓰기를 끄고 `최근 확인 정보 없음`만 표시합니다. 2026-07-20 로컬 Chrome 503 장애 하네스는 초기 API 요청 2건 뒤 추가 API 요청 0건, 정적 asset 1건, NAVER provider 0건, analytics 0건과 기본 장소 5곳 표시를 확인했습니다. 증거는 `artifacts/static-directory-failover/static-directory-failover-1784505764761.png`와 `static-directory-failover-network-1784505764761.json`입니다. 이 우회의 실제 invocation-free staging/production 증거는 아직 외부 blocker입니다.
-- The Cloudflare rollback harness is non-mutating, rejects execution flags, and uses only `wrangler deployments list --json` for optional live discovery. A 2026-07-20 read-only staging web check selected current version `e87e79d5-5d30-43dc-adfe-1b5393a3b8d2` and prior stable version `d7c2bab9-101f-4d2c-a8c3-0b02e9f6e14e` with redacted evidence under `artifacts/cloudflare-rollback-drill/staging-web-readonly.json`; no rollback or traffic change occurred. The actual rollback/smoke/forward-restoration exercise remains approval-gated.
-- Private R2 photo writes accept only a client-reencoded 1 MiB final image and require server-side Turnstile, a five-minute signed one-use ticket, trusted Cloudflare IP, edge upload limiter, per-IP 20 uploads/20 MiB daily ledger, and global atomic budgets before Images/R2. Reads have a 120/minute limiter, canonical five-minute cache, 1,000 cache-miss/IP/day HMAC ledger, and global reservation before `R2.get`; read control and visibility are rechecked before cache hits. The Worker stops at about 3.2 GiB, 12,800 writes, 4,000 transforms, 800,000 monthly reads, or 16,000 daily reads, then rejects resume without acknowledgement or while the relevant counter remains at/above 80%.
-- Local migration `0018` adds disabled-by-default source ingestion targets, `0019` adds fenced cleanup/outbox delivery, `0020` adds the singleton Images transformation budget, `0021` adds the per-IP read-abuse ledger, `0022` prevents concurrent or retried deletion from releasing the same R2 object's storage bytes twice, `0023` stores only hashes for server-bound anonymous session IDs/proofs, `0024` adds the exact D1-wide anonymous-session issuance budget, `0025` adds the private owner-only place request queue plus per-session 3/day and global 1,600/day triggers, and `0026` adds the Workers/D1 60/70/80 전역 비용 원장·대조 기록·감사 제어입니다. `0022` fails safe by stopping uploads until an operator reconciles D1 with live R2. The place-request admin path only classifies or links a verified duplicate and never inserts a public place automatically. The five-minute cleanup consumer also removes expired upload/read abuse rows, expired or old-revoked sessions, and old issuance-budget rows. No source target is seeded or enabled.
-- Durable Object realtime uses the SQLite backend required for new namespaces and the WebSocket Hibernation API so idle connections can sleep without pinning billable object duration. It rejects malformed or nonexistent rooms before allocation, caps each room at 100 concurrent sockets, closes any client data frame because the channel is server-to-client read-only, rejects broadcast events above 16 KiB, and persists at most 50 validated recent events per room so polling survives object hibernation/reinitialization. A room alarm deletes that buffer 10 minutes after its last broadcast so inactive nationwide rooms cannot accumulate retained event data indefinitely. The client loads an HTTP snapshot, prefers WebSocket, validates bounded scoped events, reconnects with capped backoff, and falls back to 30-second polling.
-- Remote D1 evidence now requires the scheduler table, both due/lease indexes, target and enabled-target counters, and zero unsafe active targets. A missing table or unsafe active source is redacted and fails the release gate before deployment.
-- Every Next.js route receives a restricted CSP (`base-uri`, `frame-ancestors`, `object-src`, `form-action`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, HSTS, strict-origin referrer policy, and a permissions policy that leaves camera/location available only to the app while disabling microphone access.
-- The Next.js admin panel calls that endpoint through an authenticated same-origin server proxy, rejects cross-site mutations before contacting the Worker, polls status every 60 seconds, and requires a recorded reason plus an R2/D1 reconciliation checkbox before re-enable. The same protected surface reads only aggregate beta KPIs and discards unexpected raw actor/debug fields. The 2026-07-19 local Chrome harness verified the full five-meter storage/write/Images-transform/monthly-read/daily-read surface, the whole-R2 `R2 중단` state, the reviewed `보호 작동 중` return through real stop/resume PATCH requests, and the 7-day KPI panel; screenshots are `artifacts/cloudflare-pages-smoke-worker-report-local/pages-smoke-admin-cost-guard-stopped-1784459655424.png` and `pages-smoke-admin-cost-guard-running-1784459655424.png`.
-- Disabled social-feed reads are skipped in the client, feed cards no longer consume `post.judgement`, and `/api/share/posts/:postId` uses current V2 aggregate status or `현재 정보 부족` instead of a single-post visit decision.
-- Next.js 16.2.6 production build compiles without warnings and includes `/api/admin/photo-cost-guard`, `/api/admin/api-cost-guard`, and `/api/admin/beta-kpis` in the generated application manifest.
-- Vercel project framework was corrected from `Other` to `Next.js`; the protected preview now serves the app shell instead of the previous 404 output.
-- `pnpm audit:security` checks both root and mobile lockfiles at low severity and reports no known vulnerabilities.
-- 390x844 local browser smoke passes all 58 required interactions, including explicit report-place selection, a directly clicked per-photo shooting/publishing-rights confirmation before file input activation, real My moderation counts without unfinished/internal-path copy, preference sync, explicit NAVER-result prefill with no pre-submit place-request POST, private place-addition request creation and owner-only status, user-safe map fallback, real browser photo upload/delete, place/comment/photo reporting, the unified field-report publication contract, an approved report share deep link that scrolls and focuses the exact report card, `SOCIAL_FEED_ENABLED=false`에서 `#지금` 최신 현장사진 탐색, Worker-backed 팔로우, 마이 복귀, cursor 다음 페이지 병합, admin login, aggregate/Tier A/Tier B fresh-coverage KPI rendering, five photo-cost meters and three global API-cost meters, audited photo stop/resume, global API stop, fresh Cloudflare reconciliation, below-70% resume, and server-bound anonymous-session bootstrap. The local-only account-deletion flow additionally proves the exact confirmation phrase gates the permanent action, one deletion removes all mock-owned content including place requests, a fresh server-bound session is issued, and the previous proof is rejected with 403. The latest run recorded 614 redacted network events, stores no request body, and has no sensitive hits. Home, map, place, My, hashtag, account-deletion success, photo guard stopped/running, global API guard stopped/running, console, and redacted network evidence is under `artifacts/cloudflare-pages-smoke-worker-report-local` with timestamp `1784510945721`. This is local mock-data evidence, not staging-live or native real-device evidence.
-- Public source credentials and stream URLs are not exposed; CCTV normalization drops playback URLs and treats metadata as static.
-- NAVER's official representative-domain registration model is captured in `docs/naver-maps-release-operator-packet.md`. Release-candidate checks require `SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN`, reject shared hosting domains such as `workers.dev`/`pages.dev`/`vercel.app`, and verify that every selected web URL belongs to the registered owner domain. On 2026-07-20 Computer Use created the separate `Silsigan` Dynamic Map application with localhost, the current staging/production `workers.dev` preview hosts, and Android/iOS identifier `kr.silsigan.mobile`. The public Client ID is configured in `.env.example` and the ignored local `.env.local`; the Client Secret was neither printed nor written to the repository. Localhost loaded the SDK and 13 real NAVER tiles. Current staging web version `fc15d04e-6534-44d3-b908-8ce8cbb3a336` keeps external NAVER calls at zero while API/R2 protection mode is active, displays the verified-place fallback, and provides `실시간 연결 다시 시도`. These shared hosts remain preview-only and do not satisfy the owner-domain production gate. The Cloudflare account currently has no domain or subdomain to reuse, and no domain purchase or checkout action was taken.
-- NAVER release-candidate validation fails closed unless the operator confirms a representative account, monthly/daily hard limits no higher than 4,800,000/160,000, an alert threshold no higher than 70%, and a configured recipient. The console now stores monthly `4,800,000`, daily `160,000`, over-limit use disabled, and daily/monthly `70%` alerts. The notification recipient list is empty, so delivery evidence is still missing. Only booleans and numeric console evidence enter the environment; the recipient address and Client Secret remain out of the repository and logs.
-- Original photos are not retained; binary upload-ticket flow, metadata stripping, pixel re-encoding, duplicate rejection, pending moderation, approval/rejection, R2 deletion, and retry cleanup queue paths are covered locally.
-- Pending field reports no longer create live events before approval; moderation approval commits the public status, live signal, publication record, audit event, and deterministic outbox together, while delivery rechecks approval before broadcast.
-- 전국 지도/검색은 모든 지역에서 열리되 최신 근거가 없는 장소는 순위에서 제외하고 `최근 확인 정보 없음`으로 표시한다. 장소 딥링크, 내부 뒤로가기/스크롤 복원, URL 정리, 승인된 실제 제보만 공유, 샘플 시각 구분, 키보드 탭 이동을 Chrome에서 재검증했다.
-- Native push registration keeps the platform in the bridge seam, sends only a SHA-256 token hash to D1, and clears the stored hash on opt-out; provider delivery and real-device evidence remain external.
-- Field-report moderation queue is locally connected through `/api/admin/field-reports`; the Next proxy validates admin auth, forwards only the server Worker token, and the Worker response omits raw user identity and coordinates.
-- Legacy campaign and field-question fixtures are removed locally until a server campaign registry provides approved active periods; the server feature flags remain disabled.
-- `ADS_ENABLED=false`, `LIVE_STREAMS_ENABLED=false`, and `SOCIAL_FEED_ENABLED=false` remain launch defaults.
+- [x] R2 private bucket `silsigan-photos-staging`
+- [x] `r2.dev` disabled; no direct R2 custom domain
+- [x] temporary-upload one-day expiry and multipart seven-day abort
+- [x] Staging D1 through `0026`, pending migrations 0
+- [x] Staging API/web deployment and exact staging web origin
+- [x] Earlier read-only API smoke: health, 14 places, detail/status, rankings, realtime, empty media/comments, admin deny
+- [x] Current staging API version `dc07bf4a-879a-421c-aea1-5418f9c8bc0e`; the rotated Turnstile secret is installed by name only
+- [x] Current staging web version `ad980039-5ba0-4ffb-9616-6f60eb6aea54`; build-time API base corrected and live mode reverified in the browser
+- [x] Latest audited API-cost reconciliation and below-70% resume: Workers `3,000`, D1 rows read `504,922`, rows written `37,386`; generation `5`, public live mode restored
+- [x] Browser home/map/search/detail smoke, API request budget `65/80`
+- [x] Current NAVER pstatic tiles and place markers remain after the stabilization window
+- [x] No external source ingestion target enabled
+- [x] Photo R2/D1 zero-state reconciliation and audited write resume; a valid bounded JPEG reached the exact-host managed Turnstile challenge, but human verification and the upload/moderate/read/delete cleanup smoke remain pending
+
+Staging URLs:
+
+- Web: `https://silsigan-web-staging.dudqks0319.workers.dev`
+- API: `https://silsigan-api-staging.dudqks0319.workers.dev`
+
+## 코드 변경
+
+- Public GET requests omit needless JSON `Content-Type`, avoiding preflight-only traffic.
+- Silent map/query refreshes reuse existing global state and fetch only scoped places/statuses.
+- Initial photo/comment prefetch is limited to five places; uncached place evidence loads lazily on detail open.
+- Browser smoke fails above 80 non-mutating API requests and accepts a truthful empty live ranking.
+- Legacy anonymous IDs are not sent without server proof in read-only staging smoke.
+- NAVER map health recognizes current `nrbe.pstatic.net` and `ssl.pstatic.net/static/maps` resources while retaining `auth_fail` rejection.
+- Every official provider call reserves a bounded Korea Standard Time daily request budget before network access; `0` is an emergency kill switch and invalid, malformed-time, or over-ceiling configuration fails closed.
+- KMA, TourAPI, national parking, ITS traffic/CCTV, and Seoul realtime have independent or deliberately shared server-side daily ceilings, with at most two network attempts per ingestion run.
+- Global D1 route reservations were recalibrated from staging evidence: the heaviest observed public query averaged 59 rows, while the previous 10,000-row high-cost weight drove the conservative ledger to 3,500,000 rows against about 87,870 actual rows. The deployed high-cost ceiling is now 500 rows and must still be reconciled through the audited admin path.
+- Background live refresh is now visible-tab-only, single-leader across same-origin tabs, non-overlapping, 60-second, and limited to places plus at most five status requests after initial load.
+- Public API cost-guard admission reuses its preloaded control row, so one request no longer performs the same `COST_GUARD_STATE` KV read twice; D1 remains the authoritative atomic reservation ledger.
+
+## 검증
+
+- Focused provider-budget, provider-quota, and D1 route-calibration regressions: passed.
+- TypeScript: passed.
+- OpenNext/Cloudflare build: passed, Next.js `16.2.6`, 26 pages/routes.
+- Browser smoke: passed, `65/80` API requests.
+- Real NAVER map: passed after five-second wait, no false resource fallback.
+- First immediate post-deploy smoke: failed once on a transient stale HTML/removed-chunk reference; exact root then returned the current chunk three times and the cache-busted release smoke passed. The failure is retained as rollout evidence.
+- Full verification: root `453/453` was re-run and passed on 2026-07-22 outside the loopback-restricted sandbox; mobile `4/4`, root/mobile lint and typecheck, Next.js build, WebView check, OpenNext build, and clean staging/production web/API dry-runs passed on the current change set. Added regressions prove single-leader visible-only refresh and exactly one cost-guard KV read per public request.
+- Dependency audit: no known root or mobile vulnerability.
+- High-confidence credential-prefix and provider-assignment scan: no matching file; `.env.example` is the only tracked env-shaped file.
+
+## 보안·비용 경계
+
+- Final photo maximum: `1 MiB` after bounded client re-encoding.
+- Authenticate and authorize before paid/storage work.
+- Per-session/user/fingerprint quotas, one-use tickets, idempotency, deduplication, bounded retries, and fail-closed dependency handling.
+- 60% warning, 70% degradation, 80% stop, plus manual emergency stop.
+- Provider-call budgets are enforced before outbound requests and count conservative retry reservations; provider budget uncertainty never falls back to an unmetered call.
+- Overestimated global reservations can be rebased only by an admin while the guard is already degraded/stopped, with the current generation and a same-day observation no older than 15 minutes; prior aggregate reservations are written to the audit log and direct D1 edits remain prohibited.
+- No raw IP, exact GPS, anonymous proof, provider key, private object key, original filename, or original image URL in Git/logs/public responses.
+- Staging provider keys must use Wrangler secrets; source activation is a separate audited action.
+
+## 2026-07-22 Workers KV 사용량 사고와 조치
+
+- 원인: staging 앱 탭 2개가 각각 30초마다 전체 `loadData()`를 실행했고, 한 주기당 약 22개 API 요청을 만들었습니다. Worker는 각 공개 요청에서 동일한 `COST_GUARD_STATE`를 사전 검사와 예약 단계에서 두 번 읽었습니다.
+- 수정 전 추정 유휴 부하: `2 tabs × 22 requests × 2 ticks/min × 2 KV reads = 약 176 KV reads/min`.
+- 수정 후 설계상 유휴 상한: 보이는 same-origin 리더 탭 1개가 60초마다 장소 1회와 상태 최대 5회만 요청하고 각 요청이 KV를 1회 읽어 `약 6 KV reads/min`입니다. 초기 로드, cron, 사용자 동작은 별도이며 두 탭 시나리오 기준 약 `96.6%` 감소입니다.
+- 즉시 조치: staging 앱 탭 2개 종료, Turnstile secret 회전 및 staging 재설치, 임시 관리자 토큰·사진 파일 삭제, API/web 재배포. Production secret·배포·migration·traffic은 변경하지 않았습니다.
+- 대시보드의 24시간 누적/평균은 즉시 내려가지 않습니다. 조치 직후 보인 약 `0.9 reads/s`, `63.9k reads`는 선택된 과거 구간을 포함하므로 새 기울기의 독립 증거가 아닙니다. 무료 일일 한도는 `00:00 UTC`(`09:00 KST`)에 재설정되며 다음 창에서 다시 확인해야 합니다.
+- 이전 Turnstile secret은 Cloudflare 회전 유예로 최대 2시간 더 수락될 수 있습니다. 저장소·로그에는 값을 남기지 않았고 새 값은 staging Wrangler secret으로만 전달했습니다.
+
+## 현재 secret 인벤토리
+
+Staging에 존재하는 이름:
+
+- `KMA_SERVICE_KEY`
+- `TOUR_API_SERVICE_KEY`
+- `NATIONAL_PARKING_SERVICE_KEY`
+- `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET`
+- `SILSIGAN_TURNSTILE_SECRET_KEY`
+- `ADMIN_TOKENS`
+
+발급·설치 대기:
+
+- `ITS_SERVICE_KEY`
+
+값은 문서, Git, D1, 로그, 브라우저에 기록하지 않습니다.
 
 ## 막힌 항목
 
-- P0: Staging D1 now passes schema boundaries through `0026`, Wrangler reports no pending migration, and the migration registry and core seed evidence agree. A pre-change export remains outside the repository with mode `0600` and a recorded SHA-256. Because `0022` deliberately stops uploads until live R2/D1 storage reconciliation is recorded, staging write smoke remains blocked until R2 activation and that reconciliation. Production remains separately unproven; the dedicated `COST_GUARD_STATE` namespaces are already provisioned and bound.
-- P0: the exact-host Turnstile widget is created for the current staging/production web hosts, the public `SILSIGAN_TURNSTILE_SITE_KEY` is committed in `3036095`, and the staging Worker secret store lists both server-only names `SILSIGAN_TURNSTILE_SECRET_KEY` and `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET` without exposing their values. Wrangler version `1062068c-f06b-4090-9038-2b3d7b4cc9a1` was created without deploying traffic. R2 activation, staging API deployment plus live upload-ticket success/failure evidence, and the production secret remain pending; upload tickets continue to fail closed until the configured version is active.
-- P0: the user explicitly approved the R2 subscription, but Cloudflare requires the user to complete payment details, two billing/terms consents, and the final activation in the checkout UI. Until that hand-off is completed, R2/bucket evidence remains blocked. Cloudflare budget email is informational only; the app-level 80% stop is the enforcement layer.
-- P0: the staging API host now has bootstrap/secret-change deployment history, but the configured application is not deployed and `/api/health` returns 404; production API Worker remains missing. Web deployment hosts are known and Wrangler pins the intended matching origins, but the release evidence shell has not selected a healthy API URL. API functionality remains unavailable until R2 is enabled and the configured staging application is deployed.
-- P0: cache-focused staging web version `adefd801-6183-4126-8291-5311a37c6f94`는 배포 간 stale HTML/chunk mismatch를 막도록 HTML 문서를 `Cache-Control: public, max-age=0, must-revalidate`로 제공했고, 해당 전체 읽기 전용 Chrome smoke 증거는 `artifacts/cloudflare-pages-smoke-staging-cache-fixed-20260720`의 timestamp `1784511619488`입니다. 현재 version `fc15d04e-6534-44d3-b908-8ce8cbb3a336`도 배포됐으며 Computer Use로 기본 장소 지도, 명확한 연결 재시도, 보호 모드 유지 결과, directory mode NAVER provider 요청 0건을 재확인했습니다. 실제 API 랭킹·장소 상세·쓰기 흐름은 API application 미배포로 아직 실행하지 않았습니다.
-- P0: 환경별 API exact origin은 코드에 고정했고 회귀 테스트가 통과했습니다. 실제 preflight/write 증거는 staging API Worker 배포 후 남겨야 하며, 미설정 또는 불일치 운영 브라우저 쓰기는 계속 503으로 차단됩니다.
-- P0: the separate `Silsigan` Dynamic Map application now exists with localhost, staging/production `workers.dev` preview origins, and Android/iOS identifier `kr.silsigan.mobile`; its public Client ID is configured locally without storing the Client Secret. Hard limits and 70% thresholds are saved, but the representative-account check and notification recipient are not evidenced. The shared `workers.dev` hosts do not satisfy the owner-domain production gate. Domain selection and purchase/addition, replacement with owner-domain origins, masked recipient evidence, `SILSIGAN_NAVER_MAP_REGISTERED_DOMAIN`, exact release `SILSIGAN_NAVER_MAP_ALLOWED_ORIGINS`, valid-origin success, and invalid-origin rejection evidence remain missing.
-- P0: source-by-source rights, attribution, credentials, health, and audited activation evidence remain in `docs/current-release-state.md`. Staging D1 now includes `0018`/`0019`, but all source targets remain disabled until those approvals and staging ingestion evidence exist. Production external source ingestion remains disabled even though its internal cleanup/outbox Cron is configured.
-- P1: local `0023` cryptographically binds the anonymous ID to a separate 256-bit proof and stores only both hashes; ID-only theft, wrong/old proof, and revoked-proof reuse are rejected. A dedicated 3/minute hashed-IP edge limiter reduces issuance before D1, while `0024` provides the authoritative global 5,000/day cap and fail-closed `0` kill switch. Recent valid-session reads no longer rewrite `last_seen_at` more than once per 24 hours. Staging `0023`/`0024` schema evidence passes, but API deployment and owner-domain live evidence are missing, and theft of the complete ID+proof pair is still a bearer replay risk.
-- P0: live moderation queue and redacted alert evidence require `MODERATION_ALERT_WEBHOOK_URL`; staging mutation/tail smoke remains incomplete.
-- P0: `COST_ALERT_WEBHOOK_URL` 또는 Cloudflare 계정 이메일 알림 수신 경로를 설정해 실제 운영자 알림을 검증해야 한다. 알림이 없어도 자동 중단은 동작하지만 외부 베타 전 전달 증거가 필요하다.
-- P0: Worker 코드는 도달한 요청이 Workers 무료 사용량에 이미 집계된 뒤 실행됩니다. 따라서 앱의 70% 제한·80% 중단은 D1/R2/Images 후속 비용을 막지만 Workers 요청 자체의 80% 상한을 단독으로 보장하지 못합니다. 전용 `COST_GUARD_STATE` KV는 계정과 환경 구성에서 검증됐지만, Cloudflare 관측치 대조, WAF/rate-limit 규칙, 정적 자산의 Worker 우회 경로가 실제 요청에서 검증되기 전에는 외부 베타를 열지 않습니다.
-- P0: Capacitor iOS/Android project skeletons, permission metadata, iOS `PrivacyInfo.xcprivacy`, Android backup/device-transfer exclusions, app-scoped FileProvider, and the registered `SilsiganShell.openSettings` adapter are local. 2026-07-20 Android `:app:lintDebug`·`:app:assembleDebug`는 Homebrew JDK 21로 다시 통과했고 debug APK SHA-256은 `7439ae76464271f4dd26ae1ef7c4b5753b92ea52d49811b8d12244e53c4ae90f`로 동일하다. 마지막 clean iPhone 17 simulator build/install/launch 증거는 `artifacts/ios-simulator/staging-home.png`이며, 오늘 재검증은 프로젝트·패키지·plist 검증 후 CoreSimulatorService의 `Cannot allocate memory` 때문에 asset compilation 전에 중단됐다. 서비스만 재시작해도 같아 사용자 Simulator 데이터는 초기화하지 않았다. Release signing, final archive privacy report, store-console answers, push delivery, and iPhone/Android real-device evidence remain external.
-- P0: named legal and operations reviewers have not signed the location, privacy, UGC, account deletion, source terms, or store disclosure gates.
+- [ ] data.go.kr 로그인/CAPTCHA와 KMA·전국주차장 활용신청
+- [ ] TourAPI 로그인/OAuth·활용신청
+- [ ] ITS 교통소통/CCTV 메타데이터 활용신청 제출
+- [ ] source별 권리·출처·quota·TTL·health·fallback 승인
+- [x] KMA·TourAPI·전국주차장 staging secret 설치 후 공식 provider 6개와 ingestion target 비활성 유지 확인
+- [ ] source별 계약/health 검증과 승인된 소스의 단계적 활성화
+- [x] role-separated `ADMIN_TOKENS` 설치, Cloudflare 실제 사용량 감사 기록, global API guard 정상 모드 재개
+- [ ] moderation/cost alert recipients, WAF/rate-limit, and tail evidence
+- [ ] Complete the exact-host managed Turnstile human check, then one bounded upload/moderate/read/delete cleanup smoke and re-prove R2/D1 zero residuals
+- [ ] owner-controlled domain and NAVER notification/production-origin evidence
+- [ ] signed iPhone/Android real-device QA
+- [ ] named legal/operations sign-off
+- [ ] production D1/API/R2 and traffic promotion, each separately approved
+
+Release-harness evidence tokens:
+
+- Production D1 remains `D1_0006_NOT_APPLIED`.
+- Separate staging/production `COST_GUARD_STATE` bindings exist; live WAF and invocation-free routing proof remains open.
+- `MODERATION_ALERT_WEBHOOK_URL` is not configured and staging moderation alert delivery is unproven.
+- Staging requires `SILSIGAN_ANON_SESSION_REQUIRED=1` and `SILSIGAN_ANON_SESSION_DAILY_LIMIT=5000`; owner-domain replay/rotation evidence remains open.
 
 ## 다음 행동
 
-Developer continuation notes are consolidated in `docs/developer-handoff-2026-07-21.md`; continue from the canonical remote branch in a clean clone or worktree rather than resetting the dirty primary local directory.
+1. Complete the currently visible Turnstile human check for the bounded staging photo smoke.
+2. Prepare or verify KMA, national parking, TourAPI, and ITS forms at the final review step.
+3. Ask once at action time before submissions/OAuth, credential creation, and admin-token creation; the three existing provider keys are already installed in staging only.
+4. Keep every official source and ingestion target disabled until the corresponding rights/health review passes.
+5. Keep generation `5` of the recovered global API guard in `running` mode and monitor only redacted aggregate counters; do not bypass the audited control path.
+6. Validate and activate at most one approved source at a time, beginning with KMA.
+7. After the Turnstile human check succeeds, finish one bounded photo upload/moderate/read/delete smoke and verify R2 returns to `0 B`.
+8. Finish operational, device, legal, and owner-domain gates before any production work.
 
-1. Finish the user-only Cloudflare payment/terms hand-off for Standard R2, then create only the configured private staging bucket and rerun R2 evidence.
-2. Retain the created exact-host Turnstile widget, the verified staging secret names, and the dedicated `COST_GUARD_STATE` bindings. Preserve the external Staging backup and rerun the non-mutating D1 evidence immediately before deployment. After R2 is enabled, reconcile the post-`0022` D1 storage ledger against live R2 before uploads resume, then deploy the staging API application with the global 60/70/80 guard required, `SILSIGAN_ANON_SESSION_REQUIRED=1`, `SILSIGAN_ANON_SESSION_DAILY_LIMIT=5000`, exact allowed origin `https://silsigan-web-staging.dudqks0319.workers.dev`, and select the resulting API URL.
-3. Attach an owner-controlled web custom domain, complete `docs/naver-maps-release-operator-packet.md`, confirm source rights, then run staging ingestion, map/fallback, mutation, admin, R2/Images, and tail-redaction evidence.
-4. Generate signed Capacitor builds, complete iPhone/Android QA, and record named legal/operations sign-off.
-5. Apply production D1 and API changes only after staging evidence is clean and separately approved.
+Detailed truth and continuation:
+
+- `docs/current-release-state.md`
+- `docs/developer-handoff-2026-07-21.md`
+- `release-ledger.yaml`
+- `docs/silsigan-v2-master-completion-plan-2026-07-21.md`

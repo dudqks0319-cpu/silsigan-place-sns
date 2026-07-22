@@ -364,6 +364,11 @@ test("Cloudflare API environments pin browser writes to their deployed web origi
   assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PHOTO_MONTHLY_TRANSFORM_LIMIT === "5000"), true);
   assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PHOTO_DAILY_IP_READ_LIMIT === "1000"), true);
   assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_PHOTO_DAILY_BYTES_LIMIT === "20971520"), true);
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT === "5000"), true);
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT === "500"), true);
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_NATIONAL_PARKING_DAILY_PROVIDER_REQUEST_LIMIT === "100"), true);
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_ITS_DAILY_PROVIDER_REQUEST_LIMIT === "500"), true);
+  assert.equal(environments.every((environment) => environment?.vars?.SILSIGAN_SEOUL_REALTIME_DAILY_PROVIDER_REQUEST_LIMIT === "500"), true);
   assert.equal(
     environments.every((environment) => {
       const binding = environment?.ratelimits?.find((candidate) => candidate.name === "PUBLIC_API_RATE_LIMITER");
@@ -473,6 +478,56 @@ test("Cloudflare resource preflight blocks staging without a public Turnstile si
     } catch (error) {
       const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
       assert.match(stdout, /staging\.vars\.SILSIGAN_TURNSTILE_SITE_KEY/);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare resource preflight rejects an unsafe provider request budget", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-provider-budget-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    const config = createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" });
+    config.env.staging.vars.SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT = "501";
+    writeFileSync(configPath, JSON.stringify(config), "utf8");
+
+    try {
+      execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-resource-preflight.mjs"), "--config", configPath, "--env", "staging"], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("preflight should reject a provider request budget above its ceiling");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      assert.match(stdout, /SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT/);
+      assert.match(stdout, /0 \(kill switch\) through 500/);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare resource preflight rejects a blank provider request budget instead of reviving the runtime default", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-provider-budget-blank-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    const config = createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" });
+    config.env.staging.vars.SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT = "   ";
+    writeFileSync(configPath, JSON.stringify(config), "utf8");
+
+    try {
+      execFileSync(process.execPath, [scriptPath("../scripts/cloudflare-resource-preflight.mjs"), "--config", configPath, "--env", "staging"], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("preflight should reject a blank provider request budget");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      assert.match(stdout, /SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT/);
+      assert.match(stdout, /0 \(kill switch\) through 500/);
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1105,7 +1160,69 @@ test("release state check requires public privacy and support pages", () => {
   }
 });
 
-test("release state check requires final privacy and support URLs", () => {
+test("public legal surfaces keep unresolved external inputs release-blocking", () => {
+  const privacyPage = readFileSync(scriptPath("../src/app/privacy/page.tsx"), "utf8");
+  const supportPage = readFileSync(scriptPath("../src/app/support/page.tsx"), "utf8");
+  const termsPage = readFileSync(scriptPath("../src/app/terms/page.tsx"), "utf8");
+  const legalGate = readFileSync(scriptPath("../docs/v2-legal-operations-gate.md"), "utf8");
+  const storeDisclosure = readFileSync(scriptPath("../docs/store-privacy-disclosure-draft.md"), "utf8");
+
+  for (const token of [
+    "운영자의 법적 명칭",
+    "개인정보 보호책임자",
+    "보유 기간",
+    "국외 이전",
+    "위치정보법",
+    "만 14세 미만",
+    "외부 TestFlight",
+    "production",
+    "named reviewer",
+  ]) {
+    assert.ok(privacyPage.includes(token), `privacy page must preserve the unresolved ${token} gate`);
+  }
+
+  for (const token of [
+    "검증된 운영자 이름",
+    "지원 이메일·전화번호",
+    "개인정보 권리",
+    "운영 조치 이의제기",
+    "저작권·초상권",
+    "trust-safety 담당자",
+    "응답 SLA",
+    "외부 TestFlight",
+  ]) {
+    assert.ok(supportPage.includes(token), `support page must preserve the unresolved ${token} gate`);
+  }
+
+  for (const token of [
+    "이용약관",
+    "서비스 제공자의 법적 명칭",
+    "사용자 콘텐츠와 권리",
+    "신고, 운영 조치와 이의제기",
+    "위치정보법",
+    "만 14세 미만",
+    "책임·분쟁 조항",
+    "production",
+  ]) {
+    assert.ok(termsPage.includes(token), `terms page must preserve the unresolved ${token} gate`);
+  }
+
+  for (const policyPage of [privacyPage, supportPage, termsPage]) {
+    assert.equal(policyPage.includes("mailto:"), false, "policy pages must not invent an unverified email channel");
+    assert.equal(/01[016789]-\d{3,4}-\d{4}/.test(policyPage), false, "policy pages must not invent a phone number");
+  }
+
+  assert.ok(legalGate.includes("State: `blocked-external`"));
+  assert.ok(legalGate.includes("missing; blocked"));
+  assert.ok(legalGate.includes("classification pending; blocked"));
+  assert.ok(legalGate.includes("exact schedule pending; blocked"));
+  assert.ok(legalGate.includes("`/privacy`, `/support`, `/terms`"));
+  assert.ok(storeDisclosure.includes("외부 공개 효력 발생일이 아닙니다"));
+  assert.ok(storeDisclosure.includes("임의 값을 만들지 않으며"));
+  assert.ok(storeDisclosure.includes("Cloudflare 처리가 개인정보 보호법상 위탁 또는 국외 이전에 해당하는지"));
+});
+
+test("release state check requires final privacy, support, and terms URLs", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-policy-support-urls-"));
   try {
     const configPath = join(tempDir, "ready-wrangler.jsonc");
@@ -1143,12 +1260,13 @@ test("release state check requires final privacy and support URLs", () => {
       ], {
         encoding: "utf8",
         env: createReadyPreflightProcessEnv({
-          SILSIGAN_PRIVACY_POLICY_URL: "",
+          SILSIGAN_PRIVACY_POLICY_URL: "https://silsigan.kr/privacy",
           SILSIGAN_SUPPORT_URL: "http://localhost:3000/support?debug=1",
+          SILSIGAN_TERMS_URL: "https://silsigan.kr/privacy",
         }),
         stdio: "pipe",
       });
-      assert.fail("strict release state should fail when privacy/support URLs are missing or unsafe");
+      assert.fail("strict release state should fail when privacy/support/terms URLs are missing, unsafe, or duplicated");
     } catch (error) {
       const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
       const payload = JSON.parse(stdout) as {
@@ -1159,9 +1277,9 @@ test("release state check requires final privacy and support URLs", () => {
       const supportChecks = payload.checks.filter((check) => check.name === "policy_url.support");
 
       assert.equal(payload.ok, false);
-      assert.ok(payload.blockers.includes("policy_url.privacy_policy"));
       assert.ok(payload.blockers.includes("policy_url.support"));
-      assert.ok(payload.checks.some((check) => check.name === "policy_url.privacy_policy" && check.status === "fail" && check.message.includes("SILSIGAN_PRIVACY_POLICY_URL")));
+      assert.ok(payload.blockers.includes("policy_url.privacy_policy.terms"));
+      assert.ok(payload.checks.some((check) => check.name === "policy_url.terms" && check.status === "pass"));
       assert.ok(supportChecks.some((check) => check.status === "fail" && check.message.includes("https")));
       assert.ok(supportChecks.some((check) => check.status === "fail" && check.message.includes("query")));
       assert.ok(supportChecks.some((check) => check.status === "fail" && check.message.includes("localhost")));
@@ -1185,6 +1303,7 @@ test("release state check uses allowlisted public URL defaults when process env 
         "SILSIGAN_PRODUCTION_API_BASE_URL=https://api.silsigan.kr",
         "SILSIGAN_PRIVACY_POLICY_URL=https://silsigan.kr/privacy",
         "SILSIGAN_SUPPORT_URL=https://silsigan.kr/support",
+        "SILSIGAN_TERMS_URL=https://silsigan.kr/terms",
         "SILSIGAN_ADMIN_TOKEN=must-not-be-loaded",
         "",
       ].join("\n"),
@@ -1199,6 +1318,7 @@ test("release state check uses allowlisted public URL defaults when process env 
       "SILSIGAN_PRODUCTION_API_BASE_URL",
       "SILSIGAN_PRIVACY_POLICY_URL",
       "SILSIGAN_SUPPORT_URL",
+      "SILSIGAN_TERMS_URL",
     ]) {
       delete env[envVarName];
     }
@@ -1219,6 +1339,7 @@ test("release state check uses allowlisted public URL defaults when process env 
     for (const checkName of [
       "policy_url.privacy_policy",
       "policy_url.support",
+      "policy_url.terms",
       "deployment_url.staging.pages",
       "deployment_url.staging.worker_api",
       "deployment_url.production.pages",
@@ -1761,6 +1882,26 @@ test("Cloudflare Pages browser smoke accepts an honest actionable no-data map on
   assert.equal(pagesSmoke.classifyMapSurfaceObservation({ ...honestEmptyMap, width: 200 }, true), null);
 });
 
+test("Cloudflare Pages browser smoke accepts a truthful empty live ranking without inventing buttons", () => {
+  const emptyLiveRanking = {
+    found: true,
+    text: "전국 최신 근거 TOP 10\n아직 순위를 만들 현장 정보가 없어요\n정보 없는 장소는 순위에 넣지 않습니다.",
+    buttons: [],
+  };
+  const populatedRanking = {
+    found: true,
+    text: "전국 최신 근거 TOP 10",
+    buttons: ["광안리해수욕장 최신 근거 보기"],
+  };
+
+  assert.equal(pagesSmoke.classifyRankingPanelObservation(emptyLiveRanking, { placeName: "광안리해수욕장" }), "empty");
+  assert.equal(pagesSmoke.classifyRankingPanelObservation(populatedRanking, { placeName: "광안리해수욕장" }), "populated");
+  assert.equal(
+    pagesSmoke.classifyRankingPanelObservation({ ...emptyLiveRanking, text: "전국 TOP 10" }, { placeName: "광안리해수욕장" }),
+    null,
+  );
+});
+
 test("Cloudflare Pages browser smoke preserves diagnostics when a browser assertion fails", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-pages-failure-artifact-"));
   try {
@@ -1813,6 +1954,33 @@ test("Cloudflare Pages browser smoke matches Worker API requests by parsed path 
   assert.equal(pagesSmoke.hasApiRequest(events, "https://api.example.test", "/api/realtime/global"), true);
   assert.equal(pagesSmoke.hasApiReportRequest(events, "https://api.example.test", "comment"), true);
   assert.equal(pagesSmoke.hasApiReportRequest(events, "https://api.example.test", "photo"), false);
+});
+
+test("Cloudflare Pages browser smoke fails when read-only exploration exceeds its API request budget", () => {
+  const safeEvents = Array.from({ length: 61 }, (_, index) => ({
+    type: "request",
+    method: "GET",
+    url: `https://api.example.test/api/places?request=${index}`,
+  }));
+  const noisyEvents = Array.from({ length: 81 }, (_, index) => ({
+    type: "request",
+    method: "GET",
+    url: `https://api.example.test/api/places?request=${index}`,
+  }));
+  noisyEvents.push({
+    type: "request",
+    method: "GET",
+    url: "https://unrelated.example.test/api/places",
+  });
+
+  assert.deepEqual(
+    pagesSmoke.classifyNonMutatingApiRequestBudget(safeEvents, "https://api.example.test"),
+    { ok: true, requestCount: 61, limit: 80 },
+  );
+  assert.deepEqual(
+    pagesSmoke.classifyNonMutatingApiRequestBudget(noisyEvents, "https://api.example.test"),
+    { ok: false, requestCount: 81, limit: 80 },
+  );
 });
 
 test("local Pages report smoke validates redacted network artifacts and required UI checks", async () => {
@@ -3303,6 +3471,7 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const requestAnonId = String(request.headers["x-silsigan-anon-id"] ?? "");
+    const requestProof = String(request.headers["x-silsigan-anon-proof"] ?? "");
     const send = (status: number, payload: unknown) => {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(payload));
@@ -3333,11 +3502,17 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
       return;
     }
 
+    const publicRead = (request.method === "GET" || request.method === "HEAD")
+      && url.pathname !== "/api/preferences";
+    if (publicRead && requestAnonId && !requestProof) {
+      send(401, { success: false, error: { code: "ANONYMOUS_SESSION_PROOF_REQUIRED", message: "proof required" } });
+      return;
+    }
+
     const proofRequired =
       ((request.method !== "GET" && request.method !== "HEAD") && !url.pathname.startsWith("/api/admin/"))
       || (request.method === "GET" && url.pathname === "/api/preferences");
     if (proofRequired) {
-      const requestProof = String(request.headers["x-silsigan-anon-proof"] ?? "");
       if (revokedSessions.has(requestAnonId)) {
         revokedProofRejections += 1;
         send(403, { success: false, error: { code: "ANONYMOUS_SESSION_REVOKED", message: "revoked" } });
@@ -4133,6 +4308,11 @@ function createPreflightEnv(input: { envName: "staging" | "production"; d1Id: st
       SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100000",
       SILSIGAN_D1_DAILY_READ_LIMIT: "5000000",
       SILSIGAN_D1_DAILY_WRITE_LIMIT: "100000",
+      SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT: "5000",
+      SILSIGAN_TOUR_API_DAILY_PROVIDER_REQUEST_LIMIT: "500",
+      SILSIGAN_NATIONAL_PARKING_DAILY_PROVIDER_REQUEST_LIMIT: "100",
+      SILSIGAN_ITS_DAILY_PROVIDER_REQUEST_LIMIT: "500",
+      SILSIGAN_SEOUL_REALTIME_DAILY_PROVIDER_REQUEST_LIMIT: "500",
       SILSIGAN_COST_GUARD_WARN_PERCENT: "60",
       SILSIGAN_COST_GUARD_DEGRADE_PERCENT: "70",
       SILSIGAN_COST_GUARD_STOP_PERCENT: "80",
@@ -4187,6 +4367,7 @@ function createReadyPreflightProcessEnv(overrides: Record<string, string> = {}) 
     SILSIGAN_PRODUCTION_API_BASE_URL: "https://api.silsigan.kr",
     SILSIGAN_PRIVACY_POLICY_URL: "https://silsigan.kr/privacy",
     SILSIGAN_SUPPORT_URL: "https://silsigan.kr/support",
+    SILSIGAN_TERMS_URL: "https://silsigan.kr/terms",
     ...overrides,
   };
 }
@@ -4653,6 +4834,212 @@ test("KMA ingestion stays disabled until approved and then persists hashed offic
     globalThis.fetch = originalFetch;
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("official source daily request budget blocks provider calls before the free quota is exhausted", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const serviceKey = "kma-budget-fixture-secret-key";
+  let fetchCount = 0;
+
+  try {
+    await db.prepare(`
+      UPDATE data_sources
+      SET enabled = 1, health_status = 'healthy', default_ttl_seconds = 7200
+      WHERE source_key = 'kma_weather'
+    `).run();
+    const providerKst = new Date(Date.now() + 9 * 60 * 60 * 1_000 - 5 * 60 * 1_000);
+    const baseDate = `${providerKst.getUTCFullYear()}${String(providerKst.getUTCMonth() + 1).padStart(2, "0")}${String(providerKst.getUTCDate()).padStart(2, "0")}`;
+    const baseTime = `${String(providerKst.getUTCHours()).padStart(2, "0")}${String(providerKst.getUTCMinutes()).padStart(2, "0")}`;
+    const requestBody = { placeId: "busan-gwangalli", nx: 98, ny: 76, baseDate, baseTime };
+    globalThis.fetch = async (): Promise<Response> => {
+      fetchCount += 1;
+      return Response.json({
+        response: {
+          header: { resultCode: "00", resultMsg: "NORMAL_SERVICE" },
+          body: {
+            totalCount: 4,
+            items: {
+              item: [
+                { baseDate, baseTime, category: "T1H", nx: 98, ny: 76, obsrValue: "24.1" },
+                { baseDate, baseTime, category: "RN1", nx: 98, ny: 76, obsrValue: "0" },
+                { baseDate, baseTime, category: "WSD", nx: 98, ny: 76, obsrValue: "1.8" },
+                { baseDate, baseTime, category: "PTY", nx: 98, ny: 76, obsrValue: "0" },
+              ],
+            },
+          },
+        },
+      });
+    };
+    const ingest = () => worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/kma_weather/ingest", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify(requestBody),
+      }),
+      {
+        DB: db,
+        ADMIN_TOKENS: testAdminTokens,
+        KMA_SERVICE_KEY: serviceKey,
+        SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT: "2",
+      },
+    );
+
+    const first = await ingest();
+    const second = await ingest();
+    const blocked = (await second.json()) as FailurePayload;
+    const runStatuses = await db.prepare(`
+      SELECT status, COUNT(*) AS count
+      FROM api_ingestion_runs
+      WHERE source_id = 'source-kma-weather'
+      GROUP BY status
+      ORDER BY status
+    `).all<{ status: string; count: number }>();
+
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 429);
+    assert.equal(blocked.error.code, "SOURCE_DAILY_REQUEST_BUDGET_EXHAUSTED");
+    assert.equal(fetchCount, 1, "budget rejection must happen before a second provider request");
+    assert.deepEqual(runStatuses.results, [
+      { status: "quota_exceeded", count: 1 },
+      { status: "succeeded", count: 1 },
+    ]);
+    assert.equal(JSON.stringify(blocked).includes(serviceKey), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("provider quota responses still consume the local daily request budget", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+
+  try {
+    const startedAt = new Date().toISOString();
+    await db.prepare(`
+      UPDATE data_sources
+      SET enabled = 1, health_status = 'healthy', default_ttl_seconds = 7200
+      WHERE source_key = 'kma_weather'
+    `).run();
+    await db.prepare(`
+      INSERT INTO api_ingestion_runs (
+        id, source_id, region_code, status, error_code, started_at, finished_at
+      ) VALUES (
+        'provider-quota-budget-reservation', 'source-kma-weather', 'busan',
+        'quota_exceeded', 'SOURCE_QUOTA_EXCEEDED', ?, ?
+      )
+    `).bind(startedAt, startedAt).run();
+    globalThis.fetch = async (): Promise<Response> => {
+      fetchCount += 1;
+      return Response.json({ unexpected: true });
+    };
+
+    const providerKst = new Date(Date.now() + 9 * 60 * 60 * 1_000 - 5 * 60 * 1_000);
+    const baseDate = `${providerKst.getUTCFullYear()}${String(providerKst.getUTCMonth() + 1).padStart(2, "0")}${String(providerKst.getUTCDate()).padStart(2, "0")}`;
+    const baseTime = `${String(providerKst.getUTCHours()).padStart(2, "0")}${String(providerKst.getUTCMinutes()).padStart(2, "0")}`;
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/kma_weather/ingest", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", nx: 98, ny: 76, baseDate, baseTime }),
+      }),
+      {
+        DB: db,
+        ADMIN_TOKENS: testAdminTokens,
+        KMA_SERVICE_KEY: "kma-provider-quota-fixture-key",
+        SILSIGAN_KMA_DAILY_PROVIDER_REQUEST_LIMIT: "2",
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 429);
+    assert.equal(payload.error.code, "SOURCE_DAILY_REQUEST_BUDGET_EXHAUSTED");
+    assert.equal(fetchCount, 0, "a provider quota response must remain a counted network attempt");
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ITS traffic and CCTV share one conservative daily provider budget", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+
+  try {
+    const startedAt = new Date().toISOString();
+    await db.prepare(`
+      UPDATE data_sources
+      SET commercial_use_status = 'allowed_with_attribution', enabled = 1,
+          health_status = 'healthy', default_ttl_seconds = 600
+      WHERE source_key = 'national_traffic'
+    `).run();
+    await db.prepare(`
+      INSERT INTO api_ingestion_runs (id, source_id, region_code, status, started_at, finished_at)
+      VALUES ('cctv-shared-budget-reservation', 'source-national-cctv', 'busan', 'succeeded', ?, ?)
+    `).bind(startedAt, startedAt).run();
+    globalThis.fetch = async (): Promise<Response> => {
+      fetchCount += 1;
+      return Response.json({ unexpected: true });
+    };
+
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/national_traffic/ingest", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-operator-token",
+        },
+        body: JSON.stringify({
+          placeId: "busan-gwangalli",
+          linkId: "2600012400",
+          roadType: "all",
+          minLng: 129.1,
+          maxLng: 129.14,
+          minLat: 35.14,
+          maxLat: 35.17,
+        }),
+      }),
+      {
+        DB: db,
+        ADMIN_TOKENS: testAdminTokens,
+        ITS_SERVICE_KEY: "its-shared-budget-fixture-key",
+        SILSIGAN_ITS_DAILY_PROVIDER_REQUEST_LIMIT: "2",
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 429);
+    assert.equal(payload.error.code, "SOURCE_DAILY_REQUEST_BUDGET_EXHAUSTED");
+    assert.equal(fetchCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("official source daily request budgets reset at Korea Standard Time midnight", () => {
+  assert.deepEqual(worker.resolveOfficialSourceQuotaWindow("2026-07-20T14:59:59.000Z"), {
+    dayStart: "2026-07-19T15:00:00.000Z",
+    dayEnd: "2026-07-20T15:00:00.000Z",
+  });
+  assert.deepEqual(worker.resolveOfficialSourceQuotaWindow("2026-07-20T15:00:00.000Z"), {
+    dayStart: "2026-07-20T15:00:00.000Z",
+    dayEnd: "2026-07-21T15:00:00.000Z",
+  });
+  assert.throws(
+    () => worker.resolveOfficialSourceQuotaWindow("not-a-provider-timestamp"),
+    (error: unknown) => error instanceof Error && "code" in error
+      && error.code === "SOURCE_DAILY_REQUEST_BUDGET_UNAVAILABLE",
+  );
 });
 
 test("scheduled KMA requests use the latest safely published Korea Standard Time hour", () => {
@@ -5749,8 +6136,40 @@ test("health checks use the public edge limiter and global Workers request ledge
     assert.equal(limiter.calls.length, 1);
     assert.deepEqual(daily, {
       reservedWorkersRequests: 1,
-      reservedRowsRead: 1000,
+      reservedRowsRead: 100,
       reservedRowsWritten: 2,
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("high-cost reads reserve a calibrated D1 ceiling before the query", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/rankings?limit=1"),
+      {
+        DB: db,
+        SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+        HIGH_COST_API_RATE_LIMITER: new FakeRateLimitBinding(),
+      },
+    );
+    const daily = await db
+      .prepare(
+        `SELECT reserved_rows_read AS reservedRowsRead,
+                reserved_rows_written AS reservedRowsWritten,
+                high_cost_requests AS highCostRequests
+         FROM api_cost_guard_daily`,
+      )
+      .first<{ reservedRowsRead: number; reservedRowsWritten: number; highCostRequests: number }>();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(daily, {
+      reservedRowsRead: 500,
+      reservedRowsWritten: 2,
+      highCostRequests: 1,
     });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -10796,7 +11215,7 @@ test("global API guard degrades at 70 percent and keeps essential reads on a wri
     DB: db,
     SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
     SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100",
-    SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+    SILSIGAN_D1_DAILY_READ_LIMIT: "1000",
     SILSIGAN_D1_DAILY_WRITE_LIMIT: "1000",
   };
 
@@ -10825,12 +11244,44 @@ test("global API guard degrades at 70 percent and keeps essential reads on a wri
       .first<{ reservedRowsRead: number }>();
     assert.equal(fallbackResponse.status, 200);
     assert.equal(fallbackPayload.meta?.storage, "memory-fallback");
-    assert.equal(dailyAfterFallback?.reservedRowsRead, 7000);
+    assert.equal(dailyAfterFallback?.reservedRowsRead, 700);
 
     const nonessential = await worker.handleRequest(new Request("https://api.test/api/hashtags"), env);
     const nonessentialPayload = (await nonessential.json()) as FailurePayload;
     assert.equal(nonessential.status, 429);
     assert.equal(nonessentialPayload.error.code, "API_COST_GUARD_DEGRADED");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard reads its KV mirror only once for a public reservation", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const costGuardState = new FakeKVNamespace();
+  costGuardState.values.set("api-cost-guard:global:v1", JSON.stringify({
+    mode: "running",
+    reason: "fixture-running",
+    generation: 1,
+    automaticMetric: null,
+    updatedBy: "system:fixture",
+    updatedAt: new Date().toISOString(),
+  }));
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/places?limit=1"),
+      {
+        DB: db,
+        COST_GUARD_STATE: costGuardState,
+        SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+        SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "1000",
+        SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+        SILSIGAN_D1_DAILY_WRITE_LIMIT: "10000",
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(costGuardState.getKeys, ["api-cost-guard:global:v1"]);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -10851,7 +11302,7 @@ test("global API guard emits one redacted warning when usage first reaches 60 pe
     DB: db,
     SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
     SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100",
-    SILSIGAN_D1_DAILY_READ_LIMIT: "10000",
+    SILSIGAN_D1_DAILY_READ_LIMIT: "1000",
     SILSIGAN_D1_DAILY_WRITE_LIMIT: "1000",
     COST_ALERT_WEBHOOK_URL: warningWebhookUrl,
     COST_ALERT_WEBHOOK_TOKEN: "api-cost-alert-token-fixture",
@@ -11037,6 +11488,138 @@ test("global API guard manual stop is audited and resume requires a fresh low-us
     assert.equal(resumedPayload.data.control.mode, "running");
     assert.equal(resumedPayload.data.control.generation, 3);
     assert.equal(audits?.count, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("global API guard can audit and rebase an overestimated reservation only while degraded", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const env = {
+    DB: db,
+    ADMIN_TOKENS: testAdminTokens,
+    SILSIGAN_GLOBAL_API_COST_GUARD_REQUIRED: "1",
+    SILSIGAN_WORKERS_DAILY_REQUEST_LIMIT: "100",
+    SILSIGAN_D1_DAILY_READ_LIMIT: "1000",
+    SILSIGAN_D1_DAILY_WRITE_LIMIT: "1000",
+    ADMIN_API_RATE_LIMITER: new FakeRateLimitBinding(),
+  };
+  const headers = {
+    "content-type": "application/json",
+    "cf-connecting-ip": "203.0.113.254",
+    "x-silsigan-admin-token": "test-admin-token",
+    "x-silsigan-admin-subject": "cost-reconciler@example.test",
+  };
+  const patchGuard = (body: Record<string, unknown>) => worker.handleRequest(
+    new Request("https://api.test/api/admin/api-cost-guard", {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify(body),
+    }),
+    env,
+  );
+  const reconcile = (body: Record<string, unknown>) => worker.handleRequest(
+    new Request("https://api.test/api/admin/api-cost-guard/reconciliations", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    }),
+    env,
+  );
+
+  try {
+    const runningRebase = await reconcile({
+      observedWorkersRequests: 10,
+      observedD1RowsRead: 100,
+      observedD1RowsWritten: 10,
+      observedAt: new Date().toISOString(),
+      source: "cloudflare-dashboard",
+      note: "running 상태 재기준화 거부 검증",
+      rebaseReservedEstimates: true,
+      expectedGeneration: 1,
+    });
+    assert.equal(runningRebase.status, 409);
+    assert.equal(((await runningRebase.json()) as FailurePayload).error.code, "API_COST_GUARD_REBASE_NOT_ALLOWED");
+
+    assert.equal(
+      (await patchGuard({ mode: "degraded", reason: "과대 예약 재기준화 준비", expectedGeneration: 1 })).status,
+      200,
+    );
+    const staleRebase = await reconcile({
+      observedWorkersRequests: 10,
+      observedD1RowsRead: 100,
+      observedD1RowsWritten: 10,
+      observedAt: new Date(Date.now() - 20 * 60 * 1_000).toISOString(),
+      source: "cloudflare-dashboard",
+      note: "오래된 관측값 재기준화 거부 검증",
+      rebaseReservedEstimates: true,
+      expectedGeneration: 2,
+    });
+    assert.equal(staleRebase.status, 400);
+    assert.equal(((await staleRebase.json()) as FailurePayload).error.code, "API_COST_GUARD_REBASE_OBSERVATION_STALE");
+
+    const dayUtc = new Date().toISOString().slice(0, 10);
+    await db.prepare(`
+      INSERT INTO api_cost_guard_daily (
+        day_utc, admitted_requests, reserved_workers_requests,
+        reserved_rows_read, reserved_rows_written, updated_at
+      ) VALUES (?, 70, 70, 700, 70, ?)
+      ON CONFLICT(day_utc) DO UPDATE SET
+        admitted_requests = 70,
+        reserved_workers_requests = 70,
+        reserved_rows_read = 700,
+        reserved_rows_written = 70,
+        updated_at = excluded.updated_at
+    `).bind(dayUtc, new Date().toISOString()).run();
+
+    assert.equal((await reconcile({
+      observedWorkersRequests: 10,
+      observedD1RowsRead: 100,
+      observedD1RowsWritten: 10,
+      observedAt: new Date().toISOString(),
+      source: "cloudflare-dashboard",
+      note: "과대 예약 전 실제 사용량 대조",
+    })).status, 200);
+    const blockedResume = await patchGuard({ mode: "running", reason: "재기준화 전 재개 거부", expectedGeneration: 2 });
+    assert.equal(blockedResume.status, 409);
+    assert.equal(((await blockedResume.json()) as FailurePayload).error.code, "API_COST_GUARD_RECONCILIATION_FAILED");
+
+    const rebased = await reconcile({
+      observedWorkersRequests: 12,
+      observedD1RowsRead: 120,
+      observedD1RowsWritten: 12,
+      observedAt: new Date().toISOString(),
+      source: "cloudflare-dashboard",
+      note: "Cloudflare 실제 사용량으로 예약 원장 재기준화",
+      rebaseReservedEstimates: true,
+      expectedGeneration: 2,
+    });
+    assert.equal(rebased.status, 200);
+
+    const daily = await db.prepare(`
+      SELECT reserved_workers_requests AS reservedWorkersRequests,
+             reserved_rows_read AS reservedRowsRead,
+             reserved_rows_written AS reservedRowsWritten
+      FROM api_cost_guard_daily WHERE day_utc = ?
+    `).bind(dayUtc).first<{
+      reservedWorkersRequests: number;
+      reservedRowsRead: number;
+      reservedRowsWritten: number;
+    }>();
+    const audit = await db.prepare(`
+      SELECT reason FROM admin_actions
+      WHERE action_type = 'api_cost_guard_reconciliation'
+      ORDER BY created_at DESC LIMIT 1
+    `).first<{ reason: string }>();
+    assert.deepEqual(daily, {
+      reservedWorkersRequests: 12,
+      reservedRowsRead: 120,
+      reservedRowsWritten: 12,
+    });
+    assert.match(audit?.reason ?? "", /reserved_rows_read_before=700/);
+
+    const resumed = await patchGuard({ mode: "running", reason: "감사 재기준화 후 안전 재개", expectedGeneration: 2 });
+    assert.equal(resumed.status, 200);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -13520,10 +14103,12 @@ class FakeWebSocketPair {
 
 class FakeKVNamespace {
   readonly values = new Map<string, string>();
+  readonly getKeys: string[] = [];
   readonly puts: Array<{ key: string; value: string; options?: { expirationTtl?: number } }> = [];
   readonly deletedKeys: string[] = [];
 
   async get(key: string): Promise<string | null> {
+    this.getKeys.push(key);
     return this.values.get(key) ?? null;
   }
 

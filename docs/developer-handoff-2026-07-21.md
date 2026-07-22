@@ -3,152 +3,172 @@
 ## Start here
 
 - Canonical remote branch: `codex/silsigan-progress-20260710`
-- Mac mini integration base: `5055e623c06bba9c6bd584adf92fc3215c7d727c`
-- Current integration worktree: `silsigan/.worktrees/silsigan-integrate-5055e62-20260721`
-- Current local integration branch: `agent/silsigan-integrate-5055e62-20260721`
-- Final candidate SHA: update in `release-ledger.yaml` after the source commit
-- Release state: `v2_local_ready_external_blocked`
-- Production deploy and remote production D1 migration were not performed.
+- Current authoritative worktree: `/Users/jyb-m3max/Desktop/codex/silsigan/.worktrees/external-staging-20260721`
+- Current integration branch: `agent/external-staging-20260721`
+- Committed baseline before this uncommitted change set: `d7f0499ee1e83d4f53ef533f556a84d75b6a6f2e`
+- Upstream divergence at reconciliation: `0/0`; the working tree is **dirty**, so this is not a clean release candidate and the uncommitted changes are not remote
+- Source commit and final release-record commit: fill after verification and push
+- Commit/push gate: manual source/diff security gate, secret scan, dependency audit, and negative-path regressions pass; optional Codex Security UI scan remains unclaimed
+- Release state: `staging_running_kv_remediated_photo_turnstile_smoke_pending_production_blocked`
+- Production deploy, production D1 migration, provider-source activation, and traffic promotion were not performed.
 
-Do not reset, clean, or copy the primary directory wholesale. `/Users/jyb-m3max/Desktop/codex/silsigan` contains old and user-owned dirty work. Resume from a clean clone/worktree of the canonical remote branch.
+Do not reset, clean, or copy the primary directory wholesale. `/Users/jyb-m3max/Desktop/codex/silsigan` contains old and user-owned dirty work. Continue only in the authoritative worktree above and preserve its current uncommitted changes.
 
-## What this integration kept
-
-- Nationwide place discovery and directory fallback
-- Current-photo and hashtag flows with sample/operational boundaries
-- Next.js web, Capacitor WebView, iOS/Android shells
-- D1 migration registry safeguards through the current canonical chain
-- R2/API cost protection with authentication, quotas, one-use tickets, idempotency, global budgets, and emergency stop
-- Admin moderation, reports, blocks, deletion, and audit seams
-- KMA, TourAPI, national parking, ITS traffic/CCTV and Seoul adapter fixtures
-- Sites private deployment configuration without committed secrets or old Git history
-
-## New integrated changes
-
-- One shared final photo upload contract: maximum `1 MiB`
-- Local photo source/bridge read bound: maximum `12 MiB`
-- Client re-encodes JPEG/WebP through bounded quality and dimension steps and refuses a final blob over `1 MiB`
-- Server independently rejects payloads over `1 MiB`
-- IP-fingerprint daily upload-byte ceiling reduced to `20 MiB`, alongside the existing daily upload count limit
-- Root and mobile dependency overrides updated for current `brace-expansion`, `js-yaml`, `shell-quote`, and `tar` advisories
-- Boundary tests added for exact `1 MiB`, `1 MiB + 1`, WebView local-source limits, and client final-size enforcement
-- Cross-functional remaining-work plan added at `docs/silsigan-v2-master-completion-plan-2026-07-21.md`
-
-Do not weaken the final 1 MiB server limit merely to support large phone photos. The client may read a bounded local source and compress it, but expensive work and object storage start only after the final-size, identity, quota, one-use ticket, and budget checks pass.
-
-## Verification at this handoff
-
-The values below must be reconciled to the final source SHA in `release-ledger.yaml` before push.
-
-- Root tests: 435 passed, 0 failed, 0 skipped
-- Mobile tests: 4 passed, 0 failed, 0 skipped
-- `pnpm verify`: passed after the final frozen-lockfile install
-- `pnpm lint`: passed
-- `pnpm typecheck`: passed
-- `pnpm build`: passed, Next.js 16.2.6 with 26 generated pages/routes
-- OpenNext build, WebView check, and staging/production web/API Wrangler dry-runs: passed
-- `pnpm audit:security`: root and mobile no known vulnerabilities
-- Secret-pattern scan: 397 source/evidence files scanned, 0 high-confidence secret hits; only `.env.example` is tracked
-- `git diff --check`: passed before the source commit
-
-## Current external truth
+## Current staging truth
 
 ### Cloudflare
 
-- Wrangler authentication works.
-- Staging API/web and production web deployment histories exist.
-- Staging D1 is reported through migration `0026` with core seed evidence.
-- CLI still reports `R2_NOT_ENABLED`.
-- The staging API URL is not currently healthy and returned a browser connection failure in this verification.
-- Production API Worker is not deployed.
-- Production D1 remains unapplied from the V2 migration boundary.
-- Current shell does not contain final staging/production URL and allowed-origin values.
+- R2 is active. The private staging bucket is `silsigan-photos-staging`.
+- Public `r2.dev` access is disabled and no direct R2 custom domain is attached.
+- Incomplete multipart uploads abort after seven days.
+- Objects under `photos/_uploads/` expire after one day.
+- Staging D1 is aligned through migration `0026`; no pending migration was reported.
+- Staging API: `https://silsigan-api-staging.dudqks0319.workers.dev`
+- Staging web: `https://silsigan-web-staging.dudqks0319.workers.dev`
+- Latest staging web version in this handoff: `ad980039-5ba0-4ffb-9616-6f60eb6aea54`; its build-time API base points to the staging API, live mode was verified, and the smoke tab was closed afterward.
+- Latest staging API version: `dc07bf4a-879a-421c-aea1-5418f9c8bc0e`; the rotated Turnstile secret is installed by name only.
+- An earlier read-only API smoke passed for health, 14 places, place detail/status, place/region/global realtime rooms, rankings, truthful empty comments/photos, and default-deny admin access.
+- The latest 2026-07-22 audited reconciliation used fresh Cloudflare dashboard and D1 Insights observations: Workers `3,000`, D1 rows read `504,922`, and rows written `37,386`. The admin-only rebase and atomic resume advanced the global guard to generation `5`, mode `running`; the staging web returned to live data mode.
+- Production API remains undeployed and production D1 remains separately blocked.
 
-Treat the staging web URL as UI-shell evidence only. It currently shows sample/demo-style place states and is not proof of a connected live backend.
+### Cost and abuse boundary
 
-### Sites
-
-- Private Sites version 2 URL exists.
-- Chrome currently shows the OpenAI login wall; authenticated application rendering has not been reverified in this handoff.
-- Do not treat private Sites deployment as a public production release.
+- Final photo maximum is `1 MiB` after bounded client re-encoding.
+- Photo writes were re-enabled only after the live R2 `0 B` state and zero active D1 photo ledger were reconciled. A valid bounded JPEG was selected in the staging web UI and reached the exact-host managed Turnstile challenge. Automation was rejected before token issuance, so upload/moderate/read/delete and zero-residual proof remain pending on a human Turnstile check; no upload success or R2 object is claimed.
+- Photo reads are enabled; active R2 bytes, current-month writes, reads, and transforms were all zero at the last reconciliation.
+- Server controls include authentication, exact origin checks, per-identity and privacy-preserving IP-fingerprint limits, one-use tickets, idempotency, deduplication, bounded retries, and fail-closed budget checks.
+- The global ledger warns at 60%, degrades at 70%, and stops non-critical work at 80%, with an independent manual emergency stop.
+- Cloudflare showed about 87,870 actual D1 rows read for the visible billing period, while the conservative application ledger had reserved exactly 3,500,000 rows from 1,583 admitted requests. D1 Insights showed the heaviest observed public query averaging 59 rows.
+- The previous route weights were therefore too conservative, not evidence of real quota consumption. The deployed calibration reserves 100 rows for standard/essential reads, 500 for high-cost reads, 200 for personal reads, and at most 500 for writes. Fresh observations and the server's atomic below-70% checks completed successfully; the same predicates remain mandatory for any future resume.
+- The recovery contract now supports an explicit audited reservation rebase for this overestimate. It requires the admin role, a non-running guard, the exact current generation, a same-day observation no older than 15 minutes, and records the previous aggregate reservation in `admin_actions`; direct D1 edits are forbidden.
+- A browser regression gate now fails when the non-mutating home/map/search/detail journey exceeds 80 API requests.
+- The latest cache-busted staging browser smoke passed at `65/80` requests with no application console error.
 
 ### NAVER Maps
 
-- A create-application form is filled but was not submitted in this handoff.
-- Dynamic Map, web origins, Android package, and iOS bundle fields are present.
-- Final registration can create an external/billable service and requires the user's action-time confirmation.
-- Shared preview hosts are not final owner-domain release evidence.
+- The `Silsigan` Dynamic Map application exists and the public Client ID is in `.env.example`.
+- No NAVER Client Secret is stored in Git or browser code.
+- Staging loaded real NAVER map styles and tiles from the current `nrbe.pstatic.net` and `ssl.pstatic.net/static/maps` hosts.
+- The previous false `MAP_RESOURCE_FAILED` fallback came from recognizing only the legacy tile hosts. The current implementation recognizes both legacy and current hosts while still rejecting `auth_fail`.
+- After five seconds, Playwright observed the real NAVER map DOM, NAVER legal/logo assets, and place markers without falling back.
+- Daily/monthly console limits and 70% alert thresholds were configured earlier; notification-recipient and owner-domain release evidence remain open.
+- `workers.dev` is staging preview evidence only and does not satisfy the owner-controlled production-domain gate.
 
 ### Public data providers
 
-- Adapters and fixtures exist locally.
-- Current TourAPI browser tab is not evidence of a completed API utilization application.
-- KMA, TourAPI, national parking, and ITS credentials/rights/quotas have not been verified as active in staging.
-- Never enable a source until rights, attribution, credentials, refresh, TTL, health, and fallback are all recorded.
+- Adapters and contract fixtures exist for KMA, TourAPI, national parking, ITS traffic/CCTV, and Seoul realtime.
+- Each adapter now has a server-side Korea Standard Time daily provider-request budget checked before outbound network access. Invalid values or timestamps fail closed, ceilings cannot be raised above the compiled free-tier boundary, ITS traffic and CCTV deliberately share one budget, and each run reserves at most two attempts.
+- External source ingestion targets: `0`; enabled targets: `0`.
+- Source activation remains fail-closed until rights, attribution, credential ownership, quota, TTL, health, enabled region, and fallback evidence are recorded.
+- Staging secret names installed and verified by name only:
+  - `KMA_SERVICE_KEY`
+  - `TOUR_API_SERVICE_KEY`
+  - `NATIONAL_PARKING_SERVICE_KEY`
+  - `ADMIN_TOKENS`
+- Still pending:
+  - `ITS_SERVICE_KEY`
+- Existing photo-protection names remain `SILSIGAN_PHOTO_UPLOAD_HMAC_SECRET` and `SILSIGAN_TURNSTILE_SECRET_KEY`; role-separated `ADMIN_TOKENS` is installed in staging and role denials were verified without exposing values.
+- Never print provider keys. Install them only with Wrangler secret input into staging, then verify by secret name only.
+- ITS application fields are prepared but not submitted. The selected products are traffic flow and CCTV metadata only.
+- data.go.kr requires the user to complete login/CAPTCHA before KMA and national-parking applications can be prepared.
+- TourAPI requires a user login/OAuth and application consent.
 
-## User-only or action-time approval gates
+## Integrated code changes in this worktree
 
-The next developer must stop and obtain confirmation immediately before:
+- Public GET requests no longer add an unnecessary JSON `Content-Type`, removing preflight-only traffic.
+- Silent map/query refreshes fetch only scoped places and their statuses after the initial live load.
+- All background refreshes use that lightweight path, run every 60 seconds only in one visible same-origin leader tab, and reject overlap.
+- Initial photo/comment prefetch scope is reduced from 20 places to five.
+- Place-detail photo/comment evidence is fetched lazily when the user opens an uncached place.
+- Browser smoke accepts a truthful empty live ranking and enforces an 80-request non-mutating API budget.
+- Read-only staging smoke no longer sends a legacy anonymous identifier without its server proof.
+- NAVER map health accepts the current pstatic tile hosts and keeps the existing authentication-failure boundary.
+- Official-source calls are guarded by persistent daily provider budgets before network access, including shared ITS traffic/CCTV accounting and a `0` kill switch.
+- Global D1 route reservations are calibrated to observed staging query cost with safety headroom; the audited 60/70/80 state machine and atomic resume predicates remain unchanged.
+- Public API admission reuses the pre-authentication cost-guard control row so each request reads the KV mirror once instead of twice.
 
-- accepting Cloudflare R2 terms or adding/changing a payment method
-- submitting the NAVER Maps application or enabling billable overage
-- accepting public-data provider terms or making a final utilization application
-- buying or adding a domain
-- applying a remote production migration
-- deploying or promoting production traffic
-- submitting TestFlight, App Store, or Play Console forms
+## Verification completed in this handoff
 
-Read-only account inspection does not require these mutations and should come first.
+- Focused provider-budget, provider-quota, and D1 route-calibration regressions passed. The sandbox-only full run failed four local-listen tests with `EPERM`; the authorized loopback run passed.
+- Full root suite: `453/453` passed, 0 failed, 0 skipped. A sandbox-only run failed four loopback-listen tests with `EPERM`; the authorized loopback rerun passed. Added regressions cover the truthful no-photo home state, upload focus restoration, final terms surface/URL contract, mobile policy-table containment, provider-budget boundaries, reservation-rebase safety, single-leader visible-only background refresh, and exactly one cost-guard KV read per public request.
 
-## Safe resume commands
+## 2026-07-22 KV incident handoff
+
+- Two unattended staging web tabs were closed. They had each run a 30-second full refresh of about 22 API calls.
+- The frontend now elects one same-origin leader, refreshes only while visible, prevents overlap, runs every 60 seconds, and uses the lightweight places plus at-most-five-status path after initial load.
+- The API pre-authentication cost guard now passes its already-loaded control row into reservation, eliminating the duplicate `COST_GUARD_STATE` KV read while retaining D1 atomic reservation.
+- Estimated idle two-tab load fell from about `176 KV reads/min` to about `6 KV reads/min` in the same scenario, excluding initial load, cron, and user actions.
+- The exposed Turnstile secret was rotated and the replacement was installed in staging only without printing or writing it. The old value may remain accepted for up to two hours under Cloudflare's rotation grace period.
+- Current deployments: API `dc07bf4a-879a-421c-aea1-5418f9c8bc0e`; web `ad980039-5ba0-4ffb-9616-6f60eb6aea54`.
+- Production secrets, migrations, deployment, and traffic were not changed. Recheck Workers KV after the daily reset at `09:00 KST`; the previously observed rolling `0.9 reads/s` and `63.9k reads` include pre-remediation history.
+- Mobile suite: `4/4` passed, 0 failed, 0 skipped; mobile lint/typecheck also passed.
+- WebView syntax/contract check: passed.
+- Root lint, typecheck, and Next.js production build: passed.
+- `pnpm typecheck`: passed.
+- `pnpm cf:build`: passed with Next.js `16.2.6`, OpenNext Cloudflare `1.19.11`, and 27 generated pages/routes.
+- Staging web deploy: passed, version `ad980039-5ba0-4ffb-9616-6f60eb6aea54`; live API mode was reverified after embedding the exact staging API base.
+- Staging API deploy: passed, version `dc07bf4a-879a-421c-aea1-5418f9c8bc0e`; public health is `200` and `/api/config` exposes no secret field.
+- Browser smoke: passed with `65/80` non-mutating API requests.
+- Real NAVER tile/style requests: observed; no `MAP_RESOURCE_FAILED` after the stabilization window.
+- The first post-deploy smoke received one transient stale HTML document referencing a removed chunk. The exact root subsequently returned the current chunk on three consecutive reads, and the cache-busted release smoke passed. Preserve this as rollout evidence rather than hiding it.
+
+The full repository verification sequence used before the source commit is:
 
 ```bash
-git fetch origin
-git switch codex/silsigan-progress-20260710
-git pull --ff-only origin codex/silsigan-progress-20260710
-
-pnpm install --frozen-lockfile
-pnpm --dir apps/mobile install --frozen-lockfile
-pnpm --dir apps/webview install --frozen-lockfile
-
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm cf:build
 pnpm audit:security
-pnpm verify
-pnpm release:status
-pnpm cf:external-state
+git diff --check
 ```
 
-`pnpm release:status` is expected to remain externally blocked. That is not a local test failure.
+## Action-time confirmation gates
 
-## Continue in this order
+Stop and obtain the user's immediate confirmation before any of the following:
 
-1. Confirm final source SHA, clean tree, full verification, secret scan, and remote SHA.
-2. Ask the user to complete the OpenAI Sites login if Sites UI proof is needed.
-3. Obtain user confirmation at the exact moment before R2 terms/payment activation and NAVER registration.
-4. Re-run `pnpm cf:external-state` and verify R2, D1, Worker names, URL/origin bindings.
-5. Deploy staging API only after preflight; verify health and public read before any write smoke.
-6. Activate one public-data source at a time: rights → key → fixture → staging health → attribution → fallback.
-7. Run one bounded staging photo/report/moderation/delete flow and clean up its objects.
-8. Run iPhone and Android real-device QA.
-9. Complete legal, operations, and store gates.
-10. Consider production only when every P0 in the release ledger is closed.
+- accepting provider terms or submitting a utilization application that creates persistent API access
+- approving a TourOnePass/OAuth grant
+- rotating Cloudflare `ADMIN_TOKENS` or changing their role contract
+- installing newly issued provider keys into Cloudflare staging secrets
+- enabling any public-data ingestion target
+- resuming photo writes or running a mutating photo/admin smoke
+- applying a production migration, deploying production, adding a paid domain, or promoting traffic
 
-## Security and cost gate
+The current broad implementation request is not a substitute for confirmation at the final submit/grant/credential action.
 
-- No secret, raw IP, exact GPS, anonymous proof, private R2 key, or original image URL in public surfaces or logs.
-- Server-side authentication and authorization before expensive work.
-- Burst, rolling, daily, per-session/user/fingerprint, and global limits.
-- Final photo maximum 1 MiB; bound image dimensions, count, queue, concurrency, timeout, and retry.
-- Idempotency and one-use signed upload ticket; replay and duplicate work rejection.
-- 60% alert, 70% degradation, 80% automatic stop, plus manual emergency stop.
-- Fail closed when identity, quota, budget, source rights, or dependency state cannot be verified.
-- Application controls are not “operationally complete” until observed in the target environment.
+## Safe next order
+
+1. User unlocks the Mac and completes data.go.kr CAPTCHA login.
+2. Prepare KMA and national-parking applications; do not submit yet.
+3. Prepare TourAPI OAuth/application and retain the already prepared ITS form; do not submit yet.
+4. Submit only the already reviewed provider forms. Role-separated staging `ADMIN_TOKENS` and the three existing provider keys are already installed in staging only.
+5. Keep every official source and ingestion target disabled while applications, rights, attribution, and health remain unresolved.
+6. Validate provider contracts and source health one source at a time, beginning with KMA.
+7. Monitor the recovered generation-`5` guard with redacted aggregates; use the audited endpoint and fresh observations for any future stop/resume.
+8. Keep the reconciled photo guard enabled only while its R2/D1 counters remain within bounds.
+9. After the visible Turnstile human check succeeds, run one 1 MiB-or-smaller upload/moderate/read/delete smoke and confirm zero residual R2 bytes.
+10. Complete moderation webhook, cost-alert recipient, WAF/rate-limit, and tail-redaction evidence.
+11. Run iPhone and Android real-device QA, legal/operations sign-off, and TestFlight preparation.
+12. Consider production only after every P0 in `release-ledger.yaml` is closed and separately approved.
+
+## Security gate
+
+- No secret, raw IP, exact GPS, anonymous proof, private R2 key, original filename, or original image URL in Git, logs, analytics, or public responses.
+- Authenticate and authorize before expensive work.
+- Bound upload bytes, image dimensions, count, concurrency, queue depth, retries, and provider calls before the metered operation.
+- Require idempotency and one-use tickets for writes; reject replay and duplicate transforms.
+- Keep source rights/health and budget uncertainty fail-closed.
+- Local tests and dashboards are implementation evidence, not production operational completion.
 
 ## Important references
 
 - `docs/silsigan-v2-master-completion-plan-2026-07-21.md`
-- `RELEASE_STATUS.md`
 - `docs/current-release-state.md`
+- `RELEASE_STATUS.md`
 - `release-ledger.yaml`
 - `docs/cloudflare-staging-operator-packet.md`
 - `docs/cloudflare-cost-usage-runbook.md`
+- `docs/source-ingestion-scheduler-runbook.md`
 - `docs/real-device-qa.md`
