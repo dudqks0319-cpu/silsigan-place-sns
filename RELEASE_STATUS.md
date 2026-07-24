@@ -15,7 +15,7 @@ Updated: 2026-07-24
 - Working tree after the candidate commit: clean before this documentation-only release record; generated 2026-07-24 staging smoke, safe-tail, static-directory, and public-source evidence are committed release inputs
 - Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
 - Final release-record commit: the docs-only commit containing this record; the remote branch remains unchanged until an explicit push
-- Security gate: manual source/diff review, high-confidence secret/log scan, same-day dependency audit, negative-path regressions, and the current Codex Security diff scan passed after remediation. The scan found one Medium CWE-345 client-location trust issue in `e760dd5`; `d35607a` makes location mandatory, validates radius/accuracy server-side, binds only coarse evidence to one-use tickets, removes server-endorsed physical-location wording and internal identifiers, and adds focused regressions
+- Security gate: manual source/diff review, high-confidence secret/log scan, same-day dependency audit, negative-path regressions, and the current Codex Security diff scan passed after remediation. The sealed scan has `7/7` completed diff rows, one candidate with discovery/validation/attack-path receipts, matching sealed artifact hashes, and a generated final report. It found one Medium CWE-345 client-location trust issue in `e760dd5`; `d35607a` makes location mandatory, validates radius/accuracy server-side, binds only coarse evidence to one-use tickets, removes server-endorsed physical-location wording and internal identifiers, and adds focused regressions
 - Production deploy/migration/traffic change: none
 - Deferred and disabled: ads, rewards, Q&A, live streams, social feed, demo data, Seoul realtime activation
 
@@ -76,7 +76,7 @@ Staging URLs:
 - Codex Security closure: the source-state PoC reproduced on `f5abc50e999d0a8f349d56326a8e9ecb4af6491e`, no longer matches the vulnerable transition on `656eb315cbde4505b6c7db342a0185bb2762baea`, and the independent post-fix re-review reports no remaining actionable finding in the scoped diff.
 - Dependency audit: no known root or mobile vulnerability.
 - High-confidence credential-prefix and provider-assignment scan: no matching file; `.env.example` is the only tracked env-shaped file.
-- Post-deploy storage reconciliation: active photos `0`, active photo bytes `0`, budget active bytes `0`, period writes `0`, consumed upload claims `0`, pending cleanup jobs `0`; private staging R2 contains `0` objects and `0 B`.
+- 2026-07-24 15:26 KST post-deploy storage reconciliation: active photos `0`, active photo bytes `0`, budget active bytes `0`, period writes `0`, consumed upload claims `0`, pending cleanup jobs `0`, D1 `changed_db:false`/`rows_written:0`; private staging R2 contains `0` objects and `0 B`.
 
 ## 보안·비용 경계
 
