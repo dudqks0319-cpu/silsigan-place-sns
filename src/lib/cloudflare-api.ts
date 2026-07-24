@@ -255,6 +255,12 @@ export type UploadPhotoInput = {
   clientReencoded: true;
   rightsAttested: true;
   rightsPolicyVersion: typeof PHOTO_RIGHTS_TERMS_VERSION;
+  clientLocation: {
+    latitude: number;
+    longitude: number;
+    accuracyM: number;
+  };
+  turnstileToken?: string;
   blob: Blob;
 };
 
@@ -266,6 +272,11 @@ export type PhotoUploadTicket = {
   ticket: string | null;
   expiresAt: string | null;
   rightsPolicyVersion: typeof PHOTO_RIGHTS_TERMS_VERSION;
+  clientReportedProximity: {
+    evidence: "client_reported_coordinates_within_radius";
+    radiusM: 50 | 150 | 300;
+    accuracyBucket: "high" | "medium";
+  };
 };
 
 export type ListRankingParams = {
@@ -380,6 +391,8 @@ export function createCloudflareApiClient(options: CloudflareApiClientOptions): 
           height: input.height,
           rightsAttested: input.rightsAttested,
           rightsPolicyVersion: input.rightsPolicyVersion,
+          clientLocation: input.clientLocation,
+          ...(input.turnstileToken ? { turnstileToken: input.turnstileToken } : {}),
         }),
       });
 
@@ -387,6 +400,9 @@ export function createCloudflareApiClient(options: CloudflareApiClientOptions): 
         ticket.data.method !== "POST"
         || ticket.data.uploadUrl !== "/api/photos/upload"
         || ticket.data.rightsPolicyVersion !== input.rightsPolicyVersion
+        || ticket.data.clientReportedProximity?.evidence !== "client_reported_coordinates_within_radius"
+        || !([50, 150, 300] as const).includes(ticket.data.clientReportedProximity.radiusM)
+        || !(["high", "medium"] as const).includes(ticket.data.clientReportedProximity.accuracyBucket)
       ) {
         throw new CloudflareApiError(502, "PHOTO_UPLOAD_CONTRACT_INVALID", "사진 업로드 계약을 확인할 수 없습니다.");
       }
@@ -397,6 +413,8 @@ export function createCloudflareApiClient(options: CloudflareApiClientOptions): 
         formData.set("ticket", ticket.data.ticket);
         formData.set("ticketExpiresAt", ticket.data.expiresAt);
       }
+      formData.set("proximityRadiusM", String(ticket.data.clientReportedProximity.radiusM));
+      formData.set("proximityAccuracyBucket", ticket.data.clientReportedProximity.accuracyBucket);
       formData.set("placeId", input.placeId);
       formData.set("byteSize", String(input.byteSize));
       formData.set("mimeType", input.mimeType);

@@ -490,9 +490,9 @@ type D1PhotoRow = {
   width: number;
   height: number;
   clickCount: number;
-  locationVerified: number;
-  verifiedRadiusM: 50 | 150 | 300 | null;
-  accuracyBucket: LocationAccuracyBucket;
+  clientReportedProximity: number;
+  proximityRadiusM: 50 | 150 | 300 | null;
+  proximityAccuracyBucket: LocationAccuracyBucket;
   status: PhotoRecord["status"];
   deletedAt: string | null;
   createdAt: string;
@@ -857,9 +857,9 @@ type PhotoRecord = {
   width: number;
   height: number;
   clickCount: number;
-  locationVerified?: boolean | number;
-  verifiedRadiusM?: 50 | 150 | 300 | null;
-  accuracyBucket?: LocationAccuracyBucket;
+  clientReportedProximity?: boolean | number;
+  proximityRadiusM?: 50 | 150 | 300 | null;
+  proximityAccuracyBucket?: LocationAccuracyBucket;
   status: "pending" | "ready" | "rejected";
   deletedAt: string | null;
   createdAt: string;
@@ -869,9 +869,11 @@ type PublicPhotoRecord = Pick<
   PhotoRecord,
   "id" | "placeId" | "mimeType" | "byteSize" | "width" | "height" | "clickCount" | "status" | "createdAt"
 > & {
-  locationVerified: boolean;
-  verifiedRadiusM: 50 | 150 | 300 | null;
-  accuracyBucket: LocationAccuracyBucket;
+  clientReportedProximity: {
+    evidence: typeof photoLocationEvidence;
+    radiusM: 50 | 150 | 300;
+    accuracyBucket: LocationAccuracyBucket;
+  } | null;
   ownedByCurrentSession: boolean;
   previewUrl: string | null;
 };
@@ -1309,6 +1311,7 @@ const photoUploadTicketClockSkewMs = 30_000;
 const photoTurnstileAction = "photo_upload";
 const photoTurnstileTokenMaxLength = 2_048;
 const photoLocationAccuracyBuckets = ["high", "medium", "low", "unknown"] as const;
+const photoLocationEvidence = "client_reported_coordinates_within_radius" as const;
 const photoTurnstileSiteverifyUrl = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const photoTurnstileTimeoutMs = 5_000;
 const photoMultipartOverheadMaxBytes = 512 * 1024;
@@ -6363,20 +6366,29 @@ async function listPhotos(url: URL, session: AnonymousSession, env: Env): Promis
           height,
           COALESCE((SELECT COUNT(*) FROM likes l WHERE l.target_type = 'photo' AND l.target_id = photos.id), 0) AS clickCount,
           COALESCE((
-            SELECT json_extract(pms.automated_checks_json, '$.locationVerified')
+            SELECT COALESCE(
+              json_extract(pms.automated_checks_json, '$.clientReportedProximity'),
+              json_extract(pms.automated_checks_json, '$.locationVerified')
+            )
             FROM photo_moderation_states pms
             WHERE pms.photo_id = photos.id
-          ), 0) AS locationVerified,
+          ), 0) AS clientReportedProximity,
           (
-            SELECT json_extract(pms.automated_checks_json, '$.verifiedRadiusM')
+            SELECT COALESCE(
+              json_extract(pms.automated_checks_json, '$.proximityRadiusM'),
+              json_extract(pms.automated_checks_json, '$.verifiedRadiusM')
+            )
             FROM photo_moderation_states pms
             WHERE pms.photo_id = photos.id
-          ) AS verifiedRadiusM,
+          ) AS proximityRadiusM,
           COALESCE((
-            SELECT json_extract(pms.automated_checks_json, '$.accuracyBucket')
+            SELECT COALESCE(
+              json_extract(pms.automated_checks_json, '$.proximityAccuracyBucket'),
+              json_extract(pms.automated_checks_json, '$.accuracyBucket')
+            )
             FROM photo_moderation_states pms
             WHERE pms.photo_id = photos.id
-          ), 'unknown') AS accuracyBucket,
+          ), 'unknown') AS proximityAccuracyBucket,
           status,
           deleted_at AS deletedAt,
           created_at AS createdAt
@@ -6401,6 +6413,16 @@ async function listPhotos(url: URL, session: AnonymousSession, env: Env): Promis
 }
 
 function photoToPublicPhoto(photo: PhotoRecord, requestUrl: URL, env: Env, currentAnonymousUserId: string): PublicPhotoRecord {
+  const proximityRadiusM = photo.proximityRadiusM ?? null;
+  const clientReportedProximity =
+    (photo.clientReportedProximity === true || photo.clientReportedProximity === 1) && proximityRadiusM
+      ? {
+          evidence: photoLocationEvidence,
+          radiusM: proximityRadiusM,
+          accuracyBucket: photo.proximityAccuracyBucket ?? "unknown",
+        }
+      : null;
+
   return {
     id: photo.id,
     placeId: photo.placeId,
@@ -6409,9 +6431,7 @@ function photoToPublicPhoto(photo: PhotoRecord, requestUrl: URL, env: Env, curre
     width: photo.width,
     height: photo.height,
     clickCount: photo.clickCount,
-    locationVerified: photo.locationVerified === true || photo.locationVerified === 1,
-    verifiedRadiusM: photo.verifiedRadiusM ?? null,
-    accuracyBucket: photo.accuracyBucket ?? "unknown",
+    clientReportedProximity,
     status: photo.status,
     createdAt: photo.createdAt,
     ownedByCurrentSession: photo.anonymousUserId === currentAnonymousUserId,
@@ -6433,22 +6453,27 @@ async function createPhotoUploadTicket(
   const height = numberField(body, "height");
   assertPhotoRightsAttestation(body);
   const clientLocation = optionalClientLocationField(body);
+  if (!clientLocation) {
+    throw new HttpError(
+      400,
+      "PHOTO_LOCATION_REQUIRED",
+      "사진을 올리려면 브라우저가 제공한 현재 위치가 필요합니다.",
+    );
+  }
   const turnstileToken = optionalStringField(body, "turnstileToken", photoTurnstileTokenMaxLength);
   await assertPhotoTurnstileProof(request, turnstileToken, env);
 
   const place = await resolvePlaceRecord(placeId, env);
-  const locationVerification = clientLocation
-    ? await verifyFieldReportLocation(place, clientLocation, env)
-    : null;
-  if (clientLocation && !locationVerification?.verifiedRadiusM) {
+  const locationVerification = await verifyFieldReportLocation(place, clientLocation, env);
+  if (!locationVerification.verifiedRadiusM) {
     throw new HttpError(
       400,
       "PHOTO_LOCATION_NOT_VERIFIED",
-      "현재 위치가 선택된 장소의 현장 인증 범위에 있는지 확인할 수 없습니다.",
+      "제출한 기기 위치가 선택 장소의 반경 안인지 확인할 수 없습니다.",
     );
   }
-  const verifiedRadiusM = locationVerification?.verifiedRadiusM ?? null;
-  const accuracyBucket = locationAccuracyBucketForMeters(clientLocation?.accuracyM);
+  const proximityRadiusM = locationVerification.verifiedRadiusM;
+  const proximityAccuracyBucket = locationAccuracyBucketForMeters(clientLocation.accuracyM);
   let anonymousUserId: string | null = null;
   if (env.DB) {
     anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
@@ -6479,7 +6504,7 @@ async function createPhotoUploadTicket(
     await recordPhotoRightsAcceptance(env.DB, anonymousUserId, now.toISOString());
   }
   const ticket = await issuePhotoUploadTicket(
-    { uploadId, placeId, mimeType, byteSize, width, height, verifiedRadiusM, accuracyBucket },
+    { uploadId, placeId, mimeType, byteSize, width, height, proximityRadiusM, proximityAccuracyBucket },
     session,
     env,
     now,
@@ -6493,9 +6518,11 @@ async function createPhotoUploadTicket(
       storageKey,
       ticket: ticket?.signature ?? null,
       expiresAt: ticket?.expiresAt ?? null,
-      locationVerification: verifiedRadiusM
-        ? { verifiedRadiusM, accuracyBucket }
-        : null,
+      clientReportedProximity: {
+        evidence: photoLocationEvidence,
+        radiusM: proximityRadiusM,
+        accuracyBucket: proximityAccuracyBucket,
+      },
       rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
       headers: {
         "content-type": mimeType,
@@ -6644,8 +6671,8 @@ type PhotoCompletionPayload = {
   byteSize: number;
   width: number;
   height: number;
-  verifiedRadiusM?: 50 | 150 | 300 | null;
-  accuracyBucket?: LocationAccuracyBucket;
+  proximityRadiusM?: 50 | 150 | 300 | null;
+  proximityAccuracyBucket?: LocationAccuracyBucket;
   clientReencoded: boolean;
   originalFilename?: string;
   imageBase64?: string;
@@ -6654,7 +6681,7 @@ type PhotoCompletionPayload = {
 
 type PhotoUploadTicketClaims = Pick<
   PhotoCompletionPayload,
-  "uploadId" | "placeId" | "mimeType" | "byteSize" | "width" | "height" | "verifiedRadiusM" | "accuracyBucket"
+  "uploadId" | "placeId" | "mimeType" | "byteSize" | "width" | "height" | "proximityRadiusM" | "proximityAccuracyBucket"
 >;
 
 async function completePhoto(request: Request, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -6669,8 +6696,8 @@ async function completePhoto(request: Request, session: AnonymousSession, env: E
       byteSize: numberField(body, "byteSize"),
       width: numberField(body, "width"),
       height: numberField(body, "height"),
-      verifiedRadiusM: optionalPhotoVerifiedRadiusField(body, "verifiedRadiusM"),
-      accuracyBucket: optionalEnumField(body, "accuracyBucket", photoLocationAccuracyBuckets) ?? "unknown",
+      proximityRadiusM: optionalPhotoVerifiedRadiusField(body, "proximityRadiusM"),
+      proximityAccuracyBucket: optionalEnumField(body, "proximityAccuracyBucket", photoLocationAccuracyBuckets) ?? "unknown",
       clientReencoded: booleanField(body, "clientReencoded"),
       originalFilename: optionalStringField(body, "originalFilename", 255),
       imageBase64: optionalStringField(body, "imageBase64", Math.ceil(PHOTO_MAX_BYTES * 1.4)),
@@ -6722,8 +6749,8 @@ async function uploadPhotoMultipart(request: Request, session: AnonymousSession,
       byteSize: imageBytes.byteLength,
       width: formNumberField(formData, "width"),
       height: formNumberField(formData, "height"),
-      verifiedRadiusM: formOptionalPhotoVerifiedRadiusField(formData, "verifiedRadiusM"),
-      accuracyBucket: formOptionalPhotoAccuracyBucketField(formData, "accuracyBucket"),
+      proximityRadiusM: formOptionalPhotoVerifiedRadiusField(formData, "proximityRadiusM"),
+      proximityAccuracyBucket: formOptionalPhotoAccuracyBucketField(formData, "proximityAccuracyBucket"),
       clientReencoded: formBooleanField(formData, "clientReencoded"),
       originalFilename: formOptionalStringField(formData, "originalFilename", 255),
       imageBytes,
@@ -8090,7 +8117,7 @@ async function assertPhotoUploadTicket(input: PhotoCompletionPayload, session: A
 
 function photoUploadTicketMessage(claims: PhotoUploadTicketClaims, anonymousSessionId: string, expiresAt: string): string {
   return JSON.stringify([
-    "silsigan-photo-ticket-v2",
+    "silsigan-photo-ticket-v3",
     claims.uploadId,
     anonymousSessionId,
     claims.placeId,
@@ -8098,8 +8125,8 @@ function photoUploadTicketMessage(claims: PhotoUploadTicketClaims, anonymousSess
     claims.byteSize,
     claims.width,
     claims.height,
-    claims.verifiedRadiusM ?? null,
-    claims.accuracyBucket ?? "unknown",
+    claims.proximityRadiusM ?? null,
+    claims.proximityAccuracyBucket ?? "unknown",
     expiresAt,
   ]);
 }
@@ -9099,9 +9126,10 @@ function d1PhotoPersistenceStatements(
       JSON.stringify({
         mimeAndMagicBytes: "passed",
         sizeAndDimensions: "passed",
-        locationVerified: photo.locationVerified === true,
-        verifiedRadiusM: photo.verifiedRadiusM ?? null,
-        accuracyBucket: photo.accuracyBucket ?? "unknown",
+        clientReportedProximity: photo.clientReportedProximity === true,
+        proximityRadiusM: photo.proximityRadiusM ?? null,
+        proximityAccuracyBucket: photo.proximityAccuracyBucket ?? "unknown",
+        locationEvidence: photo.clientReportedProximity === true ? photoLocationEvidence : "none",
         metadataRemoved: sanitizedPhoto?.metadataRemoved ?? false,
         pixelsReencoded: sanitizedPhoto?.pixelsReencoded ?? false,
         duplicateCheck: imageHash ? "passed" : "not_available",
@@ -9178,9 +9206,9 @@ async function completePhotoPayload(
     width: requestedWidth,
     height: requestedHeight,
     clickCount: 0,
-    locationVerified: Boolean(input.verifiedRadiusM),
-    verifiedRadiusM: input.verifiedRadiusM ?? null,
-    accuracyBucket: input.accuracyBucket ?? "unknown",
+    clientReportedProximity: Boolean(input.proximityRadiusM),
+    proximityRadiusM: input.proximityRadiusM ?? null,
+    proximityAccuracyBucket: input.proximityAccuracyBucket ?? "unknown",
     status: moderationRequired ? "pending" : "ready",
     deletedAt: null,
     createdAt: new Date().toISOString(),
@@ -9244,9 +9272,10 @@ async function completePhotoPayload(
           metadataRemoved: sanitizedPhoto.metadataRemoved ? "true" : "none-found",
           serverPixelReencoded: sanitizedPhoto.pixelsReencoded ? "true" : "false",
           gpsExifStripped: "true",
-          locationVerified: photo.locationVerified ? "true" : "false",
-          verifiedRadiusM: photo.verifiedRadiusM ? String(photo.verifiedRadiusM) : "none",
-          accuracyBucket: photo.accuracyBucket ?? "unknown",
+          clientReportedProximity: photo.clientReportedProximity ? "true" : "false",
+          proximityRadiusM: photo.proximityRadiusM ? String(photo.proximityRadiusM) : "none",
+          proximityAccuracyBucket: photo.proximityAccuracyBucket ?? "unknown",
+          locationEvidence: photo.clientReportedProximity ? photoLocationEvidence : "none",
           processing: sanitizedPhoto.processing,
           originalBytes: String(sanitizedPhoto.originalBytes),
           sanitizedBytes: String(sanitizedPhoto.sanitizedBytes),
@@ -9298,7 +9327,7 @@ async function completePhotoPayload(
 
   return json(
     {
-      photo,
+      photo: photoToPublicPhoto(photo, new URL(request.url), env, anonymousUserId),
       storageKey: result.storageKey,
     },
     {

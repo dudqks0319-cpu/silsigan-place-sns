@@ -393,9 +393,11 @@ type WorkerPhoto = {
   width: number;
   height: number;
   clickCount: number;
-  locationVerified?: boolean;
-  verifiedRadiusM?: 50 | 150 | 300 | null;
-  accuracyBucket?: LocationAccuracyBucket;
+  clientReportedProximity?: {
+    evidence: "client_reported_coordinates_within_radius";
+    radiusM: 50 | 150 | 300;
+    accuracyBucket: LocationAccuracyBucket;
+  } | null;
   status: "pending" | "ready" | "rejected";
   createdAt: string;
   ownedByCurrentSession?: boolean;
@@ -405,10 +407,11 @@ type PhotoUploadTicket = {
   uploadId: string;
   ticket: string | null;
   expiresAt: string | null;
-  locationVerification: {
-    verifiedRadiusM: 50 | 150 | 300;
+  clientReportedProximity: {
+    evidence: "client_reported_coordinates_within_radius";
+    radiusM: 50 | 150 | 300;
     accuracyBucket: "high" | "medium";
-  } | null;
+  };
   rightsPolicyVersion: typeof PHOTO_RIGHTS_TERMS_VERSION;
   storageKey: string;
 };
@@ -1907,7 +1910,7 @@ export default function SilsiganRedesign() {
         reportStartedAtRef.current = Date.now();
         trackEvent("report_location_verified", { placeId: matchedPlace.id });
         trackEvent("report_started", { placeId: matchedPlace.id, source: "current_location" });
-        setToast(`${matchedPlace.name} 근처 현재 위치를 확인했습니다. 지도 위치로 사진을 올릴 수 있어요.`);
+        setToast(`${matchedPlace.name} 반경 안으로 기기 위치가 연결됐습니다. 지도 위치로 사진을 올릴 수 있어요.`);
         focusUploadFormStart();
       },
       (error) => {
@@ -2295,6 +2298,9 @@ export default function SilsiganRedesign() {
       if (ticket.rightsPolicyVersion !== photo.rightsPolicyVersion) {
         throw new Error("사진 게시 권한 확인 버전을 검증하지 못했습니다.");
       }
+      if (ticket.clientReportedProximity?.evidence !== "client_reported_coordinates_within_radius") {
+        throw new Error("사진 위치 연결 결과를 검증하지 못했습니다.");
+      }
 
       const formData = new FormData();
       formData.set("uploadId", ticket.uploadId);
@@ -2307,10 +2313,8 @@ export default function SilsiganRedesign() {
         formData.set("ticket", ticket.ticket);
         formData.set("ticketExpiresAt", ticket.expiresAt);
       }
-      if (ticket.locationVerification) {
-        formData.set("verifiedRadiusM", String(ticket.locationVerification.verifiedRadiusM));
-        formData.set("accuracyBucket", ticket.locationVerification.accuracyBucket);
-      }
+      formData.set("proximityRadiusM", String(ticket.clientReportedProximity.radiusM));
+      formData.set("proximityAccuracyBucket", ticket.clientReportedProximity.accuracyBucket);
       formData.set("clientReencoded", "true");
       formData.set("file", photo.blob, `upload.${photo.mimeType === "image/jpeg" ? "jpg" : "webp"}`);
 
@@ -5176,8 +5180,8 @@ function CurrentLocationUploadGate({
         <span className={styles.reportPlaceGateIcon} aria-hidden="true"><LocateFixed size={24} /></span>
         <div>
           <p className={styles.reportPlaceGateEyebrow}>지금컷 올리기</p>
-          <h2 id="current-location-upload-title">현재 위치를 확인해 사진 위치로 연결</h2>
-          <p>동의하면 현재 GPS를 확인하고 300m 안의 등록 장소를 자동으로 연결합니다. 직접 장소를 고를 필요가 없습니다.</p>
+          <h2 id="current-location-upload-title">기기 위치를 확인해 사진 장소로 연결</h2>
+          <p>동의하면 브라우저가 제공한 기기 위치로 300m 안의 등록 장소를 자동으로 연결합니다. 직접 장소를 고를 필요가 없습니다.</p>
         </div>
       </section>
 
@@ -5198,7 +5202,7 @@ function CurrentLocationUploadGate({
           <p>{verificationCopy.body}</p>
         </div>
         <p className={styles.locationPrivacyNote}>
-          정확한 좌표는 이 기기의 지도 표시에만 사용합니다. 서버에는 장소와의 확인 반경과 GPS 정확도 등급만 저장합니다.
+          브라우저가 제공한 기기 위치는 지도와 장소 반경 확인에만 씁니다. 서버에는 원본 좌표 없이 반경과 정확도 등급만 저장하며, 물리적 현장 인증을 뜻하지 않습니다.
         </p>
         {!requesting && (
           <button type="button" onClick={onRetry}>
@@ -5336,9 +5340,9 @@ function ReportScreen({
         </button>
       </section>
 
-      <section className={styles.uploadPlaceCard} aria-label="현재 위치로 자동 연결된 사진 장소">
+      <section className={styles.uploadPlaceCard} aria-label="기기 위치로 자동 연결된 사진 장소">
         <div>
-          <span>현재 위치 자동 연결</span>
+          <span>기기 위치 자동 연결</span>
           <strong>{place.name}</strong>
           <p>{place.address}</p>
         </div>
@@ -5351,7 +5355,7 @@ function ReportScreen({
           />
         </div>
         <p className={styles.locationPrivacyNote}>
-          지도에는 현재 위치와 연결 장소가 함께 보입니다. 업로드 서버에는 원본 GPS 좌표 대신 50m·150m·300m 확인 반경만 남습니다.
+          지도에는 기기 위치와 연결 장소가 함께 보입니다. 서버에는 원본 좌표 대신 제출 위치가 장소 반경 안에 있었는지와 정확도 등급만 남기며, 현장 신원 인증으로 사용하지 않습니다.
         </p>
       </section>
 
@@ -6927,7 +6931,7 @@ function photosForPlace(posts: PublicPost[], reports: Report[], workerPhotos: Wo
     .filter((photo) => photo.status === "ready")
     .map((photo) => ({
       id: `photo:${photo.id}`,
-      label: "방금 올린 현장 사진",
+      label: "최근 업로드 사진",
       meta: `${minutesAgo(photo.createdAt)} · 클릭 ${photo.clickCount}`,
       ownedByCurrentSession: photo.ownedByCurrentSession,
       previewUrl: photo.previewUrl ?? undefined,

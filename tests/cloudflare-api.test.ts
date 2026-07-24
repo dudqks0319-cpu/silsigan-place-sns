@@ -84,6 +84,11 @@ type PhotoCompleteData = {
     mimeType: "image/jpeg" | "image/webp";
     byteSize: number;
     status: "pending" | "ready" | "rejected";
+    clientReportedProximity?: {
+      evidence: "client_reported_coordinates_within_radius";
+      radiusM: 50 | 150 | 300;
+      accuracyBucket: "high" | "medium" | "low" | "unknown";
+    } | null;
   };
   storageKey: string;
 };
@@ -92,8 +97,9 @@ type PhotoUploadTicketData = {
   uploadId: string;
   ticket: string;
   expiresAt: string;
-  locationVerification?: {
-    verifiedRadiusM: 50 | 150 | 300;
+  clientReportedProximity: {
+    evidence: "client_reported_coordinates_within_radius";
+    radiusM: 50 | 150 | 300;
     accuracyBucket: "high" | "medium";
   };
 };
@@ -331,6 +337,11 @@ const testAdminTokens = JSON.stringify({
 const testPhotoUploadSecret = "test-photo-upload-secret-at-least-32-characters";
 const testTurnstileSecret = "t".repeat(32);
 const testPhotoClientIp = "198.51.100.10";
+const testPhotoClientLocation = {
+  latitude: 35.15321,
+  longitude: 129.11861,
+  accuracyM: 12,
+} as const;
 const tinyJpegBase64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
 
@@ -10208,6 +10219,7 @@ test("admin user restrictions block public D1 writes until unrestricted", { skip
         height: 600,
         rightsAttested: true,
         rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+        clientLocation: testPhotoClientLocation,
       }),
       rawD1Post(db, "https://api.test/api/photos/complete", anonymousId, {
         uploadId: "upload_restricted",
@@ -10591,6 +10603,7 @@ test("photo upload-ticket accepts multipart binary and sanitizes before R2", asy
         height: 1,
         rightsAttested: true,
         rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+        clientLocation: testPhotoClientLocation,
       }),
     }),
     { PHOTOS: r2 },
@@ -10600,6 +10613,10 @@ test("photo upload-ticket accepts multipart binary and sanitizes before R2", asy
     method: string;
     uploadUrl: string;
     storageKey: string;
+    clientReportedProximity: {
+      radiusM: 50 | 150 | 300;
+      accuracyBucket: "high" | "medium";
+    };
   }>;
 
   assert.equal(ticketResponse.status, 201);
@@ -10613,6 +10630,8 @@ test("photo upload-ticket accepts multipart binary and sanitizes before R2", asy
   formData.set("mimeType", "image/jpeg");
   formData.set("width", "1");
   formData.set("height", "1");
+  formData.set("proximityRadiusM", String(ticketPayload.data.clientReportedProximity.radiusM));
+  formData.set("proximityAccuracyBucket", ticketPayload.data.clientReportedProximity.accuracyBucket);
   formData.set("clientReencoded", "true");
   formData.set("file", new Blob([source], { type: "image/jpeg" }), "camera-name.jpg");
 
@@ -10647,6 +10666,11 @@ test("staging photo upload rejects a forged ticket before R2", { skip: !sqlite3A
       uploadId: "upload_00000000-0000-4000-8000-000000000001",
       ticket: "0".repeat(64),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      clientReportedProximity: {
+        evidence: "client_reported_coordinates_within_radius",
+        radiusM: 50,
+        accuracyBucket: "high",
+      },
     });
     const payload = (await response.json()) as FailurePayload;
 
@@ -10697,6 +10721,45 @@ test("photo upload ticket requires the current per-photo rights attestation befo
   assert.equal(dbTouched, false);
 });
 
+test("photo upload ticket routes require client-reported proximity before Turnstile or D1", async () => {
+  for (const path of ["/api/photos/upload-ticket", "/api/photos/upload-url"]) {
+    let dbTouched = false;
+    const db = {
+      prepare() {
+        dbTouched = true;
+        throw new Error("D1 must not be reached before location validation");
+      },
+    };
+    const response = await worker.handleRequest(
+      new Request(`https://api.test${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": `anon_photo_location_missing_${path.endsWith("url") ? "legacy" : "current"}`,
+        },
+        body: JSON.stringify({
+          placeId: "busan-gwangalli",
+          mimeType: "image/jpeg",
+          byteSize: 256,
+          width: 1,
+          height: 1,
+          rightsAttested: true,
+          rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+        }),
+      }),
+      {
+        DB: db as never,
+        SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 400);
+    assert.equal(payload.error.code, "PHOTO_LOCATION_REQUIRED");
+    assert.equal(dbTouched, false);
+  }
+});
+
 test("photo upload ticket records one idempotent versioned community acceptance", { skip: !sqlite3Available() }, async () => {
   const { db, tempDir } = createSeededSqliteD1();
   const anonymousId = "anon_photo_rights_recorded";
@@ -10714,6 +10777,7 @@ test("photo upload ticket records one idempotent versioned community acceptance"
       height: 1,
       rightsAttested: true,
       rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+      clientLocation: testPhotoClientLocation,
     }),
   });
 
@@ -10782,8 +10846,9 @@ test("photo upload ticket verifies the consented current location and stores onl
     const ticketPayload = (await ticketResponse.json()) as SuccessPayload<PhotoUploadTicketData>;
 
     assert.equal(ticketResponse.status, 201);
-    assert.deepEqual(ticketPayload.data.locationVerification, {
-      verifiedRadiusM: 50,
+    assert.deepEqual(ticketPayload.data.clientReportedProximity, {
+      evidence: "client_reported_coordinates_within_radius",
+      radiusM: 50,
       accuracyBucket: "high",
     });
 
@@ -10793,21 +10858,42 @@ test("photo upload ticket verifies the consented current location and stores onl
       source,
       ticketPayload.data,
     );
+    const completedPayload = (await completed.json()) as SuccessPayload<PhotoCompleteData>;
+    const publicPhotoJson = JSON.stringify(completedPayload.data.photo);
+
     assert.equal(completed.status, 201);
+    assert.deepEqual(completedPayload.data.photo.clientReportedProximity, {
+      evidence: "client_reported_coordinates_within_radius",
+      radiusM: 50,
+      accuracyBucket: "high",
+    });
+    assert.equal(publicPhotoJson.includes("locationVerified"), false);
+    assert.equal(publicPhotoJson.includes("verifiedRadiusM"), false);
+    assert.equal(publicPhotoJson.includes("anonymousUserId"), false);
+    assert.equal(publicPhotoJson.includes("storageKey"), false);
+    assert.equal(publicPhotoJson.includes("deletedAt"), false);
+
     const stored = await db
       .prepare(
         `SELECT
-           json_extract(automated_checks_json, '$.locationVerified') AS locationVerified,
-           json_extract(automated_checks_json, '$.verifiedRadiusM') AS verifiedRadiusM,
-           json_extract(automated_checks_json, '$.accuracyBucket') AS accuracyBucket
+           json_extract(automated_checks_json, '$.clientReportedProximity') AS clientReportedProximity,
+           json_extract(automated_checks_json, '$.proximityRadiusM') AS proximityRadiusM,
+           json_extract(automated_checks_json, '$.proximityAccuracyBucket') AS proximityAccuracyBucket,
+           json_extract(automated_checks_json, '$.locationEvidence') AS locationEvidence
          FROM photo_moderation_states
          LIMIT 1`,
       )
-      .first<{ locationVerified: number; verifiedRadiusM: number | null; accuracyBucket: string }>();
+      .first<{
+        clientReportedProximity: number;
+        proximityRadiusM: number | null;
+        proximityAccuracyBucket: string;
+        locationEvidence: string;
+      }>();
     assert.deepEqual(stored, {
-      locationVerified: 1,
-      verifiedRadiusM: 50,
-      accuracyBucket: "high",
+      clientReportedProximity: 1,
+      proximityRadiusM: 50,
+      proximityAccuracyBucket: "high",
+      locationEvidence: "client_reported_coordinates_within_radius",
     });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -12192,6 +12278,7 @@ test("80 percent cost guard stops uploads and sends one redacted webhook", { ski
           height: 1,
           rightsAttested: true,
           rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+          clientLocation: testPhotoClientLocation,
         }),
       }),
       env,
@@ -12679,11 +12766,19 @@ test("photo upload-url, list, and delete routes enforce anonymous ownership", as
     height: 600,
     rightsAttested: true,
     rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+    clientLocation: testPhotoClientLocation,
   });
   assert.equal(uploadResponse.headers.get("deprecation"), "true");
   assert.equal(uploadResponse.headers.get("x-silsigan-photo-contract"), "legacy");
   assert.equal(uploadResponse.headers.get("link"), '</api/photos/upload-ticket>; rel="successor-version"');
-  const upload = (await uploadResponse.json()) as SuccessPayload<{ uploadId: string; storageKey: string }>;
+  const upload = (await uploadResponse.json()) as SuccessPayload<{
+    uploadId: string;
+    storageKey: string;
+    clientReportedProximity: {
+      radiusM: 50 | 150 | 300;
+      accuracyBucket: "high" | "medium";
+    };
+  }>;
   assert.match(upload.data.storageKey, /^photos\/busan\/busan-gwangalli\/\d{4}\/\d{2}\/.+\.webp$/);
 
   const completeResponse = await rawPost("https://api.test/api/photos/complete", anonymousId, {
@@ -12693,6 +12788,8 @@ test("photo upload-url, list, and delete routes enforce anonymous ownership", as
     mimeType: "image/webp",
     width: 800,
     height: 600,
+    proximityRadiusM: upload.data.clientReportedProximity.radiusM,
+    proximityAccuracyBucket: upload.data.clientReportedProximity.accuracyBucket,
     clientReencoded: true,
   });
   assert.equal(completeResponse.headers.get("deprecation"), "true");
@@ -13337,6 +13434,7 @@ test("Cloudflare API client sends moderation reports to the Worker moderation en
 
 test("Cloudflare API client uses the binary upload-ticket contract", async () => {
   const requests: Array<{ path: string; method: string; contentType: string | null; isFormData: boolean }> = [];
+  const requestBodies: unknown[] = [];
   const client = createCloudflareApiClient({
     baseUrl: "https://api.test",
     anonymousId: "anon_client_photo_test",
@@ -13348,6 +13446,13 @@ test("Cloudflare API client uses the binary upload-ticket contract", async () =>
         contentType: new Headers(init?.headers).get("content-type"),
         isFormData: init?.body instanceof FormData,
       });
+      requestBodies.push(
+        typeof init?.body === "string"
+          ? JSON.parse(init.body)
+          : init?.body instanceof FormData
+            ? Object.fromEntries(init.body.entries())
+            : null,
+      );
 
       if (url.pathname === "/api/photos/upload-ticket") {
         return new Response(
@@ -13359,6 +13464,11 @@ test("Cloudflare API client uses the binary upload-ticket contract", async () =>
               uploadUrl: "/api/photos/upload",
               storageKey: "photos/opaque-key",
               rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+              clientReportedProximity: {
+                evidence: "client_reported_coordinates_within_radius",
+                radiusM: 50,
+                accuracyBucket: "high",
+              },
             },
           }),
           { status: 201, headers: { "content-type": "application/json" } },
@@ -13398,6 +13508,7 @@ test("Cloudflare API client uses the binary upload-ticket contract", async () =>
     clientReencoded: true,
     rightsAttested: true,
     rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+    clientLocation: testPhotoClientLocation,
     blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }),
   });
 
@@ -13406,6 +13517,9 @@ test("Cloudflare API client uses the binary upload-ticket contract", async () =>
     { path: "/api/photos/upload-ticket", method: "POST", contentType: "application/json", isFormData: false },
     { path: "/api/photos/upload", method: "POST", contentType: null, isFormData: true },
   ]);
+  assert.deepEqual((requestBodies[0] as { clientLocation: unknown }).clientLocation, testPhotoClientLocation);
+  assert.equal((requestBodies[1] as Record<string, unknown>).proximityRadiusM, "50");
+  assert.equal((requestBodies[1] as Record<string, unknown>).proximityAccuracyBucket, "high");
 });
 
 test("Cloudflare API client supports scoped ranking query params", async () => {
@@ -13632,6 +13746,7 @@ function photoTicketRequest(anonymousId: string, turnstileToken?: string, origin
       height: 1,
       rightsAttested: true,
       rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+      clientLocation: testPhotoClientLocation,
       ...(turnstileToken ? { turnstileToken } : {}),
     }),
   });
@@ -13686,6 +13801,7 @@ async function issueSecuredPhotoTicket(
         height: 1,
         rightsAttested: true,
         rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+        clientLocation: testPhotoClientLocation,
       }),
     }),
     env,
@@ -13722,12 +13838,8 @@ function completeSecuredPhoto(
         mimeType: "image/jpeg",
         width: 1,
         height: 1,
-        ...(ticket.locationVerification
-          ? {
-              verifiedRadiusM: ticket.locationVerification.verifiedRadiusM,
-              accuracyBucket: ticket.locationVerification.accuracyBucket,
-            }
-          : {}),
+        proximityRadiusM: ticket.clientReportedProximity.radiusM,
+        proximityAccuracyBucket: ticket.clientReportedProximity.accuracyBucket,
         clientReencoded: true,
         imageBase64: bytesToBase64(source),
       }),

@@ -249,6 +249,10 @@ test("photo upload obtains an explicit one-use Turnstile proof without exposing 
   assert.match(uploadFlow, /byteSize: photo\.byteSize/);
   assert.match(uploadFlow, /width: photo\.width/);
   assert.match(uploadFlow, /height: photo\.height/);
+  assert.match(uploadFlow, /clientLocation: verifiedLocation/);
+  assert.match(uploadFlow, /ticket\.clientReportedProximity\.radiusM/);
+  assert.match(uploadFlow, /ticket\.clientReportedProximity\.accuracyBucket/);
+  assert.doesNotMatch(uploadFlow, /ticket\.locationVerification/);
   assert.match(uploadFlow, /turnstileToken/);
   assert.match(turnstileClientSource, /https:\/\/challenges\.cloudflare\.com\/turnstile\/v0\/api\.js\?render=explicit/);
   assert.match(turnstileClientSource, /action: "photo_upload"/);
@@ -262,7 +266,7 @@ test("photo upload obtains an explicit one-use Turnstile proof without exposing 
 
 test("home upload starts consented current-location capture without a place picker", () => {
   assert.match(redesignSource, /beginCurrentLocationUpload/);
-  assert.match(redesignSource, /현재 위치를 확인해 사진 위치로 연결/);
+  assert.match(redesignSource, /기기 위치를 확인해 사진 장소로 연결/);
   assert.match(redesignSource, /nearestPlaceForCurrentLocation/);
   assert.match(redesignSource, /currentLocation=\{verifiedLocation\}/);
   assert.doesNotMatch(
@@ -566,8 +570,9 @@ test("upload flow starts with photo before place details", () => {
 test("the upload place is fixed by current location instead of a manual place picker", () => {
   const reportScreen = sourceBetween(redesignSource, "function ReportScreen", "function AskScreen");
 
-  assert.match(reportScreen, /현재 위치로 자동 연결된 사진 장소/);
+  assert.match(reportScreen, /기기 위치로 자동 연결된 사진 장소/);
   assert.match(reportScreen, /currentLocation=\{currentLocation\}/);
+  assert.match(reportScreen, /현장 신원 인증으로 사용하지 않습니다\./);
   assert.doesNotMatch(reportScreen, /onSelectPlace\(candidate\)|uploadPlaceList/);
 });
 
@@ -757,10 +762,18 @@ test("generic upload entry uses consented current location instead of a manual p
   assert.match(redesign, /activeView === "upload" && reportPlace/);
   assert.match(redesign, /<BottomNav activeView=\{activeView\} onChange=\{changeBottomNavView\}/);
   assert.match(redesign, /onGoReport=\{\(\) => \{\s*closeOnboarding\(\);\s*beginCurrentLocationUpload\(\);/);
-  assert.match(locationGate, /현재 위치를 확인해 사진 위치로 연결/);
+  assert.match(locationGate, /기기 위치를 확인해 사진 장소로 연결/);
   assert.match(locationGate, /300m 안의 등록 장소를 자동으로 연결/);
-  assert.match(locationGate, /정확한 좌표는 이 기기의 지도 표시에만 사용합니다\./);
+  assert.match(locationGate, /브라우저가 제공한 기기 위치/);
+  assert.match(locationGate, /물리적 현장 인증을 뜻하지 않습니다\./);
   assert.doesNotMatch(locationGate, /장소 검색|지도에서 선택|onSelectPlace\(place\)/);
+});
+
+test("uploaded photos describe client-reported proximity without a physical-presence trust label", () => {
+  const photoMapper = sourceBetween(redesignSource, "function photosForPlace", "type PhotoBackgroundStyle");
+
+  assert.match(photoMapper, /label: "최근 업로드 사진"/);
+  assert.doesNotMatch(photoMapper, /방금 올린 현장 사진/);
 });
 
 test("static directory mode preserves place discovery while stopping live reads, writes, and telemetry", () => {
