@@ -2,8 +2,8 @@
 
 Updated: 2026-07-24
 Working branch: `agent/silsigan-backend-finish-20260724`; upstream: `origin/codex/silsigan-progress-20260710`
-Base source commit: `12f5bc6`; record the final candidate commit after the 2026-07-24 implementation, dependency locks, documents, and evidence artifacts are committed.
-Working-tree status: isolated Boris worktree. The 2026-07-24 staging browser, safe-tail, directory-failover, and public-source artifacts are candidate evidence. Verify the final commit and remote branch tip separately before release use.
+Verified local source/evidence commit: `96705b4947a1f6ad288aa4daed4fe797d848dc63`.
+Working-tree status after the candidate commit: clean before this documentation-only release record. The 2026-07-24 staging browser, safe-tail, directory-failover, and public-source artifacts are committed candidate evidence. Verify any later record commit and remote branch tip separately before release use.
 Commit/push gate: manual source/diff security gate, high-confidence secret scan, dependency audit, and negative-path regressions pass. Codex Security scan `7fe0ad74-161b-44e7-bbfb-fb0eeb07c6c2` completed 15/15 review items on `d7f0499..f5abc50`, reported one Medium client-cache finding, and that finding is remediated and independently re-reviewed at source `656eb315cbde4505b6c7db342a0185bb2762baea`.
 
 ## Objective

@@ -11,10 +11,10 @@ Updated: 2026-07-24
 - Version: `0.1.0`
 - Working branch: `agent/silsigan-backend-finish-20260724`
 - Upstream branch: `origin/codex/silsigan-progress-20260710`
-- Base source commit: `12f5bc6`; the final candidate commit for this worktree must be recorded after the implementation and evidence files are committed
-- Working tree: isolated Boris worktree; generated 2026-07-24 staging smoke, safe-tail, static-directory, and public-source evidence are release inputs for this candidate
+- Verified local source/evidence commit: `96705b4947a1f6ad288aa4daed4fe797d848dc63`
+- Working tree after the candidate commit: clean before this documentation-only release record; generated 2026-07-24 staging smoke, safe-tail, static-directory, and public-source evidence are committed release inputs
 - Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
-- Final release-record commit: the docs-only commit containing this record; use the remote branch tip as the continuation point
+- Final release-record commit: the docs-only commit containing this record; the remote branch remains unchanged until an explicit push
 - Security gate: manual source/diff review, dependency audit, negative-path regressions, and high-confidence secret scan passed. Codex Security scan `7fe0ad74-161b-44e7-bbfb-fb0eeb07c6c2` completed 15/15 review items; its one Medium stale-client-cache finding is remediated and independently re-reviewed at the verified source commit
 - Production deploy/migration/traffic change: none
 - Deferred and disabled: ads, rewards, Q&A, live streams, social feed, demo data, Seoul realtime activation
