@@ -27,8 +27,8 @@ Updated: 2026-07-24
 - [x] Staging D1 through `0026`, pending migrations 0
 - [x] Staging API/web deployment and exact staging web origin
 - [x] Earlier read-only API smoke: health, 14 places, detail/status, rankings, realtime, empty media/comments, admin deny
-- [x] Current staging API version `3f1d64bc-c62b-4788-9b76-173b210a242f`; the rotated Turnstile secret is installed by name only
-- [x] Current staging web version `2483c542-e10d-458b-9f40-12b835d80f62`; the exact public staging API base and live mode were reverified after the safe fail-closed interim bundle was replaced
+- [x] Current staging API version `3f1d64bc-c62b-4788-9b76-173b210a242f` receives `100%` traffic; the rotated Turnstile secret is installed by name only
+- [x] Current staging web version `2483c542-e10d-458b-9f40-12b835d80f62` receives `100%` traffic; the exact public staging API base and live mode were reverified after the safe fail-closed interim bundle was replaced
 - [x] Latest audited API-cost reconciliation and below-70% resume: Workers `3,000`, D1 rows read `504,922`, rows written `37,386`; generation `5`, public live mode restored
 - [x] Browser home/map/search/detail smoke after the security patch deployment, API request budget `72/80`
 - [x] Current NAVER pstatic tiles and place markers remain after the stabilization window
