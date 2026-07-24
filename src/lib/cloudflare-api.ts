@@ -168,12 +168,14 @@ export type CloudflareRuntimeConfig = {
   photoUploadProtection: {
     turnstileRequired: boolean;
     turnstileSiteKey: string | null;
+    turnstileConfigured: boolean;
   };
 };
 
 export const FAIL_CLOSED_PHOTO_UPLOAD_PROTECTION: CloudflareRuntimeConfig["photoUploadProtection"] = {
   turnstileRequired: true,
   turnstileSiteKey: null,
+  turnstileConfigured: false,
 };
 
 export function normalizeCloudflareRuntimeConfig(value: unknown): CloudflareRuntimeConfig {
@@ -189,13 +191,15 @@ export function normalizeCloudflareRuntimeConfig(value: unknown): CloudflareRunt
   const hasValidProtection = rawProtection !== null
     && typeof rawProtection.turnstileRequired === "boolean"
     && Object.hasOwn(rawProtection, "turnstileSiteKey")
-    && (rawProtection.turnstileSiteKey === null || typeof rawProtection.turnstileSiteKey === "string");
+    && (rawProtection.turnstileSiteKey === null || typeof rawProtection.turnstileSiteKey === "string")
+    && typeof rawProtection.turnstileConfigured === "boolean";
   const photoUploadProtection = hasValidProtection
     ? {
         turnstileRequired: rawProtection.turnstileRequired as boolean,
         turnstileSiteKey: typeof rawProtection.turnstileSiteKey === "string"
           ? rawProtection.turnstileSiteKey.trim() || null
           : null,
+        turnstileConfigured: rawProtection.turnstileConfigured as boolean,
       }
     : { ...FAIL_CLOSED_PHOTO_UPLOAD_PROTECTION };
 

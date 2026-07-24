@@ -3,6 +3,7 @@
 export type PhotoUploadProtection = {
   turnstileRequired: boolean;
   turnstileSiteKey: string | null;
+  turnstileConfigured: boolean;
 };
 
 type TurnstileWidgetId = string;
@@ -36,6 +37,10 @@ let turnstileApiPromise: Promise<TurnstileApi> | null = null;
 export async function acquirePhotoUploadTurnstileToken(protection: PhotoUploadProtection): Promise<string | null> {
   if (!protection.turnstileRequired) {
     return null;
+  }
+
+  if (!protection.turnstileConfigured) {
+    throw new Error("사진 업로드 보안 확인 설정이 완료되지 않았습니다.");
   }
 
   const siteKey = normalizedSiteKey(protection.turnstileSiteKey);

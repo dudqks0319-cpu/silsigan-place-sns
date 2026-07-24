@@ -657,6 +657,7 @@ async function startMockWorker(port, expectedAdminToken) {
           photoUploadProtection: {
             turnstileRequired: false,
             turnstileSiteKey: null,
+            turnstileConfigured: true,
           },
         }),
       );

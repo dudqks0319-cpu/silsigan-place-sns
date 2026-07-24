@@ -52,7 +52,7 @@ import {
 } from "@/lib/cloudflare-api";
 import { workerPlaceToAppPlace, workerPlacesToAppPlaces, type WorkerPlace } from "@/lib/cloudflare-place-adapter";
 import { setAnalyticsTransportEnabled, trackEvent } from "@/lib/analytics";
-import { rankPostsForFeed } from "@/lib/domain";
+import { nearestPlaceForCurrentLocation, rankPostsForFeed } from "@/lib/domain";
 import { formatDistanceMeters, haversineDistanceMeters } from "@/lib/geo";
 import { isRuntimeDataModeAllowed, shouldClearTruthBearingDataOnLoadFailure } from "@/lib/runtime-data-mode";
 import { mergeReportCollections } from "@/lib/report-exploration";
@@ -393,6 +393,9 @@ type WorkerPhoto = {
   width: number;
   height: number;
   clickCount: number;
+  locationVerified?: boolean;
+  verifiedRadiusM?: 50 | 150 | 300 | null;
+  accuracyBucket?: LocationAccuracyBucket;
   status: "pending" | "ready" | "rejected";
   createdAt: string;
   ownedByCurrentSession?: boolean;
@@ -400,6 +403,12 @@ type WorkerPhoto = {
 
 type PhotoUploadTicket = {
   uploadId: string;
+  ticket: string | null;
+  expiresAt: string | null;
+  locationVerification: {
+    verifiedRadiusM: 50 | 150 | 300;
+    accuracyBucket: "high" | "medium";
+  } | null;
   rightsPolicyVersion: typeof PHOTO_RIGHTS_TERMS_VERSION;
   storageKey: string;
 };
@@ -473,7 +482,14 @@ type PendingModerationTarget = {
   note: string;
 };
 
-type LocationVerificationStatus = "idle" | "requesting" | "verified" | "low_accuracy" | "denied" | "unsupported";
+type LocationVerificationStatus =
+  | "idle"
+  | "requesting"
+  | "verified"
+  | "low_accuracy"
+  | "no_nearby_place"
+  | "denied"
+  | "unsupported";
 
 type ClientLocation = {
   latitude: number;
@@ -776,7 +792,11 @@ export default function SilsiganRedesign() {
   const [placeStatusLoading, setPlaceStatusLoading] = useState(false);
   const cloudflareApiConfigured = useMemo(() => isCloudflareApiConfigured(), []);
   const photoUploadReady = dataMode === "live" && cloudflareApiConfigured && (
-    !photoUploadProtection.turnstileRequired || Boolean(photoUploadProtection.turnstileSiteKey)
+    !photoUploadProtection.turnstileRequired
+    || (
+      photoUploadProtection.turnstileConfigured
+      && Boolean(photoUploadProtection.turnstileSiteKey)
+    )
   );
   const activeDataRegionId = useMemo(() => normalizeRegionScope(activeRegion), [activeRegion]);
   const mapBoundsKey = mapBounds ? mapBoundsToBboxParam(mapBounds) : "";
@@ -989,7 +1009,11 @@ export default function SilsiganRedesign() {
             dataMode: "demo",
             featureFlags: { ...DEFAULT_FEATURE_FLAGS },
             dimensionSettings: [],
-            photoUploadProtection: { turnstileRequired: false, turnstileSiteKey: null },
+            photoUploadProtection: {
+              turnstileRequired: false,
+              turnstileSiteKey: null,
+              turnstileConfigured: true,
+            },
           };
       if (!isRuntimeDataModeAllowed(process.env.NODE_ENV, runtimeConfig.dataMode)) {
         clearTruthBearingData();
@@ -1831,12 +1855,103 @@ export default function SilsiganRedesign() {
     void recordPlaceClick(place, "detail");
   };
 
+  const requestCurrentUploadLocation = (candidatePlaces: readonly Place[]) => {
+    const candidatePlaceIds = new Set(candidatePlaces.map((place) => place.id));
+    const requestedPlaceId = candidatePlaces.length === 1 ? candidatePlaces[0]?.id ?? null : null;
+    trackEvent("request_location", { placeId: requestedPlaceId });
+    trackEvent("location_permission_requested", { placeId: requestedPlaceId });
+
+    if (!navigator.geolocation) {
+      setVerifiedLocation(null);
+      setMapCurrentLocation(null);
+      setLocationVerificationStatus("unsupported");
+      trackEvent("report_location_failed", { reason: "unsupported" });
+      setToast("이 기기에서는 현재 위치를 확인할 수 없습니다. 위치 서비스를 확인한 뒤 다시 시도해 주세요.");
+      return;
+    }
+
+    setLocationVerificationStatus("requesting");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const accuracyBucket = locationAccuracyBucketForMeters(position.coords.accuracy);
+        const currentLocation: ClientLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyM: position.coords.accuracy,
+        };
+        setMapCurrentLocation(currentLocation);
+        trackEvent("location_permission_granted", { placeId: requestedPlaceId });
+
+        if (accuracyBucket !== "high" && accuracyBucket !== "medium") {
+          setVerifiedLocation(null);
+          setLocationVerificationStatus("low_accuracy");
+          trackEvent("report_location_failed", { reason: "low_accuracy" });
+          setToast("GPS 정확도가 낮습니다. 하늘이 보이는 곳에서 현재 위치를 다시 확인해 주세요.");
+          return;
+        }
+
+        const availablePlaces = displayPlaces.filter((place) => candidatePlaceIds.has(place.id));
+        const matchedPlace = nearestPlaceForCurrentLocation(availablePlaces, currentLocation, 300);
+        if (!matchedPlace) {
+          setVerifiedLocation(null);
+          setLocationVerificationStatus("no_nearby_place");
+          trackEvent("report_location_failed", { reason: "no_nearby_place" });
+          setToast("현재 위치 300m 안에 등록된 장소가 없습니다. 위치를 이동한 뒤 다시 확인해 주세요.");
+          return;
+        }
+
+        setSelectedPlaceId(matchedPlace.id);
+        setReportPlaceId(matchedPlace.id);
+        setVerifiedLocation(currentLocation);
+        setLocationVerificationStatus("verified");
+        reportStartedAtRef.current = Date.now();
+        trackEvent("report_location_verified", { placeId: matchedPlace.id });
+        trackEvent("report_started", { placeId: matchedPlace.id, source: "current_location" });
+        setToast(`${matchedPlace.name} 근처 현재 위치를 확인했습니다. 지도 위치로 사진을 올릴 수 있어요.`);
+        focusUploadFormStart();
+      },
+      (error) => {
+        setVerifiedLocation(null);
+        setMapCurrentLocation(null);
+        setLocationVerificationStatus("denied");
+        trackEvent("location_denied", { placeId: requestedPlaceId });
+        trackEvent("location_permission_denied", { placeId: requestedPlaceId });
+        trackEvent("report_location_failed", {
+          reason: error.code === 1 ? "permission_denied" : "location_unavailable",
+        });
+        setToast("현재 위치 권한이 필요합니다. iPhone 설정에서 위치 접근을 허용한 뒤 다시 시도해 주세요.");
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 8_000,
+      },
+    );
+  };
+
+  const beginCurrentLocationUpload = () => {
+    if (dataMode !== "live") {
+      setToast(liveWriteUnavailableMessage);
+      return;
+    }
+
+    setPhotoAttached(false);
+    setAttachedPhotoIds([]);
+    reportRequestIdRef.current = null;
+    setReportPlaceId(null);
+    setVerifiedLocation(null);
+    setMapCurrentLocation(null);
+    setActiveView("upload");
+    reportStartedAtRef.current = null;
+    requestCurrentUploadLocation(displayPlaces);
+  };
+
   const startReportForPlace = (place: Place) => {
     if (dataMode !== "live") {
       setToast(liveWriteUnavailableMessage);
       return;
     }
-    setLocationVerificationStatus("idle");
+    setLocationVerificationStatus("requesting");
     setVerifiedLocation(null);
     if (place.id !== selectedPlaceId) {
       setPhotoAttached(false);
@@ -1851,22 +1966,13 @@ export default function SilsiganRedesign() {
     }
     reportStartedAtRef.current = Date.now();
     trackEvent("report_started", { placeId: place.id });
-    setToast(`${place.name} 지금 상태를 올립니다. 위치 인증은 선택 사항입니다.`);
-  };
-
-  const openUploadPlacePicker = () => {
-    if (dataMode !== "live") {
-      setToast(liveWriteUnavailableMessage);
-      return;
-    }
-    setReportPlaceId(null);
-    setActiveView("upload");
-    reportStartedAtRef.current = null;
+    setToast(`${place.name} 근처 현재 위치를 확인합니다.`);
+    requestCurrentUploadLocation([place]);
   };
 
   const changeBottomNavView = (view: View) => {
     if (view === "upload") {
-      openUploadPlacePicker();
+      beginCurrentLocationUpload();
       return;
     }
 
@@ -2077,56 +2183,6 @@ export default function SilsiganRedesign() {
     }
   };
 
-  const requestFieldVerification = () => {
-    trackEvent("request_location", { placeId: reportPlace?.id ?? null });
-    trackEvent("location_permission_requested", { placeId: reportPlace?.id ?? null });
-    if (!navigator.geolocation) {
-      setVerifiedLocation(null);
-      setLocationVerificationStatus("unsupported");
-      trackEvent("report_location_failed", { reason: "unsupported" });
-      setToast("이 브라우저에서는 위치 인증을 사용할 수 없어 상태 제보로 등록됩니다.");
-      return;
-    }
-
-    setLocationVerificationStatus("requesting");
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const accuracyBucket = locationAccuracyBucketForMeters(position.coords.accuracy);
-        if (accuracyBucket !== "high" && accuracyBucket !== "medium") {
-          setVerifiedLocation(null);
-          setLocationVerificationStatus("low_accuracy");
-          trackEvent("location_permission_granted", { placeId: reportPlace?.id ?? null });
-          trackEvent("report_location_failed", { reason: "low_accuracy" });
-          setToast("GPS 정확도가 낮아 일반 제보로 등록됩니다. 다시 측정하면 현장 인증을 시도할 수 있습니다.");
-          return;
-        }
-
-        setVerifiedLocation({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracyM: position.coords.accuracy,
-        });
-        setLocationVerificationStatus("verified");
-        trackEvent("location_permission_granted", { placeId: reportPlace?.id ?? null });
-        trackEvent("report_location_verified", { placeId: reportPlace?.id ?? null });
-        setToast("실제 GPS 좌표를 확인했습니다. 등록 시 서버에서 장소 반경만 검증합니다.");
-      },
-      (error) => {
-        setVerifiedLocation(null);
-        setLocationVerificationStatus("denied");
-        trackEvent("location_denied", { placeId: reportPlace?.id ?? null });
-        trackEvent("location_permission_denied", { placeId: reportPlace?.id ?? null });
-        trackEvent("report_location_failed", { reason: error.code === 1 ? "permission_denied" : "location_unavailable" });
-        setToast("위치 권한 없이 상태 제보로 등록됩니다. 현장 인증 배지는 붙지 않습니다.");
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 8_000,
-      },
-    );
-  };
-
   const submitReport = async () => {
     if (!reportPlace || isSubmitting) {
       return;
@@ -2215,6 +2271,9 @@ export default function SilsiganRedesign() {
       if (!cloudflareApiConfigured || dataMode !== "live") {
         throw new Error("사진 서버 설정 후 사용할 수 있습니다.");
       }
+      if (!verifiedLocation) {
+        throw new Error("현재 위치를 확인한 뒤 사진을 올려주세요.");
+      }
 
       const turnstileToken = await acquirePhotoUploadTurnstileToken(photoUploadProtection);
 
@@ -2228,6 +2287,7 @@ export default function SilsiganRedesign() {
           height: photo.height,
           rightsAttested: photo.rightsAttested,
           rightsPolicyVersion: photo.rightsPolicyVersion,
+          clientLocation: verifiedLocation,
           ...(turnstileToken ? { turnstileToken } : {}),
         }),
       });
@@ -2243,6 +2303,14 @@ export default function SilsiganRedesign() {
       formData.set("mimeType", photo.mimeType);
       formData.set("width", String(photo.width));
       formData.set("height", String(photo.height));
+      if (ticket.ticket && ticket.expiresAt) {
+        formData.set("ticket", ticket.ticket);
+        formData.set("ticketExpiresAt", ticket.expiresAt);
+      }
+      if (ticket.locationVerification) {
+        formData.set("verifiedRadiusM", String(ticket.locationVerification.verifiedRadiusM));
+        formData.set("accuracyBucket", ticket.locationVerification.accuracyBucket);
+      }
       formData.set("clientReencoded", "true");
       formData.set("file", photo.blob, `upload.${photo.mimeType === "image/jpeg" ? "jpg" : "webp"}`);
 
@@ -3058,7 +3126,7 @@ export default function SilsiganRedesign() {
                         return;
                       }
 
-                      openUploadPlacePicker();
+                      beginCurrentLocationUpload();
                     }}
                     onVoteReport={voteOnReport}
                   />
@@ -3185,11 +3253,10 @@ export default function SilsiganRedesign() {
                   />
                 )}
                 {activeView === "upload" && !reportPlace && (
-                  <ReportPlaceGate
-                    places={displayPlaces}
-                    onMap={() => setActiveView("map")}
-                    onSearch={() => setActiveView("search")}
-                    onSelectPlace={startReportForPlace}
+                  <CurrentLocationUploadGate
+                    currentLocation={mapCurrentLocation}
+                    locationVerificationStatus={locationVerificationStatus}
+                    onRetry={beginCurrentLocationUpload}
                   />
                 )}
                 {activeView === "upload" && reportPlace && (
@@ -3197,7 +3264,7 @@ export default function SilsiganRedesign() {
                     isSubmitting={isSubmitting}
                     photoUploadReady={photoUploadReady}
                     place={reportPlace}
-                    places={displayPlaces}
+                    currentLocation={verifiedLocation}
                     sensitiveWarning={sensitivePhotoWarningFor(reportPlace)}
                     pickedCrowd={pickedCrowd}
                     pickedParking={pickedParking}
@@ -3220,28 +3287,13 @@ export default function SilsiganRedesign() {
                       setPickedLocalConditions((current) => toggleLocalCondition(current, condition));
                     }}
                     setReportText={setReportText}
-                    onSelectPlace={(place) => {
-                      if (photoAttached && place.id !== reportPlace.id) {
-                        setToast("사진을 삭제한 뒤 장소를 바꿀 수 있습니다.");
-                        return;
-                      }
-
-                      if (place.id !== reportPlace.id) {
-                        setPhotoAttached(false);
-                        setAttachedPhotoIds([]);
-                        reportRequestIdRef.current = null;
-                      }
-                      setSelectedPlaceId(place.id);
-                      setReportPlaceId(place.id);
-                      focusUploadFormStart();
-                    }}
                     onApplyPreset={applyQuickReportPreset}
                     onOpenPlace={() => setActiveView("place")}
                     onPhotoDelete={(photo) => deletePlacePhoto(reportPlace, photo)}
                     onPhotoClick={clickPlacePhoto}
                     onPhotoUpload={(photo) => uploadPlacePhoto(reportPlace, photo)}
                     onReportPhoto={(photo) => openPhotoReport(reportPlace, photo)}
-                    onRequestLocation={requestFieldVerification}
+                    onRequestLocation={() => requestCurrentUploadLocation([reportPlace])}
                     onSubmit={submitReport}
                   />
                 )}
@@ -3287,7 +3339,7 @@ export default function SilsiganRedesign() {
               }}
               onGoReport={() => {
                 closeOnboarding();
-                openUploadPlacePicker();
+                beginCurrentLocationUpload();
               }}
             />
           )}
@@ -5106,50 +5158,53 @@ function PlaceScreen({
   );
 }
 
-function ReportPlaceGate({
-  places,
-  onMap,
-  onSearch,
-  onSelectPlace,
+function CurrentLocationUploadGate({
+  currentLocation,
+  locationVerificationStatus,
+  onRetry,
 }: {
-  places: Place[];
-  onMap: () => void;
-  onSearch: () => void;
-  onSelectPlace: (place: Place) => void;
+  currentLocation: UiLocation | null;
+  locationVerificationStatus: LocationVerificationStatus;
+  onRetry: () => void;
 }) {
+  const verificationCopy = verificationStatusCopy(locationVerificationStatus);
+  const requesting = locationVerificationStatus === "requesting";
+
   return (
     <div className={styles.screenStack}>
-      <section className={styles.reportPlaceGate} aria-labelledby="report-place-gate-title">
-        <span className={styles.reportPlaceGateIcon} aria-hidden="true"><MapPin size={24} /></span>
+      <section className={styles.reportPlaceGate} aria-labelledby="current-location-upload-title">
+        <span className={styles.reportPlaceGateIcon} aria-hidden="true"><LocateFixed size={24} /></span>
         <div>
           <p className={styles.reportPlaceGateEyebrow}>지금컷 올리기</p>
-          <h2 id="report-place-gate-title">장소를 먼저 선택해 주세요</h2>
-          <p>선택하기 전에는 어떤 장소에도 사진이나 상태가 연결되지 않습니다.</p>
+          <h2 id="current-location-upload-title">현재 위치를 확인해 사진 위치로 연결</h2>
+          <p>동의하면 현재 GPS를 확인하고 300m 안의 등록 장소를 자동으로 연결합니다. 직접 장소를 고를 필요가 없습니다.</p>
         </div>
       </section>
 
-      {places.length > 0 && (
-        <section className={styles.uploadPlaceCard} aria-label="최근 확인한 장소 선택">
-          <div>
-            <span>앱 안 장소</span>
-            <strong>올릴 장소를 직접 확인해 주세요</strong>
-            <p>장소 이름과 주소를 확인한 뒤 선택하면 작성 화면이 열립니다.</p>
-          </div>
-          <div className={styles.reportPlaceChoiceList}>
-            {places.slice(0, 8).map((place) => (
-              <button key={place.id} type="button" onClick={() => onSelectPlace(place)}>
-                <strong>{place.name}</strong>
-                <span>{place.address}</span>
-              </button>
-            ))}
-          </div>
+      {currentLocation && (
+        <section className={styles.reportLocationMap} aria-label="확인한 현재 위치 지도">
+          <NaverMap
+            places={[]}
+            compact
+            currentLocation={currentLocation}
+            onSelectPlace={() => undefined}
+          />
         </section>
       )}
 
-      <section className={styles.reportPlaceGateActions} aria-label="다른 장소 찾기">
-        {places.length === 0 && <p>아직 앱에 확인된 장소가 없습니다. 검색이나 지도에서 먼저 장소를 찾아주세요.</p>}
-        <button type="button" onClick={onSearch}><Search size={17} /> 장소 검색</button>
-        <button type="button" onClick={onMap}><MapIcon size={17} /> 지도에서 선택</button>
+      <section className={styles.reportPlaceGateActions} aria-live="polite">
+        <div className={styles.currentLocationStatus}>
+          <strong>{verificationCopy.title}</strong>
+          <p>{verificationCopy.body}</p>
+        </div>
+        <p className={styles.locationPrivacyNote}>
+          정확한 좌표는 이 기기의 지도 표시에만 사용합니다. 서버에는 장소와의 확인 반경과 GPS 정확도 등급만 저장합니다.
+        </p>
+        {!requesting && (
+          <button type="button" onClick={onRetry}>
+            <LocateFixed size={17} /> 현재 위치 다시 확인
+          </button>
+        )}
       </section>
     </div>
   );
@@ -5159,7 +5214,7 @@ function ReportScreen({
   isSubmitting,
   photoUploadReady,
   place,
-  places,
+  currentLocation,
   sensitiveWarning,
   pickedCrowd,
   pickedParking,
@@ -5176,7 +5231,6 @@ function ReportScreen({
   setPickedLine,
   onToggleLocalCondition,
   setReportText,
-  onSelectPlace,
   onApplyPreset,
   onOpenPlace,
   onPhotoDelete,
@@ -5189,7 +5243,7 @@ function ReportScreen({
   isSubmitting: boolean;
   photoUploadReady: boolean;
   place: Place;
-  places: Place[];
+  currentLocation: ClientLocation | null;
   sensitiveWarning: string | null;
   pickedCrowd: string;
   pickedParking: string;
@@ -5206,7 +5260,6 @@ function ReportScreen({
   setPickedLine: (value: string) => void;
   onToggleLocalCondition: (value: string) => void;
   setReportText: (value: string) => void;
-  onSelectPlace: (place: Place) => void;
   onApplyPreset: (preset: QuickReportPreset) => void;
   onOpenPlace: () => void;
   onPhotoDelete: (photo: PlacePhoto) => Promise<void>;
@@ -5217,7 +5270,7 @@ function ReportScreen({
   onSubmit: () => void;
 }) {
   const verificationCopy = verificationStatusCopy(locationVerificationStatus);
-  const placeLockedByPhoto = photoAttached;
+  const locationReady = locationVerificationStatus === "verified" && Boolean(currentLocation);
   const toggleRecommendedTag = (tag: string) => {
     const token = `#${tag}`;
     const nextText = reportText.includes(token)
@@ -5266,11 +5319,16 @@ function ReportScreen({
           onReportPhoto={onReportPhoto}
           onUpload={onPhotoUpload}
           safetyNotice={sensitiveWarning}
-          uploadEnabled={photoUploadReady}
+          uploadEnabled={photoUploadReady && locationReady}
         />
         {!photoUploadReady && (
           <p className={styles.uploadReadinessNote}>
             사진 서버에 연결할 수 없어 사진 선택을 비활성화했습니다. 확인한 혼잡·줄·주차 상태는 사진 없이도 바로 제보할 수 있어요.
+          </p>
+        )}
+        {photoUploadReady && !locationReady && (
+          <p className={styles.uploadReadinessNote} role="status">
+            현재 위치 확인이 끝나면 사진을 선택할 수 있습니다. 정확한 좌표는 서버에 저장하지 않습니다.
           </p>
         )}
         <button type="button" onClick={onOpenPlace}>
@@ -5278,31 +5336,23 @@ function ReportScreen({
         </button>
       </section>
 
-      <section className={styles.uploadPlaceCard} aria-label="사진을 올릴 장소 선택">
+      <section className={styles.uploadPlaceCard} aria-label="현재 위치로 자동 연결된 사진 장소">
         <div>
-          <span>어디인가요?</span>
+          <span>현재 위치 자동 연결</span>
           <strong>{place.name}</strong>
           <p>{place.address}</p>
         </div>
-        {placeLockedByPhoto && (
-          <p className={styles.uploadReadinessNote} role="status">
-            사진이 연결된 뒤에는 장소를 바꿀 수 없습니다. 다른 장소를 선택하려면 먼저 위 사진을 삭제해 주세요.
-          </p>
-        )}
-        <div className={styles.uploadPlaceList}>
-          {places.slice(0, 6).map((candidate) => (
-            <button
-              key={candidate.id}
-              className={candidate.id === place.id ? styles.uploadPlaceActive : ""}
-              type="button"
-              onClick={() => onSelectPlace(candidate)}
-              aria-pressed={candidate.id === place.id}
-              disabled={placeLockedByPhoto && candidate.id !== place.id}
-            >
-              {candidate.name}
-            </button>
-          ))}
+        <div className={styles.reportLocationMap}>
+          <NaverMap
+            places={[place]}
+            compact
+            currentLocation={currentLocation}
+            onSelectPlace={() => undefined}
+          />
         </div>
+        <p className={styles.locationPrivacyNote}>
+          지도에는 현재 위치와 연결 장소가 함께 보입니다. 업로드 서버에는 원본 GPS 좌표 대신 50m·150m·300m 확인 반경만 남습니다.
+        </p>
       </section>
 
       <section className={styles.quickReportCard}>
@@ -5358,7 +5408,7 @@ function ReportScreen({
           <p>{verificationCopy.body}</p>
         </div>
         <button type="button" onClick={onRequestLocation} disabled={locationVerificationStatus === "requesting"}>
-          {locationVerificationStatus === "requesting" ? "확인 중" : "현장 인증하기"}
+          {locationVerificationStatus === "requesting" ? "확인 중" : "현재 위치 다시 확인"}
         </button>
       </section>
 
@@ -6488,6 +6538,13 @@ function verificationStatusCopy(status: LocationVerificationStatus) {
     };
   }
 
+  if (status === "no_nearby_place") {
+    return {
+      title: "가까운 등록 장소를 찾지 못했어요",
+      body: "현재 위치 300m 안에 등록된 장소가 없습니다. 장소 가까이에서 위치를 다시 확인해 주세요.",
+    };
+  }
+
   if (status === "denied") {
     return {
       title: "상태 제보로 등록",
@@ -6503,8 +6560,8 @@ function verificationStatusCopy(status: LocationVerificationStatus) {
   }
 
   return {
-    title: "현장 인증 선택",
-    body: "누르면 실제 GPS를 요청합니다. 선택 장소 좌표는 쓰지 않습니다.",
+    title: "현재 위치 확인 대기",
+    body: "동의하면 현재 GPS로 가장 가까운 등록 장소를 자동 연결합니다.",
   };
 }
 

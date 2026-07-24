@@ -12,6 +12,7 @@ const {
   getQuestionCost,
   getReportExpiry,
   isReportExpired,
+  nearestPlaceForCurrentLocation,
   recommendHashtags,
   shouldHideForFlags,
   verifiedRadiusFromDistance,
@@ -77,6 +78,22 @@ test("location distance uses Haversine meters and privacy-safe display units", (
   assert.equal(formatDistanceMeters(250), "250m");
   assert.equal(formatDistanceMeters(1_200), "1.2km");
   assert.equal(formatDistanceMeters(12_000), "12km");
+});
+
+test("current-location upload automatically selects only a nearby verified place", () => {
+  const places = [
+    { id: "far", latitude: 35.20, longitude: 129.20 },
+    { id: "near", latitude: 35.1532, longitude: 129.1186 },
+  ];
+
+  assert.deepEqual(
+    nearestPlaceForCurrentLocation(places, { latitude: 35.15325, longitude: 129.11865 }, 300),
+    places[1],
+  );
+  assert.equal(
+    nearestPlaceForCurrentLocation(places, { latitude: 37.5665, longitude: 126.9780 }, 300),
+    null,
+  );
 });
 
 test("polygon verification accepts boundaries, rejects holes, and supports multipolygons", () => {

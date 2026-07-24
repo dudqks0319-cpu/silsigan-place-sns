@@ -92,6 +92,10 @@ type PhotoUploadTicketData = {
   uploadId: string;
   ticket: string;
   expiresAt: string;
+  locationVerification?: {
+    verifiedRadiusM: 50 | 150 | 300;
+    accuracyBucket: "high" | "medium";
+  };
 };
 
 type PhotoCostGuardData = {
@@ -4591,7 +4595,11 @@ test("Worker runtime config defaults launch flags to false in explicit demo stor
     dataMode: string;
     featureFlags: Record<string, boolean>;
     dimensionSettings: Array<{ settingKey: string; defaultTtlSeconds: number }>;
-    photoUploadProtection: { turnstileRequired: boolean; turnstileSiteKey: string | null };
+    photoUploadProtection: {
+      turnstileRequired: boolean;
+      turnstileSiteKey: string | null;
+      turnstileConfigured: boolean;
+    };
   }>;
   assert.equal(payload.data.contractVersion, 2);
   assert.equal(payload.data.dataMode, "demo");
@@ -4605,7 +4613,11 @@ test("Worker runtime config defaults launch flags to false in explicit demo stor
     SOCIAL_FEED_ENABLED: false,
   });
   assert.equal(payload.data.dimensionSettings.find((setting) => setting.settingKey === "parking")?.defaultTtlSeconds, 900);
-  assert.deepEqual(payload.data.photoUploadProtection, { turnstileRequired: false, turnstileSiteKey: null });
+  assert.deepEqual(payload.data.photoUploadProtection, {
+    turnstileRequired: false,
+    turnstileSiteKey: null,
+    turnstileConfigured: true,
+  });
   assert.equal(payload.meta?.storage, "memory");
 });
 
@@ -4619,15 +4631,52 @@ test("Worker runtime config exposes only the public Turnstile site key", async (
   });
   const raw = await response.text();
   const payload = JSON.parse(raw) as SuccessPayload<{
-    photoUploadProtection: { turnstileRequired: boolean; turnstileSiteKey: string | null };
+    photoUploadProtection: {
+      turnstileRequired: boolean;
+      turnstileSiteKey: string | null;
+      turnstileConfigured: boolean;
+    };
   }>;
 
   assert.equal(response.status, 200);
   assert.deepEqual(payload.data.photoUploadProtection, {
     turnstileRequired: true,
     turnstileSiteKey: "public-turnstile-site-key",
+    turnstileConfigured: true,
   });
   assert.equal(raw.includes(secret), false);
+});
+
+test("Worker runtime config reports Turnstile unready when the server secret is missing", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const response = await worker.handleRequest(new Request("https://api.test/api/config", {
+      headers: { origin: "https://web.example.test" },
+    }), {
+      DB: db,
+      ENVIRONMENT: "staging",
+      SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+      SILSIGAN_TURNSTILE_SITE_KEY: "public-turnstile-site-key",
+      SILSIGAN_API_ALLOWED_ORIGINS: "https://web.example.test",
+    });
+    const payload = (await response.json()) as SuccessPayload<{
+      photoUploadProtection: {
+        turnstileRequired: boolean;
+        turnstileSiteKey: string | null;
+        turnstileConfigured: boolean;
+      };
+    }>;
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload.data.photoUploadProtection, {
+      turnstileRequired: true,
+      turnstileSiteKey: "public-turnstile-site-key",
+      turnstileConfigured: false,
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("Worker runtime config applies a D1 region feature override", { skip: !sqlite3Available() }, async () => {
@@ -10699,6 +10748,72 @@ test("photo upload ticket records one idempotent versioned community acceptance"
   }
 });
 
+test("photo upload ticket verifies the consented current location and stores only the verification bucket", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const source = new Uint8Array([...jpegWithGpsExifSample(), 91]);
+  const env = securedPhotoEnv(db, new FakeR2Bucket(), new FakeRateLimitBinding());
+
+  try {
+    const ticketResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-ticket", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": "anon_photo_current_location",
+          "cf-connecting-ip": testPhotoClientIp,
+        },
+        body: JSON.stringify({
+          placeId: "busan-gwangalli",
+          mimeType: "image/jpeg",
+          byteSize: source.byteLength,
+          width: 1,
+          height: 1,
+          rightsAttested: true,
+          rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
+          clientLocation: {
+            latitude: 35.15321,
+            longitude: 129.11861,
+            accuracyM: 12,
+          },
+        }),
+      }),
+      env,
+    );
+    const ticketPayload = (await ticketResponse.json()) as SuccessPayload<PhotoUploadTicketData>;
+
+    assert.equal(ticketResponse.status, 201);
+    assert.deepEqual(ticketPayload.data.locationVerification, {
+      verifiedRadiusM: 50,
+      accuracyBucket: "high",
+    });
+
+    const completed = await completeSecuredPhoto(
+      env,
+      "anon_photo_current_location",
+      source,
+      ticketPayload.data,
+    );
+    assert.equal(completed.status, 201);
+    const stored = await db
+      .prepare(
+        `SELECT
+           json_extract(automated_checks_json, '$.locationVerified') AS locationVerified,
+           json_extract(automated_checks_json, '$.verifiedRadiusM') AS verifiedRadiusM,
+           json_extract(automated_checks_json, '$.accuracyBucket') AS accuracyBucket
+         FROM photo_moderation_states
+         LIMIT 1`,
+      )
+      .first<{ locationVerified: number; verifiedRadiusM: number | null; accuracyBucket: string }>();
+    assert.deepEqual(stored, {
+      locationVerified: 1,
+      verifiedRadiusM: 50,
+      accuracyBucket: "high",
+    });
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("staging photo ticket rejects a missing Turnstile proof before D1", async () => {
   let dbTouched = false;
   const db = {
@@ -13607,6 +13722,12 @@ function completeSecuredPhoto(
         mimeType: "image/jpeg",
         width: 1,
         height: 1,
+        ...(ticket.locationVerification
+          ? {
+              verifiedRadiusM: ticket.locationVerification.verifiedRadiusM,
+              accuracyBucket: ticket.locationVerification.accuracyBucket,
+            }
+          : {}),
         clientReencoded: true,
         imageBase64: bytesToBase64(source),
       }),

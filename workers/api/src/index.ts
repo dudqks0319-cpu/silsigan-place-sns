@@ -490,6 +490,9 @@ type D1PhotoRow = {
   width: number;
   height: number;
   clickCount: number;
+  locationVerified: number;
+  verifiedRadiusM: 50 | 150 | 300 | null;
+  accuracyBucket: LocationAccuracyBucket;
   status: PhotoRecord["status"];
   deletedAt: string | null;
   createdAt: string;
@@ -854,6 +857,9 @@ type PhotoRecord = {
   width: number;
   height: number;
   clickCount: number;
+  locationVerified?: boolean | number;
+  verifiedRadiusM?: 50 | 150 | 300 | null;
+  accuracyBucket?: LocationAccuracyBucket;
   status: "pending" | "ready" | "rejected";
   deletedAt: string | null;
   createdAt: string;
@@ -863,6 +869,9 @@ type PublicPhotoRecord = Pick<
   PhotoRecord,
   "id" | "placeId" | "mimeType" | "byteSize" | "width" | "height" | "clickCount" | "status" | "createdAt"
 > & {
+  locationVerified: boolean;
+  verifiedRadiusM: 50 | 150 | 300 | null;
+  accuracyBucket: LocationAccuracyBucket;
   ownedByCurrentSession: boolean;
   previewUrl: string | null;
 };
@@ -1299,6 +1308,7 @@ const photoUploadTicketTtlSafetyCeilingSeconds = 5 * 60;
 const photoUploadTicketClockSkewMs = 30_000;
 const photoTurnstileAction = "photo_upload";
 const photoTurnstileTokenMaxLength = 2_048;
+const photoLocationAccuracyBuckets = ["high", "medium", "low", "unknown"] as const;
 const photoTurnstileSiteverifyUrl = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const photoTurnstileTimeoutMs = 5_000;
 const photoMultipartOverheadMaxBytes = 512 * 1024;
@@ -1995,13 +2005,25 @@ async function getRuntimeConfig(url: URL, env: Env): Promise<Response> {
   );
 }
 
-function publicPhotoUploadProtection(env: Env): { turnstileRequired: boolean; turnstileSiteKey: string | null } {
+function publicPhotoUploadProtection(env: Env): {
+  turnstileRequired: boolean;
+  turnstileSiteKey: string | null;
+  turnstileConfigured: boolean;
+} {
   const turnstileRequired = env.SILSIGAN_PHOTO_TURNSTILE_REQUIRED?.trim() === "1";
   const candidate = env.SILSIGAN_TURNSTILE_SITE_KEY?.trim() ?? "";
   const turnstileSiteKey = candidate.length >= 3 && candidate.length <= 32 && /^[a-zA-Z0-9_-]+$/.test(candidate)
     ? candidate
     : null;
-  return { turnstileRequired, turnstileSiteKey };
+  const secret = env.SILSIGAN_TURNSTILE_SECRET_KEY?.trim() ?? "";
+  const needsHostnamePolicy = env.ENVIRONMENT === "staging" || env.ENVIRONMENT === "production";
+  const hostnamePolicyReady = !needsHostnamePolicy || configuredApiAllowedHostnames(env).size > 0;
+  const turnstileConfigured = !turnstileRequired || Boolean(
+    turnstileSiteKey
+    && secret.length >= 20
+    && hostnamePolicyReady,
+  );
+  return { turnstileRequired, turnstileSiteKey, turnstileConfigured };
 }
 
 async function resolveRuntimeFeatureFlag(key: FeatureFlagKey, env: Env, regionCode?: string): Promise<boolean> {
@@ -6340,6 +6362,21 @@ async function listPhotos(url: URL, session: AnonymousSession, env: Env): Promis
           width,
           height,
           COALESCE((SELECT COUNT(*) FROM likes l WHERE l.target_type = 'photo' AND l.target_id = photos.id), 0) AS clickCount,
+          COALESCE((
+            SELECT json_extract(pms.automated_checks_json, '$.locationVerified')
+            FROM photo_moderation_states pms
+            WHERE pms.photo_id = photos.id
+          ), 0) AS locationVerified,
+          (
+            SELECT json_extract(pms.automated_checks_json, '$.verifiedRadiusM')
+            FROM photo_moderation_states pms
+            WHERE pms.photo_id = photos.id
+          ) AS verifiedRadiusM,
+          COALESCE((
+            SELECT json_extract(pms.automated_checks_json, '$.accuracyBucket')
+            FROM photo_moderation_states pms
+            WHERE pms.photo_id = photos.id
+          ), 'unknown') AS accuracyBucket,
           status,
           deleted_at AS deletedAt,
           created_at AS createdAt
@@ -6372,6 +6409,9 @@ function photoToPublicPhoto(photo: PhotoRecord, requestUrl: URL, env: Env, curre
     width: photo.width,
     height: photo.height,
     clickCount: photo.clickCount,
+    locationVerified: photo.locationVerified === true || photo.locationVerified === 1,
+    verifiedRadiusM: photo.verifiedRadiusM ?? null,
+    accuracyBucket: photo.accuracyBucket ?? "unknown",
     status: photo.status,
     createdAt: photo.createdAt,
     ownedByCurrentSession: photo.anonymousUserId === currentAnonymousUserId,
@@ -6392,10 +6432,23 @@ async function createPhotoUploadTicket(
   const width = numberField(body, "width");
   const height = numberField(body, "height");
   assertPhotoRightsAttestation(body);
+  const clientLocation = optionalClientLocationField(body);
   const turnstileToken = optionalStringField(body, "turnstileToken", photoTurnstileTokenMaxLength);
   await assertPhotoTurnstileProof(request, turnstileToken, env);
 
   const place = await resolvePlaceRecord(placeId, env);
+  const locationVerification = clientLocation
+    ? await verifyFieldReportLocation(place, clientLocation, env)
+    : null;
+  if (clientLocation && !locationVerification?.verifiedRadiusM) {
+    throw new HttpError(
+      400,
+      "PHOTO_LOCATION_NOT_VERIFIED",
+      "현재 위치가 선택된 장소의 현장 인증 범위에 있는지 확인할 수 없습니다.",
+    );
+  }
+  const verifiedRadiusM = locationVerification?.verifiedRadiusM ?? null;
+  const accuracyBucket = locationAccuracyBucketForMeters(clientLocation?.accuracyM);
   let anonymousUserId: string | null = null;
   if (env.DB) {
     anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
@@ -6426,7 +6479,7 @@ async function createPhotoUploadTicket(
     await recordPhotoRightsAcceptance(env.DB, anonymousUserId, now.toISOString());
   }
   const ticket = await issuePhotoUploadTicket(
-    { uploadId, placeId, mimeType, byteSize, width, height },
+    { uploadId, placeId, mimeType, byteSize, width, height, verifiedRadiusM, accuracyBucket },
     session,
     env,
     now,
@@ -6440,6 +6493,9 @@ async function createPhotoUploadTicket(
       storageKey,
       ticket: ticket?.signature ?? null,
       expiresAt: ticket?.expiresAt ?? null,
+      locationVerification: verifiedRadiusM
+        ? { verifiedRadiusM, accuracyBucket }
+        : null,
       rightsPolicyVersion: PHOTO_RIGHTS_TERMS_VERSION,
       headers: {
         "content-type": mimeType,
@@ -6588,13 +6644,18 @@ type PhotoCompletionPayload = {
   byteSize: number;
   width: number;
   height: number;
+  verifiedRadiusM?: 50 | 150 | 300 | null;
+  accuracyBucket?: LocationAccuracyBucket;
   clientReencoded: boolean;
   originalFilename?: string;
   imageBase64?: string;
   imageBytes?: Uint8Array;
 };
 
-type PhotoUploadTicketClaims = Pick<PhotoCompletionPayload, "uploadId" | "placeId" | "mimeType" | "byteSize" | "width" | "height">;
+type PhotoUploadTicketClaims = Pick<
+  PhotoCompletionPayload,
+  "uploadId" | "placeId" | "mimeType" | "byteSize" | "width" | "height" | "verifiedRadiusM" | "accuracyBucket"
+>;
 
 async function completePhoto(request: Request, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
   const body = await readJson(request, photoJsonRequestBodyMaxBytes);
@@ -6608,6 +6669,8 @@ async function completePhoto(request: Request, session: AnonymousSession, env: E
       byteSize: numberField(body, "byteSize"),
       width: numberField(body, "width"),
       height: numberField(body, "height"),
+      verifiedRadiusM: optionalPhotoVerifiedRadiusField(body, "verifiedRadiusM"),
+      accuracyBucket: optionalEnumField(body, "accuracyBucket", photoLocationAccuracyBuckets) ?? "unknown",
       clientReencoded: booleanField(body, "clientReencoded"),
       originalFilename: optionalStringField(body, "originalFilename", 255),
       imageBase64: optionalStringField(body, "imageBase64", Math.ceil(PHOTO_MAX_BYTES * 1.4)),
@@ -6659,6 +6722,8 @@ async function uploadPhotoMultipart(request: Request, session: AnonymousSession,
       byteSize: imageBytes.byteLength,
       width: formNumberField(formData, "width"),
       height: formNumberField(formData, "height"),
+      verifiedRadiusM: formOptionalPhotoVerifiedRadiusField(formData, "verifiedRadiusM"),
+      accuracyBucket: formOptionalPhotoAccuracyBucketField(formData, "accuracyBucket"),
       clientReencoded: formBooleanField(formData, "clientReencoded"),
       originalFilename: formOptionalStringField(formData, "originalFilename", 255),
       imageBytes,
@@ -8025,7 +8090,7 @@ async function assertPhotoUploadTicket(input: PhotoCompletionPayload, session: A
 
 function photoUploadTicketMessage(claims: PhotoUploadTicketClaims, anonymousSessionId: string, expiresAt: string): string {
   return JSON.stringify([
-    "silsigan-photo-ticket-v1",
+    "silsigan-photo-ticket-v2",
     claims.uploadId,
     anonymousSessionId,
     claims.placeId,
@@ -8033,6 +8098,8 @@ function photoUploadTicketMessage(claims: PhotoUploadTicketClaims, anonymousSess
     claims.byteSize,
     claims.width,
     claims.height,
+    claims.verifiedRadiusM ?? null,
+    claims.accuracyBucket ?? "unknown",
     expiresAt,
   ]);
 }
@@ -9032,6 +9099,9 @@ function d1PhotoPersistenceStatements(
       JSON.stringify({
         mimeAndMagicBytes: "passed",
         sizeAndDimensions: "passed",
+        locationVerified: photo.locationVerified === true,
+        verifiedRadiusM: photo.verifiedRadiusM ?? null,
+        accuracyBucket: photo.accuracyBucket ?? "unknown",
         metadataRemoved: sanitizedPhoto?.metadataRemoved ?? false,
         pixelsReencoded: sanitizedPhoto?.pixelsReencoded ?? false,
         duplicateCheck: imageHash ? "passed" : "not_available",
@@ -9108,6 +9178,9 @@ async function completePhotoPayload(
     width: requestedWidth,
     height: requestedHeight,
     clickCount: 0,
+    locationVerified: Boolean(input.verifiedRadiusM),
+    verifiedRadiusM: input.verifiedRadiusM ?? null,
+    accuracyBucket: input.accuracyBucket ?? "unknown",
     status: moderationRequired ? "pending" : "ready",
     deletedAt: null,
     createdAt: new Date().toISOString(),
@@ -9171,6 +9244,9 @@ async function completePhotoPayload(
           metadataRemoved: sanitizedPhoto.metadataRemoved ? "true" : "none-found",
           serverPixelReencoded: sanitizedPhoto.pixelsReencoded ? "true" : "false",
           gpsExifStripped: "true",
+          locationVerified: photo.locationVerified ? "true" : "false",
+          verifiedRadiusM: photo.verifiedRadiusM ? String(photo.verifiedRadiusM) : "none",
+          accuracyBucket: photo.accuracyBucket ?? "unknown",
           processing: sanitizedPhoto.processing,
           originalBytes: String(sanitizedPhoto.originalBytes),
           sanitizedBytes: String(sanitizedPhoto.sanitizedBytes),
@@ -14188,6 +14264,32 @@ function formNumberField(formData: FormData, field: string): number {
   return number;
 }
 
+function formOptionalPhotoVerifiedRadiusField(
+  formData: FormData,
+  field: string,
+): 50 | 150 | 300 | null {
+  const value = formOptionalStringField(formData, field, 3);
+  if (value === undefined) {
+    return null;
+  }
+  const radius = Number(value);
+  if (radius !== 50 && radius !== 150 && radius !== 300) {
+    throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
+  }
+  return radius;
+}
+
+function formOptionalPhotoAccuracyBucketField(
+  formData: FormData,
+  field: string,
+): LocationAccuracyBucket {
+  const value = formOptionalStringField(formData, field, 10) ?? "unknown";
+  if (!photoLocationAccuracyBuckets.includes(value as LocationAccuracyBucket)) {
+    throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
+  }
+  return value as LocationAccuracyBucket;
+}
+
 function formBooleanField(formData: FormData, field: string): boolean {
   const value = formStringField(formData, field, 5);
   if (value !== "true" && value !== "false") {
@@ -14404,6 +14506,20 @@ function numberField(body: JsonObject, field: string): number {
     throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
   }
 
+  return value;
+}
+
+function optionalPhotoVerifiedRadiusField(
+  body: JsonObject,
+  field: string,
+): 50 | 150 | 300 | null {
+  const value = body[field];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (value !== 50 && value !== 150 && value !== 300) {
+    throw new HttpError(400, "VALIDATION_ERROR", `${field} 값이 올바르지 않습니다.`);
+  }
   return value;
 }
 

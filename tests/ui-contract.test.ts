@@ -152,7 +152,7 @@ test("map search and bounds refresh only places and status after the initial liv
 
 test("security-sensitive mutations fully reconcile visibility caches", () => {
   const blockCommentCreator = sourceBetween(redesignSource, "const blockCommentCreator", "const openPhotoReport");
-  const reportModerationTarget = sourceBetween(redesignSource, "const reportModerationTarget", "const requestFieldVerification");
+  const reportModerationTarget = sourceBetween(redesignSource, "const reportModerationTarget", "const submitReport");
   const blockPostCreator = sourceBetween(redesignSource, "const blockPostCreator", "const unblockUser");
   const unblockUser = sourceBetween(redesignSource, "const unblockUser", "const voteOnReport");
   const deleteCurrentAccount = sourceBetween(redesignSource, "const deleteCurrentAccount", "const submitPlaceAdditionRequest");
@@ -258,6 +258,17 @@ test("photo upload obtains an explicit one-use Turnstile proof without exposing 
   assert.match(turnstileClientSource, /aria-modal", "true"/);
   assert.match(turnstileClientSource, /api\.remove\(widgetId\)/);
   assert.doesNotMatch(turnstileClientSource, /SECRET_KEY|TURNSTILE_SECRET|siteverify/);
+});
+
+test("home upload starts consented current-location capture without a place picker", () => {
+  assert.match(redesignSource, /beginCurrentLocationUpload/);
+  assert.match(redesignSource, /현재 위치를 확인해 사진 위치로 연결/);
+  assert.match(redesignSource, /nearestPlaceForCurrentLocation/);
+  assert.match(redesignSource, /currentLocation=\{verifiedLocation\}/);
+  assert.doesNotMatch(
+    redesignSource,
+    /activeView === "upload" && !reportPlace[\s\S]{0,300}<ReportPlaceGate/,
+  );
 });
 
 test("admin beta KPI panel is aggregate-only accessible and aligned to launch thresholds", () => {
@@ -544,34 +555,32 @@ test("upload flow starts with photo before place details", () => {
   assert.notEqual(photoSectionIndex, -1, "photo upload section must exist");
   assert.notEqual(placeSectionIndex, -1, "place selection section must exist");
   assert.ok(photoSectionIndex < placeSectionIndex, "photo upload section must appear before place selection");
-  assert.match(reportScreen, /uploadEnabled=\{photoUploadReady\}/);
+  assert.match(reportScreen, /uploadEnabled=\{photoUploadReady && locationReady\}/);
+  assert.match(reportScreen, /현재 위치 확인이 끝나면 사진을 선택할 수 있습니다\./);
   assert.match(reportScreen, /사진 서버에 연결할 수 없어 사진 선택을 비활성화했습니다\./);
   assert.doesNotMatch(reportScreen, /사진 저장 준비 중/);
   assert.match(photoUploaderSource, /disabled=\{busy \|\| !uploadEnabled\}/);
   assert.match(photoUploaderSource, /사진 업로드 서버에 연결되지 않았습니다\./);
 });
 
-test("an uploaded photo locks its report place until the user deletes that photo", () => {
-  const uploadRender = sourceBetween(redesignSource, 'activeView === "upload" && reportPlace &&', 'activeView === "ask"');
+test("the upload place is fixed by current location instead of a manual place picker", () => {
   const reportScreen = sourceBetween(redesignSource, "function ReportScreen", "function AskScreen");
 
-  assert.match(uploadRender, /if \(photoAttached && place\.id !== reportPlace\.id\)/);
-  assert.match(uploadRender, /사진을 삭제한 뒤 장소를 바꿀 수 있습니다\./);
-  assert.match(reportScreen, /const placeLockedByPhoto = photoAttached;/);
-  assert.match(reportScreen, /disabled=\{placeLockedByPhoto && candidate\.id !== place\.id\}/);
-  assert.match(reportScreen, /사진이 연결된 뒤에는 장소를 바꿀 수 없습니다\./);
+  assert.match(reportScreen, /현재 위치로 자동 연결된 사진 장소/);
+  assert.match(reportScreen, /currentLocation=\{currentLocation\}/);
+  assert.doesNotMatch(reportScreen, /onSelectPlace\(candidate\)|uploadPlaceList/);
 });
 
-test("selecting a place inside upload resets the phone scroller and focuses the form heading", () => {
+test("automatic current-location matching resets the phone scroller and focuses the form heading", () => {
   const redesign = sourceBetween(redesignSource, "export default function SilsiganRedesign", "function StatusBar");
-  const uploadRender = sourceBetween(redesignSource, 'activeView === "upload" && reportPlace &&', 'activeView === "ask"');
+  const currentLocationFlow = sourceBetween(redesign, "const requestCurrentUploadLocation", "const beginCurrentLocationUpload");
   const reportScreen = sourceBetween(redesignSource, "function ReportScreen", "function AskScreen");
 
   assert.match(redesign, /const focusUploadFormStart = useCallback/);
   assert.match(redesign, /phoneBodyRef\.current\?\.scrollTo\(\{ top: 0, behavior: "auto" \}\)/);
   assert.match(redesign, /document\.getElementById\("report-form-heading"\)\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(redesign, /if \(activeView === "upload"\) \{\s*focusUploadFormStart\(\);/);
-  assert.match(uploadRender, /setReportPlaceId\(place\.id\);\s*focusUploadFormStart\(\);/);
+  assert.match(currentLocationFlow, /setReportPlaceId\(matchedPlace\.id\);[\s\S]*focusUploadFormStart\(\);/);
   assert.match(reportScreen, /<h2 id="report-form-heading" tabIndex=\{-1\}>/);
   assert.match(redesign, /pendingScrollRestoreRef\.current = target\.scrollTop/);
 });
@@ -608,14 +617,22 @@ test("runtime truth never promotes missing production data to live or sample con
     dataMode: "live",
     featureFlags: {},
     dimensionSettings: [],
-    photoUploadProtection: { turnstileRequired: false, turnstileSiteKey: null },
+    photoUploadProtection: { turnstileRequired: false, turnstileSiteKey: null, turnstileConfigured: true },
   });
 
   assert.match(redesignSource, /useState<DataMode>\("unavailable"\)/);
-  assert.deepEqual(missingProtection.photoUploadProtection, { turnstileRequired: true, turnstileSiteKey: null });
+  assert.deepEqual(missingProtection.photoUploadProtection, {
+    turnstileRequired: true,
+    turnstileSiteKey: null,
+    turnstileConfigured: false,
+  });
   assert.equal(missingProtection.featureFlags.SOCIAL_FEED_ENABLED, true);
   assert.equal(missingProtection.featureFlags.QNA_ENABLED, false);
-  assert.deepEqual(explicitProtection.photoUploadProtection, { turnstileRequired: false, turnstileSiteKey: null });
+  assert.deepEqual(explicitProtection.photoUploadProtection, {
+    turnstileRequired: false,
+    turnstileSiteKey: null,
+    turnstileConfigured: true,
+  });
   assert.throws(
     () => normalizeCloudflareRuntimeConfig({ contractVersion: 2, dataMode: "unknown" }),
     /실시간 API 설정 응답이 올바르지 않습니다/,
@@ -728,23 +745,22 @@ test("search never assigns a no-result upload to an unrelated popular place", ()
   assert.doesNotMatch(searchScreen, /인기 장소 지금컷 추가/);
 });
 
-test("generic upload entry requires an explicit report place instead of reusing the browsing fallback", () => {
+test("generic upload entry uses consented current location instead of a manual place picker", () => {
   const redesign = sourceBetween(redesignSource, "export default function SilsiganRedesign", "function StatusBar");
-  const reportPlaceGate = sourceBetween(redesignSource, "function ReportPlaceGate", "function ReportScreen");
+  const locationGate = sourceBetween(redesignSource, "function CurrentLocationUploadGate", "function ReportScreen");
 
   assert.match(redesign, /const \[reportPlaceId, setReportPlaceId\] = useState<string \| null>\(null\)/);
   assert.match(redesign, /const reportPlace = useMemo\([\s\S]*place\.id === reportPlaceId[\s\S]*\?\? null/);
-  assert.match(redesign, /const openUploadPlacePicker = \(\) => \{[\s\S]*dataMode !== "live"[\s\S]*setReportPlaceId\(null\);\s*setActiveView\("upload"\);/);
+  assert.match(redesign, /const beginCurrentLocationUpload = \(\) => \{[\s\S]*setReportPlaceId\(null\);[\s\S]*setActiveView\("upload"\);[\s\S]*requestCurrentUploadLocation\(displayPlaces\);/);
   assert.match(redesign, /const startReportForPlace = \(place: Place\) => \{[\s\S]*setReportPlaceId\(place\.id\);[\s\S]*setActiveView\("upload"\);/);
   assert.match(redesign, /activeView === "upload" && !reportPlace/);
   assert.match(redesign, /activeView === "upload" && reportPlace/);
   assert.match(redesign, /<BottomNav activeView=\{activeView\} onChange=\{changeBottomNavView\}/);
-  assert.match(redesign, /onGoReport=\{\(\) => \{\s*closeOnboarding\(\);\s*openUploadPlacePicker\(\);/);
-  assert.match(reportPlaceGate, /장소를 먼저 선택해 주세요/);
-  assert.match(reportPlaceGate, /선택하기 전에는 어떤 장소에도 사진이나 상태가 연결되지 않습니다\./);
-  assert.match(reportPlaceGate, /onSelectPlace\(place\)/);
-  assert.match(reportPlaceGate, /장소 검색/);
-  assert.match(reportPlaceGate, /지도에서 선택/);
+  assert.match(redesign, /onGoReport=\{\(\) => \{\s*closeOnboarding\(\);\s*beginCurrentLocationUpload\(\);/);
+  assert.match(locationGate, /현재 위치를 확인해 사진 위치로 연결/);
+  assert.match(locationGate, /300m 안의 등록 장소를 자동으로 연결/);
+  assert.match(locationGate, /정확한 좌표는 이 기기의 지도 표시에만 사용합니다\./);
+  assert.doesNotMatch(locationGate, /장소 검색|지도에서 선택|onSelectPlace\(place\)/);
 });
 
 test("static directory mode preserves place discovery while stopping live reads, writes, and telemetry", () => {

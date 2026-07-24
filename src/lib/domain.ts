@@ -481,6 +481,25 @@ export function distanceMeters(
   return earthRadiusM * c;
 }
 
+export function nearestPlaceForCurrentLocation<TPlace extends { latitude: number; longitude: number }>(
+  places: readonly TPlace[],
+  currentLocation: { latitude: number; longitude: number },
+  maximumDistanceM = 300,
+): TPlace | null {
+  let nearest: TPlace | null = null;
+  let nearestDistanceM = Number.POSITIVE_INFINITY;
+
+  for (const place of places) {
+    const distanceM = distanceMeters(currentLocation, place);
+    if (distanceM <= maximumDistanceM && distanceM < nearestDistanceM) {
+      nearest = place;
+      nearestDistanceM = distanceM;
+    }
+  }
+
+  return nearest;
+}
+
 export function verifiedRadiusFromDistance(distanceM: number): 50 | 150 | 300 | null {
   if (distanceM <= 50) {
     return 50;

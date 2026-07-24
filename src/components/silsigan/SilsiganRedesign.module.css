@@ -3624,6 +3624,7 @@ a.samplePhotoCredit:hover {
 
 .reportPlaceGateActions button {
   display: inline-flex;
+  grid-column: 1 / -1;
   min-height: 46px;
   align-items: center;
   justify-content: center;
@@ -3634,6 +3635,41 @@ a.samplePhotoCredit:hover {
   color: #15803d;
   font-size: 12px;
   font-weight: 900;
+}
+
+.currentLocationStatus {
+  grid-column: 1 / -1;
+}
+
+.currentLocationStatus strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.currentLocationStatus p,
+.locationPrivacyNote {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 730;
+  line-height: 1.5;
+}
+
+.locationPrivacyNote {
+  grid-column: 1 / -1;
+}
+
+.reportLocationMap {
+  min-height: 190px;
+  overflow: hidden;
+  border: 1px solid rgba(22, 163, 74, 0.14);
+  border-radius: 18px;
+  background: #f0fdf4;
+}
+
+.reportLocationMap > div {
+  min-height: 190px;
 }
 
 .uploadPlaceCard span,
