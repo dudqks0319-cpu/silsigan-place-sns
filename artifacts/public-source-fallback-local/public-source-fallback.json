@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "silsigan-public-source-fallback-evidence/v1",
+  "evaluatedAt": "2026-07-20T00:00:00.000Z",
+  "scope": "local-fixtures-only",
+  "sources": [
+    {
+      "sourceKey": "kma_weather",
+      "sourceKind": "live",
+      "cacheSequence": [
+        "network",
+        "fresh",
+        "stale",
+        "insufficient"
+      ],
+      "outageHealth": "degraded",
+      "expiredDecision": "insufficient",
+      "terminalErrorCode": "SOURCE_HTTP_ERROR",
+      "timestampContract": "bounded-live",
+      "attributionPresent": true,
+      "itemCount": 1,
+      "passed": true
+    },
+    {
+      "sourceKey": "tour_api",
+      "sourceKind": "static",
+      "cacheSequence": [
+        "network",
+        "fresh",
+        "stale",
+        "insufficient"
+      ],
+      "outageHealth": "degraded",
+      "expiredDecision": "insufficient",
+      "terminalErrorCode": "SOURCE_HTTP_ERROR",
+      "timestampContract": "static-only",
+      "attributionPresent": true,
+      "itemCount": 1,
+      "passed": true
+    },
+    {
+      "sourceKey": "national_parking",
+      "sourceKind": "static",
+      "cacheSequence": [
+        "network",
+        "fresh",
+        "stale",
+        "insufficient"
+      ],
+      "outageHealth": "degraded",
+      "expiredDecision": "insufficient",
+      "terminalErrorCode": "SOURCE_HTTP_ERROR",
+      "timestampContract": "static-only",
+      "attributionPresent": true,
+      "itemCount": 1,
+      "passed": true
+    },
+    {
+      "sourceKey": "national_traffic",
+      "sourceKind": "live",
+      "cacheSequence": [
+        "network",
+        "fresh",
+        "stale",
+        "insufficient"
+      ],
+      "outageHealth": "degraded",
+      "expiredDecision": "insufficient",
+      "terminalErrorCode": "SOURCE_HTTP_ERROR",
+      "timestampContract": "bounded-live",
+      "attributionPresent": true,
+      "itemCount": 1,
+      "passed": true
+    },
+    {
+      "sourceKey": "national_cctv",
+      "sourceKind": "static",
+      "cacheSequence": [
+        "network",
+        "fresh",
+        "stale",
+        "insufficient"
+      ],
+      "outageHealth": "degraded",
+      "expiredDecision": "insufficient",
+      "terminalErrorCode": "SOURCE_HTTP_ERROR",
+      "timestampContract": "static-only",
+      "attributionPresent": true,
+      "itemCount": 1,
+      "passed": true
+    },
+    {
+      "sourceKey": "seoul_realtime_city",
+      "sourceKind": "live",
+      "cacheSequence": [
+        "network",
+        "fresh",
+        "stale",
+        "insufficient"
+      ],
+      "outageHealth": "degraded",
+      "expiredDecision": "insufficient",
+      "terminalErrorCode": "SOURCE_HTTP_ERROR",
+      "timestampContract": "bounded-live",
+      "attributionPresent": true,
+      "itemCount": 1,
+      "passed": true
+    }
+  ],
+  "ok": true,
+  "passedSources": 6,
+  "failedSources": 0,
+  "sensitiveHits": []
+}

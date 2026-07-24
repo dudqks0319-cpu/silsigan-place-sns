@@ -1,6 +1,6 @@
 # Cloudflare staging operator packet
 
-Updated: 2026-07-22
+Updated: 2026-07-24
 Scope: Cloudflare-backed staging and TestFlight MVP evidence. This packet never authorizes production deployment, production migration, provider activation, or traffic promotion.
 
 ## Current truth
@@ -8,10 +8,11 @@ Scope: Cloudflare-backed staging and TestFlight MVP evidence. This packet never 
 | Surface | State |
 | --- | --- |
 | Staging API | Live at `https://silsigan-api-staging.dudqks0319.workers.dev`; the latest audited reconciliation used Workers `3,000`, D1 reads `504,922`, and D1 writes `37,386`, and generation `5` is `running`. |
-| Staging web | Live at `https://silsigan-web-staging.dudqks0319.workers.dev`; version `9058f53d-8fac-47e5-8878-795bc124a14b` embeds the exact staging API base and live mode was reverified. |
+| Staging web | Live at `https://silsigan-web-staging.dudqks0319.workers.dev`; version `ee34cab8-8d18-4a13-8e89-b379c462a66b` runs Next.js `16.2.11`, embeds the exact staging API base, and passed post-deploy browser smoke at `72/80` requests. |
 | Staging D1 | Migrations through `0026`, aligned migration registry, no pending migration. |
 | Staging R2 | Private `silsigan-photos-staging`; zero objects/bytes, `r2.dev` disabled, no direct custom domain, bounded lifecycle rules. |
 | Turnstile | The managed widget contains the exact staging and production web hosts and the server-only staging secret name exists. A valid bounded JPEG reached the live challenge, but automation was rejected before a token was issued; do not weaken the widget. Human verification plus one bounded live upload and cleanup evidence remains pending. |
+| Workers tail | A bounded 2026-07-24 capture accepted only the exact staging API Worker, sanitized 20 platform tail events in memory, persisted only the redacted 10.4 KiB result, and passed the sensitive-log validator. Raw Wrangler tail output must not be redirected to disk. |
 | Official sources | KMA, TourAPI, and national-parking credentials are installed as staging secrets only. All six official provider rows and all ingestion targets remain disabled; provider applications, rights, quotas, attribution, and health approval remain separate. |
 | Production | Not promoted. Production API/migration/R2/source activation remain blocked and require separate approval. |
 
@@ -140,6 +141,29 @@ Required evidence:
 
 Stop and clean up immediately if any object remains, a public R2 route exists, a quota counter diverges, or a retry performs a second paid transformation/write.
 
+## Safe Workers tail capture
+
+Do not redirect raw `wrangler tail --format json` output to a file. Wrangler platform events can include request headers, query strings, and exact Cloudflare geolocation even when Worker application logs are clean.
+
+Use the bounded staging-only capture instead:
+
+```bash
+pnpm cf:tail:capture -- \
+  --output=artifacts/cloudflare-tail/staging-tail-safe-YYYYMMDD.log \
+  --duration-ms=20000
+```
+
+While it is running, execute one bounded read-only staging smoke in another terminal. The capture keeps raw events in memory only, removes platform request/response metadata, preserves Worker-emitted logs, refuses to persist a result when those logs contain a sensitive value, creates the output with owner-only permissions, and stops after 5–120 seconds.
+
+Validate the persisted artifact:
+
+```bash
+pnpm smoke:tail-redaction -- \
+  --tail-file=artifacts/cloudflare-tail/staging-tail-safe-YYYYMMDD.log
+```
+
+The final 2026-07-24 run captured 20 events, processed 88,840 raw bytes in memory, persisted 10,688 sanitized bytes with request paths redacted, and returned `sensitiveFindings=[]`. Evidence: `artifacts/cloudflare-tail/staging-tail-safe-v2-20260724.log`.
+
 ## Deployment commands
 
 Staging API only:
@@ -159,10 +183,10 @@ These commands do not authorize their production equivalents. Before any staging
 ## Remaining release gates
 
 - provider submissions, issued keys, rights/attribution/quota/health proof, then one-source-at-a-time activation starting with KMA
-- role-separated admin setup, API guard recovery, and bounded R2 mutation smoke
+- bounded R2 mutation smoke after the already-completed role-separated admin setup and API guard recovery
 - Cloudflare WAF/rate-limit and billing alert evidence; application rejection cannot prevent a request already reaching Workers from counting
 - owner-controlled domain and NAVER valid-origin/invalid-origin plus notification-recipient evidence
-- Workers tail redaction and moderation/on-call drill
+- moderation/on-call drill; the bounded Workers tail redaction evidence is complete
 - iPhone and Android real-device evidence
 - final privacy/support/location/UGC/data-retention/open-source/store disclosures with named legal/operations review
 - separate production D1/R2/API/source/traffic approval

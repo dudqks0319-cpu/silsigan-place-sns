@@ -2,6 +2,9 @@
 
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
+import { findSensitiveTailLogFindings } from "./cloudflare-tail-safety.mjs";
+
+export { findSensitiveTailLogFindings } from "./cloudflare-tail-safety.mjs";
 
 const DEFAULT_ANON_ID = "anon_staging_smoke";
 const NATIONWIDE_BBOX = "124,33,132,39";
@@ -610,27 +613,6 @@ async function validateTailLogFile(filePath) {
   record("tail.redaction", "pass", "captured tail log에서 raw token/anonymous proof/coordinate/anon id/original filename 패턴이 발견되지 않았습니다.", {
     file: filePath,
   });
-}
-
-export function findSensitiveTailLogFindings(text) {
-  const patterns = [
-    { label: "cloudflare_or_openai_token", regex: /\b(?:sk|sk-proj|cf)_[A-Za-z0-9_-]{16,}\b|\bsk-[A-Za-z0-9_-]{16,}\b/gi },
-    { label: "assigned_secret", regex: /\b(?:ADMIN_TOKEN|ADMIN_TOKENS|CLOUDFLARE_API_TOKEN)\b\s*[:=]\s*["']?(?!\[redacted\]|redacted)[^"'\s]{6,}/gi },
-    { label: "admin_token_header", regex: /\bx-silsigan-admin-token\b["']?\s*[:=]\s*["']?(?!\[redacted\]|redacted)[A-Za-z0-9._~+/=-]{8,}/gi },
-    { label: "bearer_token", regex: /\bBearer\s+(?!\[redacted\]|redacted)[A-Za-z0-9._~+/=-]{16,}/gi },
-    { label: "anonymous_session_proof", regex: /(?:\bx-silsigan-anon-proof\b|\bproof\b)(?:\\?["'])?\s*[:=]\s*(?:\\?["'])?(?!\[redacted\]|redacted)[A-Za-z0-9_-]{43}\b/gi },
-    { label: "anonymous_id", regex: /\banon_[A-Za-z0-9_-]{8,}\b/gi },
-    { label: "email", regex: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi },
-    { label: "raw_latitude", regex: /\b(?:latitude|lat)\b["']?\s*[:=]\s*"?-?\d{1,2}\.\d{4,}/gi },
-    { label: "raw_longitude", regex: /\b(?:longitude|lng)\b["']?\s*[:=]\s*"?-?\d{2,3}\.\d{4,}/gi },
-    { label: "coordinate_pair_lat_lng", regex: /\b(?:3[3-9]|4[0-3])\.\d{4,}\s*,\s*(?:12[4-9]|13[0-2])\.\d{4,}\b/g },
-    { label: "coordinate_pair_lng_lat", regex: /\b(?:12[4-9]|13[0-2])\.\d{4,}\s*,\s*(?:3[3-9]|4[0-3])\.\d{4,}\b/g },
-    { label: "original_filename", regex: /\b[A-Za-z0-9][A-Za-z0-9_. -]{2,}\.(?:jpe?g|png|webp|heic|gif)\b/gi },
-  ];
-
-  return patterns
-    .filter(({ regex }) => regex.test(text))
-    .map(({ label }) => label);
 }
 
 async function requestJson(baseUrl, path, init = {}) {

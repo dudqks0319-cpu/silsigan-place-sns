@@ -22,6 +22,8 @@ const releaseGate = await import(new URL("../scripts/cloudflare-release-gate.mjs
 const externalState = await import(new URL("../scripts/cloudflare-external-state-check.mjs", import.meta.url).href);
 const d1ReleaseEvidence = await import(new URL("../scripts/cloudflare-d1-release-evidence.mjs", import.meta.url).href);
 const r2ReleaseEvidence = await import(new URL("../scripts/cloudflare-r2-release-evidence.mjs", import.meta.url).href);
+const tailSafety = await import(new URL("../scripts/cloudflare-tail-safety.mjs", import.meta.url).href);
+const tailCapture = await import(new URL("../scripts/cloudflare-tail-capture.mjs", import.meta.url).href);
 
 type SuccessPayload<TData> = {
   success: true;
@@ -1789,6 +1791,122 @@ test("Cloudflare tail redaction smoke rejects raw secrets coordinates anonymous 
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("Cloudflare tail sanitizer removes platform request metadata without hiding Worker log leaks", () => {
+  const rawTailEvent = {
+    event: {
+      request: {
+        url: `https://silsigan-api-staging.example.test/api/places?lat=35.15321&lng=129.11861&anonymousId=anon_leaky_user_12345`,
+        method: "GET",
+        headers: {
+          "x-silsigan-anon-id": "anon_leaky_user_12345",
+          "x-silsigan-anon-proof": "P".repeat(43),
+          authorization: "Bearer raw-token-value-forbidden",
+        },
+        cf: {
+          latitude: "35.15321",
+          longitude: "129.11861",
+          city: "Busan",
+          tlsClientRandom: "private-fingerprint",
+        },
+      },
+      response: {
+        status: 200,
+        headers: {
+          "set-cookie": `silsigan_anon_proof=${"Q".repeat(43)}`,
+        },
+      },
+    },
+    logs: [
+      {
+        level: "log",
+        message: ["safe aggregate event"],
+      },
+    ],
+  };
+
+  const sanitizedText = tailSafety.sanitizeWranglerTailText(`${JSON.stringify(rawTailEvent)}\n`);
+  const [sanitizedEvent] = tailSafety.parseWranglerTailEvents(sanitizedText) as Array<{
+    event: {
+      request: { cf?: unknown; headers?: unknown; url: string };
+      response: { headers?: unknown };
+    };
+    logs: unknown[];
+  }>;
+
+  assert.equal(sanitizedEvent?.event.request.url, "https://silsigan-api-staging.example.test/[redacted]");
+  assert.equal(sanitizedEvent?.event.request.headers, "[redacted]");
+  assert.equal(sanitizedEvent?.event.request.cf, "[redacted]");
+  assert.equal(sanitizedEvent?.event.response.headers, "[redacted]");
+  assert.deepEqual(sanitizedEvent?.logs, rawTailEvent.logs);
+  assert.deepEqual(tailSafety.findSensitiveTailLogFindings(sanitizedText), []);
+
+  const workerLeak = {
+    ...rawTailEvent,
+    logs: [
+      {
+        level: "error",
+        message: [`x-silsigan-anon-proof: ${"R".repeat(43)}`],
+      },
+    ],
+  };
+  const sanitizedWorkerLeak = tailSafety.sanitizeWranglerTailText(`${JSON.stringify(workerLeak)}\n`);
+
+  assert.deepEqual(tailSafety.findSensitiveTailLogFindings(sanitizedWorkerLeak), ["anonymous_session_proof"]);
+
+  const workerObjectKeyLeak = {
+    ...rawTailEvent,
+    logs: [
+      {
+        level: "error",
+        message: ["failed object photos/busan/busan-gwangalli/2026/07/private-object-123456789.jpg"],
+      },
+    ],
+  };
+  const sanitizedObjectKeyLeak = tailSafety.sanitizeWranglerTailText(`${JSON.stringify(workerObjectKeyLeak)}\n`);
+
+  assert.deepEqual(tailSafety.findSensitiveTailLogFindings(sanitizedObjectKeyLeak), ["original_filename", "r2_object_key"]);
+});
+
+test("Cloudflare tail capture is staging-only and builds a bounded Wrangler command", () => {
+  const config = tailCapture.parseCaptureArgs([
+    "--worker=silsigan-api-staging",
+    "--env=staging",
+    "--config=workers/api/wrangler.jsonc",
+    "--output=artifacts/cloudflare-tail/staging-safe.log",
+    "--duration-ms=15000",
+  ]);
+
+  assert.deepEqual(config, {
+    worker: "silsigan-api-staging",
+    config: "workers/api/wrangler.jsonc",
+    environment: "staging",
+    output: "artifacts/cloudflare-tail/staging-safe.log",
+    durationMs: 15000,
+  });
+  assert.deepEqual(tailCapture.buildWranglerTailArgs(config), [
+    "exec",
+    "wrangler",
+    "tail",
+    "silsigan-api-staging",
+    "--format",
+    "json",
+    "--config",
+    "workers/api/wrangler.jsonc",
+  ]);
+  assert.throws(
+    () => tailCapture.parseCaptureArgs(["--env=production", "--output=production.log"]),
+    /restricted to staging/,
+  );
+  assert.throws(
+    () => tailCapture.parseCaptureArgs(["--worker=silsigan-api-production", "--env=staging", "--output=production.log"]),
+    /exact staging Worker/,
+  );
+  assert.throws(
+    () => tailCapture.parseCaptureArgs(["--env=staging", "--output=staging.log", "--duration-ms=1000"]),
+    /between 5000 and 120000/,
+  );
 });
 
 test("Cloudflare Pages browser smoke helpers parse args and redact URLs", () => {

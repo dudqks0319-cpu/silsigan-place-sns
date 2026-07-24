@@ -1,6 +1,6 @@
 # #실시간 Cloudflare cost and usage runbook
 
-Updated: 2026-07-22
+Updated: 2026-07-24
 Scope: Cloudflare-backed TestFlight MVP cost and usage monitoring for staging and production. This runbook does not authorize App Store production submission.
 
 ## Ownership
@@ -139,6 +139,18 @@ Each evidence entry should include:
 - metric name: requests, storage, egress, transformations, reads, writes, errors, or duration
 - pass/fail against the baseline threshold
 - owner decision: continue, investigate, pause, or stop
+
+For Workers logs, never redirect raw `wrangler tail --format json` output into an evidence file. Platform tail events can contain request headers, query strings, and exact Cloudflare geolocation independently of Worker logging. Capture only through the staging-only bounded sanitizer and then run the validator:
+
+```bash
+pnpm cf:tail:capture -- \
+  --output=artifacts/cloudflare-tail/staging-tail-safe-YYYYMMDD.log \
+  --duration-ms=20000
+pnpm smoke:tail-redaction -- \
+  --tail-file=artifacts/cloudflare-tail/staging-tail-safe-YYYYMMDD.log
+```
+
+The sanitizer drops platform request/response metadata and request paths in memory, accepts only the exact staging API Worker, preserves Worker-emitted logs so application leaks still fail closed, writes with owner-only permissions, and never persists raw tail output. The final 2026-07-24 staging run processed 20 events and passed with `sensitiveFindings=[]`.
 
 ## Stop Conditions
 

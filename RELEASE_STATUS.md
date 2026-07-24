@@ -1,18 +1,18 @@
 # Release Status
 
-Updated: 2026-07-22
+Updated: 2026-07-24
 
 ## 한 줄 상태
 
-실시간 V2는 Cloudflare staging의 private R2, D1 `0026`, 웹, 전국 장소 조회, 비용 방어, 실제 NAVER 지도까지 연결됐습니다. 2026-07-22 미출시 상태의 열린 staging 탭 2개와 중복 KV 조회가 Workers KV 읽기를 지속 발생시킨 원인을 확인해 탭을 닫고, Turnstile secret을 회전해 staging에만 다시 설치했으며, 보이는 탭 1개만 60초마다 경량 갱신하고 공개 요청당 비용 가드 KV를 1회만 읽도록 수정·재배포했습니다. 사진 비용 원장은 R2 `0 B`와 대조해 쓰기를 재개했지만, 1 MiB 이하 실제 브라우저 업로드의 검수·공개·삭제 스모크는 아직 끝나지 않았습니다. 공공데이터 소스와 production은 계속 닫혀 있어 현재 상태는 `staging_running_kv_remediated_photo_turnstile_smoke_pending_production_blocked`입니다.
+실시간 V2는 Cloudflare staging의 private R2, D1 `0026`, 웹, 전국 장소 조회, 비용 방어, 실제 NAVER 지도까지 연결됐습니다. 2026-07-24 Next.js/PostCSS 보안 패치를 적용해 루트·모바일 감사 `0건`, 전체 테스트 `456/456`·모바일 `4/4`, OpenNext/Cloudflare dry-run을 통과했고, staging web `ee34cab8-8d18-4a13-8e89-b379c462a66b`를 배포한 뒤 API 및 브라우저 smoke를 재통과했습니다. 원본 Wrangler tail을 저장하지 않는 bounded sanitizer도 실제 staging 20개 이벤트에서 검증했습니다. 사진 비용 원장은 R2 `0 B`와 대조해 쓰기를 재개했지만, 사람 Turnstile을 포함한 1 MiB 이하 실제 브라우저 업로드의 검수·공개·삭제 스모크는 아직 끝나지 않았습니다. 공공데이터 소스와 production은 계속 닫혀 있어 현재 상태는 `staging_security_patched_tail_safe_photo_turnstile_smoke_pending_production_blocked`입니다.
 
 ## 현재 후보
 
 - Version: `0.1.0`
-- Working branch: `agent/external-staging-20260721`
+- Working branch: `agent/silsigan-backend-finish-20260724`
 - Upstream branch: `origin/codex/silsigan-progress-20260710`
-- Verified source commit: `656eb315cbde4505b6c7db342a0185bb2762baea`
-- Working tree after the release-record commit: tracked source is clean; four local UI truth PNGs under `artifacts/ui-truth-20260722/` remain intentionally untracked and are not release inputs
+- Base source commit: `12f5bc6`; the final candidate commit for this worktree must be recorded after the implementation and evidence files are committed
+- Working tree: isolated Boris worktree; generated 2026-07-24 staging smoke, safe-tail, static-directory, and public-source evidence are release inputs for this candidate
 - Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
 - Final release-record commit: the docs-only commit containing this record; use the remote branch tip as the continuation point
 - Security gate: manual source/diff review, dependency audit, negative-path regressions, and high-confidence secret scan passed. Codex Security scan `7fe0ad74-161b-44e7-bbfb-fb0eeb07c6c2` completed 15/15 review items; its one Medium stale-client-cache finding is remediated and independently re-reviewed at the verified source commit
@@ -28,9 +28,9 @@ Updated: 2026-07-22
 - [x] Staging API/web deployment and exact staging web origin
 - [x] Earlier read-only API smoke: health, 14 places, detail/status, rankings, realtime, empty media/comments, admin deny
 - [x] Current staging API version `dc07bf4a-879a-421c-aea1-5418f9c8bc0e`; the rotated Turnstile secret is installed by name only
-- [x] Current staging web version `ad980039-5ba0-4ffb-9616-6f60eb6aea54`; build-time API base corrected and live mode reverified in the browser
+- [x] Current staging web version `ee34cab8-8d18-4a13-8e89-b379c462a66b`; Next.js `16.2.11`, the exact build-time API base, and live mode were reverified after deployment
 - [x] Latest audited API-cost reconciliation and below-70% resume: Workers `3,000`, D1 rows read `504,922`, rows written `37,386`; generation `5`, public live mode restored
-- [x] Browser home/map/search/detail smoke, API request budget `65/80`
+- [x] Browser home/map/search/detail smoke after the security patch deployment, API request budget `72/80`
 - [x] Current NAVER pstatic tiles and place markers remain after the stabilization window
 - [x] No external source ingestion target enabled
 - [x] Photo R2/D1 zero-state reconciliation and audited write resume; a valid bounded JPEG reached the exact-host managed Turnstile challenge, but human verification and the upload/moderate/read/delete cleanup smoke remain pending
@@ -54,10 +54,16 @@ Staging URLs:
 - Background live refresh is now visible-tab-only, single-leader across same-origin tabs, non-overlapping, 60-second, and limited to places plus at most five status requests after initial load.
 - Public API cost-guard admission reuses its preloaded control row, so one request no longer performs the same `COST_GUARD_STATE` KV read twice; D1 remains the authoritative atomic reservation ledger.
 - Security-sensitive client mutations now use explicit full reconciliation before success; the low-cost `places_status` scope remains limited to four map/search/bounds/background callers, and account deletion synchronously clears owned UGC caches.
+- Safe Workers tail capture keeps raw platform events in bounded memory only, strips request/response metadata, preserves Worker logs for leak detection, and persists only an owner-readable artifact after validation.
+- Next.js and `eslint-config-next` are patched to `16.2.11`; root and mobile PostCSS are forced to `8.5.12`.
 
 ## 검증
 
 - Focused provider-budget, provider-quota, and D1 route-calibration regressions: passed.
+- Full repository verification after dependency patch: root tests `456/456`, mobile tests `4/4`, lint, typecheck, Next production build, WebView syntax check, OpenNext build, and staging/production web/API Wrangler dry-runs passed.
+- `pnpm audit:security`: root and mobile both report no known vulnerabilities.
+- 2026-07-24 live staging read-only API smoke: health, 14 places, detail/status, three realtime rooms, rankings, empty media/comments, and unauthenticated admin `403` passed.
+- 2026-07-24 post-deploy browser smoke: home/map/search/detail and live Worker paths passed at `72/80` requests.
 - TypeScript: passed.
 - OpenNext/Cloudflare build: passed, Next.js `16.2.6`, 27 pages/routes and 148 web assets.
 - Browser smoke: passed, `65/80` API requests.
@@ -114,7 +120,8 @@ Staging에 존재하는 이름:
 - [x] KMA·TourAPI·전국주차장 staging secret 설치 후 공식 provider 6개와 ingestion target 비활성 유지 확인
 - [ ] source별 계약/health 검증과 승인된 소스의 단계적 활성화
 - [x] role-separated `ADMIN_TOKENS` 설치, Cloudflare 실제 사용량 감사 기록, global API guard 정상 모드 재개
-- [ ] moderation/cost alert recipients, WAF/rate-limit, and tail evidence
+- [ ] moderation/cost alert recipients and live WAF/rate-limit evidence
+- [x] bounded staging Workers tail capture and sensitive-log validation (`20` events, no sensitive findings, 2026-07-24)
 - [ ] Complete the exact-host managed Turnstile human check, then one bounded upload/moderate/read/delete cleanup smoke and re-prove R2/D1 zero residuals
 - [ ] owner-controlled domain and NAVER notification/production-origin evidence
 - [ ] finish signed iPhone/Android real-device QA (iPhone 12 Pro development-signed build/install/launch/startup smoke passed 2026-07-23; screenshots, permissions, photo lifecycle, Android, and TestFlight archive remain)

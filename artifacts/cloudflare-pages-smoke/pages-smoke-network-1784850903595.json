@@ -1,0 +1,1222 @@
+[
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/css/5f2b4f9467146c70.css"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/css/a360ee7150109a67.css"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/webpack-d0c7e0df08179436.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/bcad7984-22a879b389c23c00.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/7350-fc21cd15f0dbe968.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/main-app-f6e09aaacce3cdd5.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/app/layout-038a087093e2be52.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/app/error-d547cd8828f2257e.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/4482-56946d9970f4b043.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/app/page-355f6aa2a3a9826b.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/css/ddcfc1e4e5470203.css"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/manifest.webmanifest"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/manifest.webmanifest"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/css/5f2b4f9467146c70.css"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/css/ddcfc1e4e5470203.css"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/css/a360ee7150109a67.css"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/main-app-f6e09aaacce3cdd5.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/webpack-d0c7e0df08179436.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/app/error-d547cd8828f2257e.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/4482-56946d9970f4b043.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/app/layout-038a087093e2be52.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/7350-fc21cd15f0dbe968.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/app/page-355f6aa2a3a9826b.js"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/_next/static/chunks/bcad7984-22a879b389c23c00.js"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/favicon.svg"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/config"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/favicon.svg"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/config"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/reports?limit=100"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/session/anonymous"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/hashtags?hasPhoto=true&activeOnly=true&sort=recent"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/sources"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/sources"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/reports?limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/hashtags?hasPhoto=true&activeOnly=true&sort=recent"
+  },
+  {
+    "type": "response",
+    "status": 201,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/session/anonymous"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/reports?limit=100&mine=1"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/reports?limit=100&mine=1"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/reports?limit=100&mine=1"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/reports?limit=100&mine=1"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=busan-gwangalli&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=busan-haeundae&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=gyeongju-hwangridan&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=busan-jeonpo-cafe&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=seoul-yeouido&limit=12"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=busan-gwangalli&limit=20"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=busan-haeundae&limit=20"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=gyeongju-hwangridan&limit=20"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=busan-jeonpo-cafe&limit=20"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=seoul-yeouido&limit=20"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-haeundae/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/gyeongju-hwangridan/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-jeonpo-cafe/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/seoul-yeouido/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/blocks"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/blocks"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/blocks"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=busan-jeonpo-cafe&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=busan-gwangalli&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=busan-haeundae&limit=20"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=busan-haeundae&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=busan-gwangalli&limit=20"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=busan-jeonpo-cafe&limit=20"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=gyeongju-hwangridan&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/photos?placeId=seoul-yeouido&limit=12"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=gyeongju-hwangridan&limit=20"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/comments?placeId=seoul-yeouido&limit=20"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-haeundae/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-jeonpo-cafe/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/gyeongju-hwangridan/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/seoul-yeouido/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/blocks"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=xgrgqijas8&callback=__silsiganNaverMapReady"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/preferences"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/preferences"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/preferences"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?bbox=126.934900%2C35.102800%2C129.360000%2C37.526500&limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=xgrgqijas8&callback=__silsiganNaverMapReady"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?bbox=126.934900%2C35.102800%2C129.360000%2C37.526500&limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?bbox=126.934900%2C35.102800%2C129.360000%2C37.526500&limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-haeundae/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/gyeongju-hwangridan/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-jeonpo-cafe/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/seoul-yeouido/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://oapi.map.naver.com/v3/auth?ncpKeyId=xgrgqijas8&url=https%3A%2F%2Fsilsigan-web-staging.dudqks0319.workers.dev%2F&time=1784850892913&callback=__naver_maps_callback__0"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic@2x.json?fmt=png&callback=__naver_maps_callback__1"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/terrain@2x.json?fmt=png&callback=__naver_maps_callback__2"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/satellite@2x.json?fmt=png&callback=__naver_maps_callback__3"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://ssl.pstatic.net/static/maps/mantle/2x/openhand.cur"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://kr-col-ext.nelo.navercorp.com/_store"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://kr-col-ext.nelo.navercorp.com/_store"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://ssl.pstatic.net/static/maps/mantle/2x/openhand.cur"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?bbox=126.934900%2C35.102800%2C129.360000%2C37.526500&limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-haeundae/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/gyeongju-hwangridan/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-jeonpo-cafe/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/seoul-yeouido/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/preferences"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?bbox=124.236317%2C34.993521%2C132.058583%2C37.613764&limit=100"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-jeonpo-cafe/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-haeundae/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/gyeongju-hwangridan/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/seoul-yeouido/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/preferences"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/place-requests?mine=1"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/place-requests?mine=1"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?bbox=124.236317%2C34.993521%2C132.058583%2C37.613764&limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-haeundae/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/gyeongju-hwangridan/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-jeonpo-cafe/status"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/seoul-yeouido/status"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/place-requests?mine=1"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-jeonpo-cafe/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-haeundae/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/gyeongju-hwangridan/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/seoul-yeouido/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-jeonpo-cafe/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-haeundae/status"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/place-requests?mine=1"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/gyeongju-hwangridan/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/seoul-yeouido/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/preferences"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://oapi.map.naver.com/v3/auth?ncpKeyId=xgrgqijas8&url=https%3A%2F%2Fsilsigan-web-staging.dudqks0319.workers.dev%2F&time=1784850892913&callback=__naver_maps_callback__0"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/terrain@2x.json?fmt=png&callback=__naver_maps_callback__2"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/satellite@2x.json?fmt=png&callback=__naver_maps_callback__3"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic@2x.json?fmt=png&callback=__naver_maps_callback__1"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/54/25@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/54/24@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/55/24@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/53/25@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/55/25@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/53/24@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://ssl.pstatic.net/static/maps/mantle/2x/new-naver-logo-normal.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://ssl.pstatic.net/static/maps/mantle/2x/new-naver-logo-normal.png"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/54/25@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/54/24@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/53/25@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/55/24@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/53/24@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/6/55/25@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic@2x.json?fmt=png&callback=__naver_maps_callback__4"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/terrain@2x.json?fmt=png&callback=__naver_maps_callback__5"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/satellite@2x.json?fmt=png&callback=__naver_maps_callback__6"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://kr-col-ext.nelo.navercorp.com/_store"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic@2x.json?fmt=png&callback=__naver_maps_callback__7"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/terrain@2x.json?fmt=png&callback=__naver_maps_callback__8"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/satellite@2x.json?fmt=png&callback=__naver_maps_callback__9"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://kr-col-ext.nelo.navercorp.com/_store"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic@2x.json?fmt=png&callback=__naver_maps_callback__4"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/terrain@2x.json?fmt=png&callback=__naver_maps_callback__5"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://kr-col-ext.nelo.navercorp.com/_store"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/satellite@2x.json?fmt=png&callback=__naver_maps_callback__6"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic@2x.json?fmt=png&callback=__naver_maps_callback__7"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/terrain@2x.json?fmt=png&callback=__naver_maps_callback__8"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://kr-col-ext.nelo.navercorp.com/_store"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/satellite@2x.json?fmt=png&callback=__naver_maps_callback__9"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/110/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/109/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/110/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/109/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/110/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/109/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/111/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/108/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/111/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/108/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/111/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/108/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?q=%EA%B4%91%EC%95%88%EB%A6%AC&bbox=127.163034%2C34.485781%2C131.074166%2C35.815189&limit=100"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/109/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/109/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/109/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://ssl.pstatic.net/static/maps/mantle/2x/closedhand.cur"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "OPTIONS",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/silsigan/fallback/gwangalli.png"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "request",
+    "method": "POST",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/110/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/110/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/110/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "response",
+    "status": 204,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places?q=%EA%B4%91%EC%95%88%EB%A6%AC&bbox=127.163034%2C34.485781%2C131.074166%2C35.815189&limit=100"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/realtime/place/busan-gwangalli"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-web-staging.dudqks0319.workers.dev/silsigan/fallback/gwangalli.png"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 202,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/analytics/events"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/status"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/111/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/108/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/places/busan-gwangalli/click"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/111/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/108/50@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://ssl.pstatic.net/static/maps/mantle/2x/closedhand.cur"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/111/51@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://nrbe.pstatic.net/styles/basic/1784198667/7/108/49@2x.png?mt=bg.ol.sw.ar.lko"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/realtime/region/busan"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/realtime/region/busan"
+  },
+  {
+    "type": "request",
+    "method": "GET",
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/realtime/global"
+  },
+  {
+    "type": "response",
+    "status": 200,
+    "url": "https://silsigan-api-staging.dudqks0319.workers.dev/api/realtime/global"
+  }
+]

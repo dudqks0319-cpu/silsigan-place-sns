@@ -1,0 +1,76 @@
+{
+  "generatedAt": "2026-07-23T23:40:50.163Z",
+  "storesRequestBodies": false,
+  "events": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/",
+      "at": "2026-07-23T23:40:48.009Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/css/app/layout.css",
+      "at": "2026-07-23T23:40:48.045Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/css/app/page.css",
+      "at": "2026-07-23T23:40:48.045Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/chunks/webpack.js",
+      "at": "2026-07-23T23:40:48.045Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/chunks/main-app.js",
+      "at": "2026-07-23T23:40:48.045Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/chunks/app-pages-internals.js",
+      "at": "2026-07-23T23:40:48.045Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/chunks/app/error.js",
+      "at": "2026-07-23T23:40:48.045Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/chunks/app/layout.js",
+      "at": "2026-07-23T23:40:48.046Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/chunks/app/page.js",
+      "at": "2026-07-23T23:40:48.046Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/_next/static/css/app/error.css",
+      "at": "2026-07-23T23:40:48.046Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/manifest.webmanifest",
+      "at": "2026-07-23T23:40:48.065Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/favicon.svg",
+      "at": "2026-07-23T23:40:48.444Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51589/api/config",
+      "at": "2026-07-23T23:40:48.491Z"
+    },
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:51588/silsigan/snapshots/nationwide-places.v1.json",
+      "at": "2026-07-23T23:40:48.491Z"
+    }
+  ]
+}
