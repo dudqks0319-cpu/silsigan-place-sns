@@ -4,18 +4,18 @@ Updated: 2026-07-24
 
 ## 한 줄 상태
 
-실시간 V2는 Cloudflare staging의 private R2, D1 `0026`, 웹, 전국 장소 조회, 비용 방어, 실제 NAVER 지도까지 연결됐습니다. 2026-07-24 Next.js/PostCSS 보안 패치를 적용해 루트·모바일 감사 `0건`, 전체 테스트 `456/456`·모바일 `4/4`, OpenNext/Cloudflare dry-run을 통과했고, staging web `ee34cab8-8d18-4a13-8e89-b379c462a66b`를 배포한 뒤 API 및 브라우저 smoke를 재통과했습니다. 원본 Wrangler tail을 저장하지 않는 bounded sanitizer도 실제 staging 20개 이벤트에서 검증했습니다. 사진 비용 원장은 R2 `0 B`와 대조해 쓰기를 재개했지만, 사람 Turnstile을 포함한 1 MiB 이하 실제 브라우저 업로드의 검수·공개·삭제 스모크는 아직 끝나지 않았습니다. 공공데이터 소스와 production은 계속 닫혀 있어 현재 상태는 `staging_security_patched_tail_safe_photo_turnstile_smoke_pending_production_blocked`입니다.
+실시간 V2 사진 위치 경로는 보안 스캔에서 발견된 Medium CWE-345 신뢰표현 문제를 `d35607a`에서 수정한 뒤 Cloudflare staging에 적용했습니다. 서버는 사진 티켓 발급 전에 현재 위치를 필수 검증하고 정확한 좌표를 저장하지 않으며, 공개 응답에는 클라이언트가 보고한 반경·정확도 구간만 남깁니다. 전체 테스트 `462/462`·모바일 `4/4`, 빌드, Cloudflare dry-run, read-only staging smoke를 통과했고 API `3f1d64bc-c62b-4788-9b76-173b210a242f`와 web `2483c542-e10d-458b-9f40-12b835d80f62`가 배포됐습니다. Computer Use로 홈 `올리기`→현재 위치 자동 연결→실제 NAVER 지도→사진 선택까지 확인했으며, 관리형 Turnstile의 사람 확인 체크박스 앞에서 멈췄습니다. D1 사진/바이트/사용 티켓/정리 작업과 R2 객체는 모두 `0`; 업로드 성공은 아직 주장하지 않습니다. Production은 변경하지 않았고 현재 상태는 `staging_photo_location_security_remediated_turnstile_human_confirm_pending_production_blocked`입니다.
 
 ## 현재 후보
 
 - Version: `0.1.0`
 - Working branch: `agent/silsigan-backend-finish-20260724`
 - Upstream branch: `origin/codex/silsigan-progress-20260710`
-- Verified local source/evidence commit: `96705b4947a1f6ad288aa4daed4fe797d848dc63`
+- Verified local source/evidence commit: `d35607ab2b4a4a8b8418355d24226c7d99e18585`
 - Working tree after the candidate commit: clean before this documentation-only release record; generated 2026-07-24 staging smoke, safe-tail, static-directory, and public-source evidence are committed release inputs
 - Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
 - Final release-record commit: the docs-only commit containing this record; the remote branch remains unchanged until an explicit push
-- Security gate: manual source/diff review, dependency audit, negative-path regressions, and high-confidence secret scan passed. Codex Security scan `7fe0ad74-161b-44e7-bbfb-fb0eeb07c6c2` completed 15/15 review items; its one Medium stale-client-cache finding is remediated and independently re-reviewed at the verified source commit
+- Security gate: manual source/diff review, high-confidence secret/log scan, same-day dependency audit, negative-path regressions, and the current Codex Security diff scan passed after remediation. The scan found one Medium CWE-345 client-location trust issue in `e760dd5`; `d35607a` makes location mandatory, validates radius/accuracy server-side, binds only coarse evidence to one-use tickets, removes server-endorsed physical-location wording and internal identifiers, and adds focused regressions
 - Production deploy/migration/traffic change: none
 - Deferred and disabled: ads, rewards, Q&A, live streams, social feed, demo data, Seoul realtime activation
 
@@ -27,13 +27,14 @@ Updated: 2026-07-24
 - [x] Staging D1 through `0026`, pending migrations 0
 - [x] Staging API/web deployment and exact staging web origin
 - [x] Earlier read-only API smoke: health, 14 places, detail/status, rankings, realtime, empty media/comments, admin deny
-- [x] Current staging API version `dc07bf4a-879a-421c-aea1-5418f9c8bc0e`; the rotated Turnstile secret is installed by name only
-- [x] Current staging web version `ee34cab8-8d18-4a13-8e89-b379c462a66b`; Next.js `16.2.11`, the exact build-time API base, and live mode were reverified after deployment
+- [x] Current staging API version `3f1d64bc-c62b-4788-9b76-173b210a242f`; the rotated Turnstile secret is installed by name only
+- [x] Current staging web version `2483c542-e10d-458b-9f40-12b835d80f62`; the exact public staging API base and live mode were reverified after the safe fail-closed interim bundle was replaced
 - [x] Latest audited API-cost reconciliation and below-70% resume: Workers `3,000`, D1 rows read `504,922`, rows written `37,386`; generation `5`, public live mode restored
 - [x] Browser home/map/search/detail smoke after the security patch deployment, API request budget `72/80`
 - [x] Current NAVER pstatic tiles and place markers remain after the stabilization window
 - [x] No external source ingestion target enabled
-- [x] Photo R2/D1 zero-state reconciliation and audited write resume; a valid bounded JPEG reached the exact-host managed Turnstile challenge, but human verification and the upload/moderate/read/delete cleanup smoke remain pending
+- [x] Home `올리기` opens the photo flow directly; browser location auto-links the current place without manual selection and renders the real NAVER map. The QA run used explicit Chrome location emulation because the Mac fix was too imprecise, so it is interaction evidence rather than field-presence proof
+- [x] A bounded JPEG reached the exact-host managed Turnstile human checkbox. No CAPTCHA bypass or upload-success claim was made; post-selection D1 active photos/bytes/consumed claims/pending cleanup and R2 objects/bytes all remain zero
 
 Staging URLs:
 
@@ -56,11 +57,13 @@ Staging URLs:
 - Security-sensitive client mutations now use explicit full reconciliation before success; the low-cost `places_status` scope remains limited to four map/search/bounds/background callers, and account deletion synchronously clears owned UGC caches.
 - Safe Workers tail capture keeps raw platform events in bounded memory only, strips request/response metadata, preserves Worker logs for leak detection, and persists only an owner-readable artifact after validation.
 - Next.js and `eslint-config-next` are patched to `16.2.11`; root and mobile PostCSS are forced to `8.5.12`.
+- Photo tickets now require client location before Turnstile/D1/R2 work, reject missing evidence with `PHOTO_LOCATION_REQUIRED`, validate accuracy and place radius, bind a coarse radius/accuracy bucket to ticket schema v3, and never store exact photo coordinates.
+- Public photos expose only `clientReportedProximity`; server-endorsed `locationVerified` wording and internal anonymous/R2 identifiers are removed. The UI explicitly says browser device location is not physical-presence or identity verification.
 
 ## 검증
 
 - Focused provider-budget, provider-quota, and D1 route-calibration regressions: passed.
-- Full repository verification after dependency patch: root tests `456/456`, mobile tests `4/4`, lint, typecheck, Next production build, WebView syntax check, OpenNext build, and staging/production web/API Wrangler dry-runs passed.
+- Current security-remediated verification: root tests `462/462`, mobile tests `4/4`, lint, typecheck, Next production build, WebView syntax check, OpenNext build, and staging/production web/API Wrangler dry-runs passed. Production checks were dry-runs only.
 - `pnpm audit:security`: root and mobile both report no known vulnerabilities.
 - 2026-07-24 live staging read-only API smoke: health, 14 places, detail/status, three realtime rooms, rankings, empty media/comments, and unauthenticated admin `403` passed.
 - 2026-07-24 post-deploy browser smoke: home/map/search/detail and live Worker paths passed at `72/80` requests.
@@ -73,6 +76,7 @@ Staging URLs:
 - Codex Security closure: the source-state PoC reproduced on `f5abc50e999d0a8f349d56326a8e9ecb4af6491e`, no longer matches the vulnerable transition on `656eb315cbde4505b6c7db342a0185bb2762baea`, and the independent post-fix re-review reports no remaining actionable finding in the scoped diff.
 - Dependency audit: no known root or mobile vulnerability.
 - High-confidence credential-prefix and provider-assignment scan: no matching file; `.env.example` is the only tracked env-shaped file.
+- Post-deploy storage reconciliation: active photos `0`, active photo bytes `0`, budget active bytes `0`, period writes `0`, consumed upload claims `0`, pending cleanup jobs `0`; private staging R2 contains `0` objects and `0 B`.
 
 ## 보안·비용 경계
 
