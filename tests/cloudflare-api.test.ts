@@ -10936,6 +10936,9 @@ test("staging photo ticket validates Turnstile action, hostname, client IP, and 
     const url = String(input);
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
     siteverifyRequests.push({ url, body });
+    if (siteverifyRequests.length === 1) {
+      throw new Error("transient provider failure");
+    }
     return Response.json({
       success: true,
       hostname: "web.example.test",
@@ -10964,12 +10967,13 @@ test("staging photo ticket validates Turnstile action, hostname, client IP, and 
 
     assert.equal(response.status, 201);
     assert.match(payload.data.ticket, /^[0-9a-f]{64}$/i);
-    assert.equal(siteverifyRequests.length, 1);
+    assert.equal(siteverifyRequests.length, 2);
     assert.equal(siteverifyRequests[0]?.url, "https://challenges.cloudflare.com/turnstile/v0/siteverify");
     assert.equal(siteverifyRequests[0]?.body.response, "turnstile-one-use-token");
     assert.equal(siteverifyRequests[0]?.body.remoteip, testPhotoClientIp);
     assert.equal(siteverifyRequests[0]?.body.secret, testTurnstileSecret);
     assert.match(String(siteverifyRequests[0]?.body.idempotency_key), /^[0-9a-f-]{36}$/i);
+    assert.equal(siteverifyRequests[1]?.body.idempotency_key, siteverifyRequests[0]?.body.idempotency_key);
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(tempDir, { recursive: true, force: true });
@@ -11013,6 +11017,7 @@ test("staging photo ticket fails closed when Turnstile returns a mismatched acti
 
 test("staging photo ticket fails closed before D1 when Turnstile is unavailable", async () => {
   let dbTouched = false;
+  let providerAttempts = 0;
   const db = {
     prepare() {
       dbTouched = true;
@@ -11021,6 +11026,7 @@ test("staging photo ticket fails closed before D1 when Turnstile is unavailable"
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (): Promise<Response> => {
+    providerAttempts += 1;
     throw new Error("provider unavailable");
   };
 
@@ -11042,6 +11048,7 @@ test("staging photo ticket fails closed before D1 when Turnstile is unavailable"
 
     assert.equal(response.status, 503);
     assert.equal(payload.error.code, "PHOTO_TURNSTILE_UNAVAILABLE");
+    assert.equal(providerAttempts, 2);
     assert.equal(dbTouched, false);
   } finally {
     globalThis.fetch = originalFetch;

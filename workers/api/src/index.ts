@@ -1314,6 +1314,8 @@ const photoLocationAccuracyBuckets = ["high", "medium", "low", "unknown"] as con
 const photoLocationEvidence = "client_reported_coordinates_within_radius" as const;
 const photoTurnstileSiteverifyUrl = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const photoTurnstileTimeoutMs = 5_000;
+const photoTurnstileMaxAttempts = 2;
+const photoTurnstileRetryDelayMs = 250;
 const photoMultipartOverheadMaxBytes = 512 * 1024;
 const jsonRequestBodyMaxBytes = 64 * 1024;
 const photoJsonRequestBodyMaxBytes = Math.ceil(PHOTO_MAX_BYTES * 1.4) + photoMultipartOverheadMaxBytes;
@@ -6599,30 +6601,14 @@ async function assertPhotoTurnstileProof(request: Request, token: string | undef
     throw new HttpError(503, "PHOTO_TURNSTILE_HOST_POLICY_REQUIRED", "사진 업로드 보안 확인 도메인 정책이 설정되지 않았습니다.");
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), photoTurnstileTimeoutMs);
-  let response: Response;
-  try {
-    response = await fetch(photoTurnstileSiteverifyUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        secret,
-        response: token,
-        remoteip: clientIp,
-        idempotency_key: crypto.randomUUID(),
-      }),
-      signal: controller.signal,
-    });
-  } catch {
-    throw new HttpError(503, "PHOTO_TURNSTILE_UNAVAILABLE", "사진 업로드 보안 확인이 지연되고 있습니다.");
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!response.ok) {
-    throw new HttpError(503, "PHOTO_TURNSTILE_UNAVAILABLE", "사진 업로드 보안 확인이 지연되고 있습니다.");
-  }
+  const idempotencyKey = crypto.randomUUID();
+  const requestBody = JSON.stringify({
+    secret,
+    response: token,
+    remoteip: clientIp,
+    idempotency_key: idempotencyKey,
+  });
+  const response = await fetchPhotoTurnstileSiteverify(requestBody);
 
   let result: TurnstileSiteverifyResponse;
   try {
@@ -6637,6 +6623,52 @@ async function assertPhotoTurnstileProof(request: Request, token: string | undef
   }
 
   return true;
+}
+
+async function fetchPhotoTurnstileSiteverify(requestBody: string): Promise<Response> {
+  for (let attempt = 1; attempt <= photoTurnstileMaxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), photoTurnstileTimeoutMs);
+    let response: Response | null = null;
+    let transportFailed = false;
+    try {
+      response = await fetch(photoTurnstileSiteverifyUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: requestBody,
+        signal: controller.signal,
+      });
+    } catch {
+      transportFailed = true;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (response?.ok) {
+      return response;
+    }
+
+    const retryable = transportFailed || (response !== null && isRetryablePhotoTurnstileStatus(response.status));
+    console.warn(JSON.stringify({
+      event: "photo.turnstile.provider_failure",
+      outcome: transportFailed ? "transport_error" : "http_error",
+      attempt,
+      maxAttempts: photoTurnstileMaxAttempts,
+      ...(response ? { status: response.status } : {}),
+    }));
+
+    if (!retryable || attempt === photoTurnstileMaxAttempts) {
+      throw new HttpError(503, "PHOTO_TURNSTILE_UNAVAILABLE", "사진 업로드 보안 확인이 지연되고 있습니다.");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, photoTurnstileRetryDelayMs));
+  }
+
+  throw new HttpError(503, "PHOTO_TURNSTILE_UNAVAILABLE", "사진 업로드 보안 확인이 지연되고 있습니다.");
+}
+
+function isRetryablePhotoTurnstileStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
 function configuredApiAllowedHostnames(env: Env): Set<string> {
