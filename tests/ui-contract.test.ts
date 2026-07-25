@@ -565,6 +565,10 @@ test("upload flow starts with photo before place details", () => {
   assert.doesNotMatch(reportScreen, /사진 저장 준비 중/);
   assert.match(photoUploaderSource, /disabled=\{busy \|\| !uploadEnabled\}/);
   assert.match(photoUploaderSource, /사진 업로드 서버에 연결되지 않았습니다\./);
+  assert.match(
+    photoUploaderSource,
+    /messageOverride \?\? \(uploadEnabled \? PHOTO_UPLOAD_READY_MESSAGE : PHOTO_UPLOAD_UNAVAILABLE_MESSAGE\)/,
+  );
 });
 
 test("the upload place is fixed by current location instead of a manual place picker", () => {

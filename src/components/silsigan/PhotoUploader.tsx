@@ -13,6 +13,10 @@ import { EmptyState } from "./EmptyState";
 
 const PHOTO_OUTPUT_QUALITIES = [0.82, 0.68, 0.54, 0.42] as const;
 const PHOTO_OUTPUT_DIMENSIONS = [PHOTO_MAX_DIMENSION, 1024, 800, 640] as const;
+const PHOTO_UPLOAD_READY_MESSAGE =
+  "JPEG 또는 WebP 원본을 고르면 서버 전송 전에 1MB 이하로 안전하게 다시 저장합니다. #실시간 앱은 iPhone HEIC를 JPEG로 자동 변환합니다.";
+const PHOTO_UPLOAD_UNAVAILABLE_MESSAGE =
+  "사진 업로드 서버에 연결되지 않았습니다. 확인한 상태는 사진 없이도 제보할 수 있습니다.";
 
 type PhotoMimeType = "image/jpeg" | "image/webp";
 
@@ -57,11 +61,8 @@ export function PhotoUploader({
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<"idle" | "processing" | "uploading" | "done" | "error">("idle");
-  const [message, setMessage] = useState(
-    uploadEnabled
-      ? "JPEG 또는 WebP 원본을 고르면 서버 전송 전에 1MB 이하로 안전하게 다시 저장합니다. #실시간 앱은 iPhone HEIC를 JPEG로 자동 변환합니다."
-      : "사진 업로드 서버에 연결되지 않았습니다. 확인한 상태는 사진 없이도 제보할 수 있습니다.",
-  );
+  const [messageOverride, setMessage] = useState<string | null>(null);
+  const message = messageOverride ?? (uploadEnabled ? PHOTO_UPLOAD_READY_MESSAGE : PHOTO_UPLOAD_UNAVAILABLE_MESSAGE);
   const [viewingPhotoId, setViewingPhotoId] = useState<string | null>(null);
   const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
