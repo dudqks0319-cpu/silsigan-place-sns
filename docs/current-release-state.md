@@ -1,9 +1,9 @@
 # #실시간 current release state
 
-Updated: 2026-07-24
+Updated: 2026-07-26
 Working branch: `agent/silsigan-backend-finish-20260724`; upstream: `origin/codex/silsigan-progress-20260710`
-Verified local source/evidence commit: `d35607ab2b4a4a8b8418355d24226c7d99e18585`.
-Working-tree status after the candidate commit: clean before this documentation-only release record. The 2026-07-24 photo-location security remediation, staging deployment, Computer Use flow, safe-tail, directory-failover, and public-source artifacts are candidate evidence. Verify any later record commit and remote branch tip separately before release use.
+Verified local source/evidence commit: `dca291dc93884921d4cfb26b48e73f458fbff29a`.
+Working-tree status after the candidate commit: clean before this documentation-only release record. The 2026-07-24 photo-location security remediation plus the 2026-07-25/26 Turnstile retry, upload-readiness copy, staging deployment, read-only API/D1/R2 reconciliation, Computer Use flow, safe-tail, directory-failover, and public-source artifacts are candidate evidence. Verify any later record commit and remote branch tip separately before release use.
 Commit/push gate: manual source/diff security gate, high-confidence secret scan, same-day dependency audit, and negative-path regressions pass. The current Codex Security scan of `e760dd5` reported one Medium CWE-345 client-location trust finding; source `d35607ab2b4a4a8b8418355d24226c7d99e18585` requires server-validated client-location evidence, binds only coarse radius/accuracy claims into upload tickets, removes server-endorsed physical-location wording and internal identifiers from public photo responses, and adds missing-location/privacy regressions. The earlier cache-invalidation finding remains separately remediated at `656eb315cbde4505b6c7db342a0185bb2762baea`.
 
 ## Objective
@@ -17,6 +17,19 @@ Next unblocked operator packet: `docs/cloudflare-staging-operator-packet.md`.
 Integrated completion plan: [silsigan-v2-master-completion-plan-2026-07-21.md](silsigan-v2-master-completion-plan-2026-07-21.md).
 
 V2 completion contract: [v2-decision-register.md](v2-decision-register.md). The 11 product, platform, privacy, source-rights, and mobile decisions are fixed there. Local implementation is complete for all 11 decisions, including server-bound anonymous proof lifecycle and the optional member-link seam; external console, rights, migration, deployment, legal, and real-device evidence remains separate and is not represented as complete.
+
+## Latest backend verification — 2026-07-26
+
+This section supersedes older staging backend versions and counters retained below as historical evidence.
+
+- Staging API version `ccd09783-9104-411d-a165-aa31211ed7f0` receives `100%` traffic. It contains the fail-closed Turnstile Siteverify retry from `76c3ae5`: one stable request body and idempotency key, at most two attempts, a 250 ms delay, a five-second timeout per attempt, and retries limited to transport errors, `408`, `425`, `429`, and `5xx`. Authentication, location, quota, replay, D1, and R2 checks remain unchanged and fail closed.
+- Staging web version `848cbc69-5da9-4bfb-a433-47b9f089fffe` receives `100%` traffic. Candidate source `dca291d` also derives the upload-readiness message from the current runtime configuration instead of retaining the initial fail-closed copy.
+- The live read-only staging smoke passed health, 14 public places, place detail/live status, place/region/global realtime rooms, global/bounds rankings, empty photo/comment lists, and unauthenticated admin mutation denial with `403`.
+- The deterministic remote D1 check passed with no pending migrations, schema boundaries through `0026`, an aligned migration registry, and V2/core seed evidence. The post-check storage query made zero writes and reported active photos `0`, active photo bytes `0`, budget active bytes `0`, period writes `0`, consumed upload claims `0`, pending cleanup jobs `0`, uploads enabled, and reads enabled.
+- The remote R2 check passed: `silsigan-photos-staging` is visible, private, has `r2.dev` disabled, has no direct public custom domain, and currently contains `0` objects / `0 B`.
+- The backend security diff scan for `76c3ae5` and the later frontend-only scan for `dca291d` both completed with zero findings. No dependency or binding change was introduced.
+- No additional backend code defect was found in this pass. The remaining backend release gates are external or human-operated: complete one managed-Turnstile upload/moderate/read/delete lifecycle, prove zero D1/R2 residue afterward, collect live pre-Worker WAF/rate-limit evidence, configure a real moderation-alert recipient, and obtain owner-domain/provider-rights/production approvals. These gates must not be simulated or marked complete from local code.
+- Production remained unchanged: no production Worker deployment, D1 migration, R2 mutation, secret change, provider activation, or traffic promotion occurred.
 
 ## Latest external update — 2026-07-24
 

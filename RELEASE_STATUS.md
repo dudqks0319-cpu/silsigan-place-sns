@@ -1,17 +1,17 @@
 # Release Status
 
-Updated: 2026-07-24
+Updated: 2026-07-26
 
 ## 한 줄 상태
 
-실시간 V2 사진 위치 경로는 보안 스캔에서 발견된 Medium CWE-345 신뢰표현 문제를 `d35607a`에서 수정한 뒤 Cloudflare staging에 적용했습니다. 서버는 사진 티켓 발급 전에 현재 위치를 필수 검증하고 정확한 좌표를 저장하지 않으며, 공개 응답에는 클라이언트가 보고한 반경·정확도 구간만 남깁니다. 전체 테스트 `462/462`·모바일 `4/4`, 빌드, Cloudflare dry-run, read-only staging smoke를 통과했고 API `3f1d64bc-c62b-4788-9b76-173b210a242f`와 web `2483c542-e10d-458b-9f40-12b835d80f62`가 배포됐습니다. Computer Use로 홈 `올리기`→현재 위치 자동 연결→실제 NAVER 지도→사진 선택까지 확인했으며, 관리형 Turnstile의 사람 확인 체크박스 앞에서 멈췄습니다. D1 사진/바이트/사용 티켓/정리 작업과 R2 객체는 모두 `0`; 업로드 성공은 아직 주장하지 않습니다. Production은 변경하지 않았고 현재 상태는 `staging_photo_location_security_remediated_turnstile_human_confirm_pending_production_blocked`입니다.
+스테이징 백엔드의 구현·배포·읽기 전용 검증은 완료됐습니다. API `ccd09783-9104-411d-a165-aa31211ed7f0`와 web `848cbc69-5da9-4bfb-a433-47b9f089fffe`가 각각 `100%` 트래픽을 받고, live API smoke, D1 `0026`/마이그레이션 레지스트리, 비공개 R2, 무권한 admin `403`, 사진 예산·정리 큐를 다시 확인했습니다. D1 사진/바이트/사용 티켓/정리 작업과 R2 객체는 모두 `0`; 업로드 성공은 아직 주장하지 않습니다. 남은 백엔드 릴리스 항목은 새 코드가 아니라 사람 Turnstile 사진 생명주기, live WAF·알림 수신자·owner domain·source rights·production 승인 증적입니다. Production은 변경하지 않았고 현재 상태는 `staging_backend_verified_turnstile_human_confirm_pending_production_blocked`입니다.
 
 ## 현재 후보
 
 - Version: `0.1.0`
 - Working branch: `agent/silsigan-backend-finish-20260724`
 - Upstream branch: `origin/codex/silsigan-progress-20260710`
-- Verified local source/evidence commit: `d35607ab2b4a4a8b8418355d24226c7d99e18585`
+- Verified local source/evidence commit: `dca291dc93884921d4cfb26b48e73f458fbff29a`
 - Working tree after the candidate commit: clean before this documentation-only release record; generated 2026-07-24 staging smoke, safe-tail, static-directory, and public-source evidence are committed release inputs
 - Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
 - Final release-record commit: the docs-only commit containing this record; the remote branch remains unchanged until an explicit push
@@ -27,8 +27,10 @@ Updated: 2026-07-24
 - [x] Staging D1 through `0026`, pending migrations 0
 - [x] Staging API/web deployment and exact staging web origin
 - [x] Earlier read-only API smoke: health, 14 places, detail/status, rankings, realtime, empty media/comments, admin deny
-- [x] Current staging API version `3f1d64bc-c62b-4788-9b76-173b210a242f` receives `100%` traffic; the rotated Turnstile secret is installed by name only
-- [x] Current staging web version `2483c542-e10d-458b-9f40-12b835d80f62` receives `100%` traffic; the exact public staging API base and live mode were reverified after the safe fail-closed interim bundle was replaced
+- [x] Current staging API version `ccd09783-9104-411d-a165-aa31211ed7f0` receives `100%` traffic; transient Siteverify failures get one bounded retry while all auth, location, quota, replay, D1, and R2 boundaries stay fail closed
+- [x] Current staging web version `848cbc69-5da9-4bfb-a433-47b9f089fffe` receives `100%` traffic; the exact public staging API base and upload-readiness message reconciliation are deployed
+- [x] 2026-07-26 remote D1 check: pending migrations `0`, registry aligned, schema through `0026`, V2/core seed evidence pass
+- [x] 2026-07-26 remote R2 check: private bucket visible, `r2.dev` disabled, no direct custom domain, objects/bytes `0`/`0 B`
 - [x] Latest audited API-cost reconciliation and below-70% resume: Workers `3,000`, D1 rows read `504,922`, rows written `37,386`; generation `5`, public live mode restored
 - [x] Browser home/map/search/detail smoke after the security patch deployment, API request budget `72/80`
 - [x] Current NAVER pstatic tiles and place markers remain after the stabilization window
@@ -65,7 +67,7 @@ Staging URLs:
 - Focused provider-budget, provider-quota, and D1 route-calibration regressions: passed.
 - Current security-remediated verification: root tests `462/462`, mobile tests `4/4`, lint, typecheck, Next production build, WebView syntax check, OpenNext build, and staging/production web/API Wrangler dry-runs passed. Production checks were dry-runs only.
 - `pnpm audit:security`: root and mobile both report no known vulnerabilities.
-- 2026-07-24 live staging read-only API smoke: health, 14 places, detail/status, three realtime rooms, rankings, empty media/comments, and unauthenticated admin `403` passed.
+- 2026-07-26 live staging read-only API smoke: health, 14 places, detail/status, three realtime rooms, rankings, empty media/comments, and unauthenticated admin `403` passed.
 - 2026-07-24 post-deploy browser smoke: home/map/search/detail and live Worker paths passed at `72/80` requests.
 - TypeScript: passed.
 - OpenNext/Cloudflare build: passed, Next.js `16.2.6`, 27 pages/routes and 148 web assets.
@@ -76,7 +78,7 @@ Staging URLs:
 - Codex Security closure: the source-state PoC reproduced on `f5abc50e999d0a8f349d56326a8e9ecb4af6491e`, no longer matches the vulnerable transition on `656eb315cbde4505b6c7db342a0185bb2762baea`, and the independent post-fix re-review reports no remaining actionable finding in the scoped diff.
 - Dependency audit: no known root or mobile vulnerability.
 - High-confidence credential-prefix and provider-assignment scan: no matching file; `.env.example` is the only tracked env-shaped file.
-- 2026-07-24 15:26 KST post-deploy storage reconciliation: active photos `0`, active photo bytes `0`, budget active bytes `0`, period writes `0`, consumed upload claims `0`, pending cleanup jobs `0`, D1 `changed_db:false`/`rows_written:0`; private staging R2 contains `0` objects and `0 B`.
+- 2026-07-26 post-deploy storage reconciliation: active photos `0`, active photo bytes `0`, budget active bytes `0`, period writes `0`, consumed upload claims `0`, pending cleanup jobs `0`, D1 `changed_db:false`/`rows_written:0`; private staging R2 contains `0` objects and `0 B`.
 
 ## 보안·비용 경계
 
