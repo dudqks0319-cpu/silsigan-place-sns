@@ -11055,6 +11055,49 @@ test("staging photo ticket fails closed before D1 when Turnstile is unavailable"
   }
 });
 
+test("staging photo ticket reports an invalid Turnstile secret as configuration failure before D1", async () => {
+  let dbTouched = false;
+  let providerAttempts = 0;
+  const db = {
+    prepare() {
+      dbTouched = true;
+      throw new Error("D1 must not be reached when the Turnstile secret is invalid");
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (): Promise<Response> => {
+    providerAttempts += 1;
+    return Response.json({
+      success: false,
+      "error-codes": ["invalid-input-secret"],
+    }, { status: 400 });
+  };
+
+  try {
+    const response = await worker.handleRequest(
+      photoTicketRequest("anon_turnstile_invalid_secret", "turnstile-invalid-secret-token", "https://web.example.test"),
+      {
+        DB: db as never,
+        ENVIRONMENT: "staging",
+        SILSIGAN_ANON_SESSION_REQUIRED: "0",
+        SILSIGAN_API_ALLOWED_ORIGINS: "https://web.example.test",
+        SILSIGAN_PHOTO_TURNSTILE_REQUIRED: "1",
+        SILSIGAN_TURNSTILE_SITE_KEY: "turnstile-public-site-key",
+        SILSIGAN_TURNSTILE_SECRET_KEY: testTurnstileSecret,
+        PHOTO_UPLOAD_RATE_LIMITER: new FakeRateLimitBinding(),
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "PHOTO_TURNSTILE_CONFIGURATION_REQUIRED");
+    assert.equal(providerAttempts, 1);
+    assert.equal(dbTouched, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("staging photo upload accepts one signed ticket and rejects its replay", { skip: !sqlite3Available() }, async () => {
   const { db, tempDir } = createSeededSqliteD1();
   const r2 = new FakeR2Bucket();

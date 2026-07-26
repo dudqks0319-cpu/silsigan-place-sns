@@ -6574,6 +6574,7 @@ type TurnstileSiteverifyResponse = {
   success?: boolean;
   hostname?: string;
   action?: string;
+  "error-codes"?: string[];
 };
 
 async function assertPhotoTurnstileProof(request: Request, token: string | undefined, env: Env): Promise<boolean> {
@@ -6617,6 +6618,11 @@ async function assertPhotoTurnstileProof(request: Request, token: string | undef
     throw new HttpError(503, "PHOTO_TURNSTILE_UNAVAILABLE", "사진 업로드 보안 확인 응답을 처리할 수 없습니다.");
   }
 
+  const errorCodes = Array.isArray(result["error-codes"]) ? result["error-codes"] : [];
+  if (errorCodes.includes("invalid-input-secret") || errorCodes.includes("missing-input-secret")) {
+    throw new HttpError(503, "PHOTO_TURNSTILE_CONFIGURATION_REQUIRED", "사진 업로드 보안 확인 장치를 사용할 수 없습니다.");
+  }
+
   const hostname = normalizeTurnstileHostname(result.hostname);
   if (result.success !== true || result.action !== photoTurnstileAction || !hostname || !expectedHostnames.has(hostname)) {
     throw new HttpError(403, "PHOTO_TURNSTILE_VERIFICATION_FAILED", "사진 업로드 보안 확인에 실패했습니다.");
@@ -6657,7 +6663,11 @@ async function fetchPhotoTurnstileSiteverify(requestBody: string): Promise<Respo
       ...(response ? { status: response.status } : {}),
     }));
 
-    if (!retryable || attempt === photoTurnstileMaxAttempts) {
+    if (response !== null && !retryable) {
+      return response;
+    }
+
+    if (attempt === photoTurnstileMaxAttempts) {
       throw new HttpError(503, "PHOTO_TURNSTILE_UNAVAILABLE", "사진 업로드 보안 확인이 지연되고 있습니다.");
     }
 
