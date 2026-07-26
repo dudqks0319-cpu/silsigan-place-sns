@@ -1,0 +1,50 @@
+diff --git a/dist/commonjs/index.d.ts b/dist/commonjs/index.d.ts
+index f3e2de9d87e1ce462517e49f35733bed8bdf85af..6c84d87835182d0670981dc15f488c2a7d061c98 100644
+--- a/dist/commonjs/index.d.ts
++++ b/dist/commonjs/index.d.ts
+@@ -5,4 +5,5 @@ export type BraceExpansionOptions = {
+     maxLength?: number;
+ };
+ export declare function expand(str: string, options?: BraceExpansionOptions): string[];
++export default expand;
+ //# sourceMappingURL=index.d.ts.map
+diff --git a/dist/commonjs/index.js b/dist/commonjs/index.js
+index be9df86be09c7655787a65c55ae6da01858894c3..e53405b4a9bdb9e253b5178fd5b8c1c883822a3f 100644
+--- a/dist/commonjs/index.js
++++ b/dist/commonjs/index.js
+@@ -260,4 +260,13 @@ function expand_(str, max, maxLength, isTop) {
+     }
+     return acc;
+ }
++// Compatibility for older minimatch/glob releases that require the package as
++// a callable CommonJS default, while newer releases consume the named export.
++const compatibilityExport = expand;
++compatibilityExport.expand = expand;
++compatibilityExport.default = expand;
++compatibilityExport.EXPANSION_MAX = exports.EXPANSION_MAX;
++compatibilityExport.EXPANSION_MAX_LENGTH = exports.EXPANSION_MAX_LENGTH;
++Object.defineProperty(compatibilityExport, "__esModule", { value: true });
++module.exports = compatibilityExport;
+ //# sourceMappingURL=index.js.map
+diff --git a/dist/esm/index.d.ts b/dist/esm/index.d.ts
+index f3e2de9d87e1ce462517e49f35733bed8bdf85af..6c84d87835182d0670981dc15f488c2a7d061c98 100644
+--- a/dist/esm/index.d.ts
++++ b/dist/esm/index.d.ts
+@@ -5,4 +5,5 @@ export type BraceExpansionOptions = {
+     maxLength?: number;
+ };
+ export declare function expand(str: string, options?: BraceExpansionOptions): string[];
++export default expand;
+ //# sourceMappingURL=index.d.ts.map
+diff --git a/dist/esm/index.js b/dist/esm/index.js
+index 6dc0392fc0feedb811e63d70a30be2736af17a3a..a53654d40f3e4744338c7d68b286f8429766512f 100644
+--- a/dist/esm/index.js
++++ b/dist/esm/index.js
+@@ -256,4 +256,7 @@ function expand_(str, max, maxLength, isTop) {
+     }
+     return acc;
+ }
++// Compatibility for older ESM consumers that import the expansion function as
++// the package default. The named export remains available for current callers.
++export default expand;
+ //# sourceMappingURL=index.js.map
