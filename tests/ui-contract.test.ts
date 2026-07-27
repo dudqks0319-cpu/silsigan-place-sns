@@ -580,6 +580,15 @@ test("the upload place is fixed by current location instead of a manual place pi
   assert.doesNotMatch(reportScreen, /onSelectPlace\(candidate\)|uploadPlaceList/);
 });
 
+test("upload location maps reuse the bounded mobile fallback-map styles", () => {
+  const locationGate = sourceBetween(redesignSource, "function CurrentLocationUploadGate", "function ReportScreen");
+  const reportScreen = sourceBetween(redesignSource, "function ReportScreen", "function AskScreen");
+
+  assert.match(locationGate, /className=\{`\$\{styles\.reportLocationMap\} \$\{styles\.realMapFrame\}`\}/);
+  assert.match(reportScreen, /className=\{`\$\{styles\.reportLocationMap\} \$\{styles\.realMapFrame\}`\}/);
+  assert.match(redesignCss, /\.reportLocationMap\.realMapFrame \{[\s\S]*?height: 190px;[\s\S]*?border-radius: 18px;/);
+});
+
 test("automatic current-location matching resets the phone scroller and focuses the form heading", () => {
   const redesign = sourceBetween(redesignSource, "export default function SilsiganRedesign", "function StatusBar");
   const currentLocationFlow = sourceBetween(redesign, "const requestCurrentUploadLocation", "const beginCurrentLocationUpload");

@@ -5186,7 +5186,10 @@ function CurrentLocationUploadGate({
       </section>
 
       {currentLocation && (
-        <section className={styles.reportLocationMap} aria-label="확인한 현재 위치 지도">
+        <section
+          className={`${styles.reportLocationMap} ${styles.realMapFrame}`}
+          aria-label="확인한 현재 위치 지도"
+        >
           <NaverMap
             places={[]}
             compact
@@ -5346,7 +5349,7 @@ function ReportScreen({
           <strong>{place.name}</strong>
           <p>{place.address}</p>
         </div>
-        <div className={styles.reportLocationMap}>
+        <div className={`${styles.reportLocationMap} ${styles.realMapFrame}`}>
           <NaverMap
             places={[place]}
             compact

@@ -3668,6 +3668,11 @@ a.samplePhotoCredit:hover {
   background: #f0fdf4;
 }
 
+.reportLocationMap.realMapFrame {
+  height: 190px;
+  border-radius: 18px;
+}
+
 .reportLocationMap > div {
   min-height: 190px;
 }
