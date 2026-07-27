@@ -14,13 +14,13 @@ project:
   release_goal: "방문 가능 여부를 신뢰 가능한 현재 데이터로 판단하는 V2를 Cloudflare와 Capacitor 구조로 검증한다."
 
 candidate:
-  phase: "staging_web_fix_deployed_iphone_postdeploy_blocked_xcode_account_production_blocked"
+  phase: "staging_web_fix_deployed_iphone_postdeploy_blocked_development_certificate_production_blocked"
   version: "0.1.0"
   build_number: "1"
   git_sha: "dfb9fe7ff2a086e1c333795b850294d9bd8cf740"
   branch: "agent/silsigan-backend-finish-20260724"
   dirty_state: "release_truth_docs_and_sanitized_postdeploy_smoke_artifacts_after_local_candidate_commits"
-  state_note: "git_sha is the local source/evidence candidate containing the AppUITests target, selected redacted real-device artifacts, and upload-map fallback style fix. Staging API f84859be-50bd-4fa6-9e91-3dc49d2fb87f and web 7f7f8c85-a983-42e4-a40d-c1f49e35cc98 are live; the post-deploy browser smoke passed at 65/80 and its network query values are redacted. Managed Turnstile completed without bypass and one bounded JPEG is moderation-pending in D1 with one matching private R2 object. Cable-connected iPhone 12 Pro build/install/launch passed; the previous XCUITest executed 4 tests with 3 pass, 1 registered-place-radius skip, and 0 failures. Post-deploy XCUITest is blocked before build because Xcode has no signed-in Apple account to regenerate development profiles, although the device is recognized. Fresh root/mobile npm audits report zero vulnerabilities. App Store Connect has no Silsigan app record and no record or submission was created. Moderation approve/read/delete plus zero-residual, WAF, alert-recipient, owner-domain, provider-rights, Xcode account login, and production gates remain open. Production and the remote branch remain unchanged"
+  state_note: "git_sha is the local source/evidence candidate containing the AppUITests target, selected redacted real-device artifacts, and upload-map fallback style fix. Staging API f84859be-50bd-4fa6-9e91-3dc49d2fb87f and web 7f7f8c85-a983-42e4-a40d-c1f49e35cc98 are live; the post-deploy browser smoke passed at 65/80 and its network query values are redacted. Managed Turnstile completed without bypass and one bounded JPEG is moderation-pending in D1 with one matching private R2 object. Cable-connected iPhone 12 Pro build/install/launch passed; the previous XCUITest executed 4 tests with 3 pass, 1 registered-place-radius skip, and 0 failures. Xcode account login and physical-device recognition are complete, but post-deploy XCUITest is blocked before build because no local Apple Development identity matches the signed-in account teams. Fresh root/mobile npm audits report zero vulnerabilities. App Store Connect has no Silsigan app record and no record or submission was created. Moderation approve/read/delete plus zero-residual, WAF, alert-recipient, owner-domain, provider-rights, matching development-certificate creation, and production gates remain open. Production and the remote branch remain unchanged"
   upstream_branch: "origin/codex/silsigan-progress-20260710"
   upstream_divergence_at_reconciliation: "verify_remote_branch_tip_after_push"
   final_source_sha: "dfb9fe7ff2a086e1c333795b850294d9bd8cf740"
@@ -215,9 +215,9 @@ blockers:
   - id: "P0-SILSIGAN-REAL-DEVICE-QA"
     severity: "P0"
     status: "open"
-    title: "Upload-map fix is deployed, but post-deploy iPhone proof is blocked on Xcode Apple-account provisioning; the full mobile release matrix remains incomplete."
+    title: "Upload-map fix is deployed, but post-deploy iPhone proof is blocked on a missing matching Apple Development certificate; the full mobile release matrix remains incomplete."
     owner: "mobile-release"
-    evidence: "2026-07-27 a cable-connected iPhone 12 Pro / iOS 26.5.2 passed development build, install over existing data, launch, and live staging home. The previous AppUITests run executed 4 tests: 3 passed, 1 fail-closed photo-rights test skipped outside the 300 m registered-place radius, and 0 failed; no photo was selected or transmitted. The upload-map fix is deployed to staging web version 7f7f8c85-a983-42e4-a40d-c1f49e35cc98 and browser smoke passes. Xcode recognizes one physical destination, but the post-deploy runner cannot regenerate development profiles until the account holder signs in to Xcode Apple Accounts. Failed raw result bundles were deleted to avoid retaining device/signing identifiers. Redacted evidence: artifacts/real-device-qa/2026-07-27-ios-build-1/"
+    evidence: "2026-07-27 a cable-connected iPhone 12 Pro / iOS 26.5.2 passed development build, install over existing data, launch, and live staging home. The previous AppUITests run executed 4 tests: 3 passed, 1 fail-closed photo-rights test skipped outside the 300 m registered-place radius, and 0 failed; no photo was selected or transmitted. The upload-map fix is deployed to staging web version 7f7f8c85-a983-42e4-a40d-c1f49e35cc98 and browser smoke passes. Xcode account login and physical-device recognition are complete, but the signed-in account teams have no matching local Apple Development identity, so the post-deploy runner cannot regenerate development profiles. Failed raw result bundles were deleted to avoid retaining device/signing identifiers. Redacted evidence: artifacts/real-device-qa/2026-07-27-ios-build-1/"
     due: "before_internal_testing"
   - id: "P0-SILSIGAN-LEGAL-SIGNOFF"
     severity: "P0"
@@ -243,5 +243,5 @@ blockers:
 
 next_action:
   owner: "release-operator"
-  command: "complete Xcode Apple-account login, rerun the deployed upload-map fix on the cable iPhone, then complete the audited pending-photo lifecycle"
-  description: "The Cloudflare staging-only deployment, browser smoke, npm audits, and App Store Connect read-only inspection are complete. The account holder must finish the already-open Xcode Apple Accounts login without sharing credentials or 2FA. Then rerun current-location AppUITests on the cable-connected iPhone and retain a redacted post-fix screenshot. After that device gate, approve/read/delete the existing moderation-pending QA photo through the audited path and prove D1/R2 return to zero. Do not create an App Store record or touch Production without a separate action-time approval."
+  command: "create a matching Apple Development certificate, rerun the deployed upload-map fix on the cable iPhone, then complete the audited pending-photo lifecycle"
+  description: "The Cloudflare staging-only deployment, browser smoke, npm audits, App Store Connect read-only inspection, Xcode Apple-account login, and cable-device recognition are complete. Creating a new Apple Development signing certificate is a persistent-access action and requires explicit action-time confirmation. After certificate creation, rerun current-location AppUITests on the cable-connected iPhone and retain a redacted post-fix screenshot. Then approve/read/delete the existing moderation-pending QA photo through the audited path and prove D1/R2 return to zero. Do not create an App Store record or touch Production without a separate action-time approval."

@@ -4,7 +4,7 @@ Updated: 2026-07-27
 
 ## 한 줄 상태
 
-스테이징 백엔드의 구현·배포·읽기 전용 검증과 관리형 Turnstile을 통과한 bounded JPEG 업로드는 완료됐습니다. 최신 읽기 전용 확인에서 D1에 moderation `pending` 사진 1개와 대응하는 비공개 R2 JPEG가 존재하며, 공개 목록에는 아직 노출되지 않습니다. 남은 백엔드 릴리스 항목은 해당 사진의 감사 가능한 승인·읽기·삭제와 D1/R2 zero-residual 재검증, live WAF·알림 수신자·owner domain·source rights·production 승인 증적입니다. 2026-07-27에는 스테이징 URL을 사용하는 iPhone 12 Pro 빌드·설치·실행과 XCUITest 4개 중 3개 통과, 등록 장소 반경 밖에서의 사진 권리확인 테스트 1개 정상 스킵, 실패 0개를 확인했습니다. 이 과정에서 발견한 업로드 지도 fallback 레이아웃 수정본은 Cloudflare 스테이징 웹 버전 `7f7f8c85-a983-42e4-a40d-c1f49e35cc98`로 배포했고, 배포 후 브라우저 스모크는 `65/80` 요청 예산 안에서 통과했습니다. post-deploy iPhone 재검증은 Xcode Apple 계정 로그인이 없어 개발 프로비저닝 생성이 중단된 상태입니다. App Store Connect 계정에는 `실시간`/`Silsigan` 앱 레코드가 없으며 생성이나 제출은 하지 않았습니다. Production은 변경하지 않았고 현재 상태는 `staging_web_fix_deployed_iphone_postdeploy_blocked_xcode_account_production_blocked`입니다.
+스테이징 백엔드의 구현·배포·읽기 전용 검증과 관리형 Turnstile을 통과한 bounded JPEG 업로드는 완료됐습니다. 최신 읽기 전용 확인에서 D1에 moderation `pending` 사진 1개와 대응하는 비공개 R2 JPEG가 존재하며, 공개 목록에는 아직 노출되지 않습니다. 남은 백엔드 릴리스 항목은 해당 사진의 감사 가능한 승인·읽기·삭제와 D1/R2 zero-residual 재검증, live WAF·알림 수신자·owner domain·source rights·production 승인 증적입니다. 2026-07-27에는 스테이징 URL을 사용하는 iPhone 12 Pro 빌드·설치·실행과 XCUITest 4개 중 3개 통과, 등록 장소 반경 밖에서의 사진 권리확인 테스트 1개 정상 스킵, 실패 0개를 확인했습니다. 이 과정에서 발견한 업로드 지도 fallback 레이아웃 수정본은 Cloudflare 스테이징 웹 버전 `7f7f8c85-a983-42e4-a40d-c1f49e35cc98`로 배포했고, 배포 후 브라우저 스모크는 `65/80` 요청 예산 안에서 통과했습니다. Xcode Apple 계정 로그인과 물리 iPhone 인식은 완료됐지만 로그인 팀과 일치하는 로컬 `Apple Development` 인증서가 없어 post-deploy 재검증이 빌드 전에 중단됩니다. App Store Connect 계정에는 `실시간`/`Silsigan` 앱 레코드가 없으며 생성이나 제출은 하지 않았습니다. Production은 변경하지 않았고 현재 상태는 `staging_web_fix_deployed_iphone_postdeploy_blocked_development_certificate_production_blocked`입니다.
 
 ## 현재 후보
 
