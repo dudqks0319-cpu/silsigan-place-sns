@@ -4,7 +4,7 @@ Updated: 2026-07-27
 
 ## 한 줄 상태
 
-스테이징 백엔드의 구현·배포·읽기 전용 검증과 관리형 Turnstile을 통과한 bounded JPEG 업로드는 완료됐습니다. 최신 읽기 전용 확인에서 D1에 moderation `pending` 사진 1개와 대응하는 비공개 R2 JPEG가 존재하며, 공개 목록에는 아직 노출되지 않습니다. 남은 백엔드 릴리스 항목은 해당 사진의 감사 가능한 승인·읽기·삭제와 D1/R2 zero-residual 재검증, live WAF·알림 수신자·owner domain·source rights·production 승인 증적입니다. 2026-07-27에는 스테이징 URL을 사용하는 iPhone 12 Pro 빌드·설치·실행과 XCUITest 4개 중 3개 통과, 등록 장소 반경 밖에서의 사진 권리확인 테스트 1개 정상 스킵, 실패 0개를 확인했습니다. 이 과정에서 발견한 업로드 지도 fallback 레이아웃 깨짐은 로컬에서 수정하고 회귀 테스트를 추가했으며, Cloudflare 스테이징 재배포와 같은 실기기 재확인은 외부 전송 승인 전까지 대기합니다. Production은 변경하지 않았고 현재 상태는 `staging_upload_pending_moderation_iphone_xcuitest_3_pass_1_location_skip_production_blocked`입니다.
+스테이징 백엔드의 구현·배포·읽기 전용 검증과 관리형 Turnstile을 통과한 bounded JPEG 업로드는 완료됐습니다. 최신 읽기 전용 확인에서 D1에 moderation `pending` 사진 1개와 대응하는 비공개 R2 JPEG가 존재하며, 공개 목록에는 아직 노출되지 않습니다. 남은 백엔드 릴리스 항목은 해당 사진의 감사 가능한 승인·읽기·삭제와 D1/R2 zero-residual 재검증, live WAF·알림 수신자·owner domain·source rights·production 승인 증적입니다. 2026-07-27에는 스테이징 URL을 사용하는 iPhone 12 Pro 빌드·설치·실행과 XCUITest 4개 중 3개 통과, 등록 장소 반경 밖에서의 사진 권리확인 테스트 1개 정상 스킵, 실패 0개를 확인했습니다. 이 과정에서 발견한 업로드 지도 fallback 레이아웃 수정본은 Cloudflare 스테이징 웹 버전 `7f7f8c85-a983-42e4-a40d-c1f49e35cc98`로 배포했고, 배포 후 브라우저 스모크는 `65/80` 요청 예산 안에서 통과했습니다. post-deploy iPhone 재검증은 Xcode Apple 계정 로그인이 없어 개발 프로비저닝 생성이 중단된 상태입니다. App Store Connect 계정에는 `실시간`/`Silsigan` 앱 레코드가 없으며 생성이나 제출은 하지 않았습니다. Production은 변경하지 않았고 현재 상태는 `staging_web_fix_deployed_iphone_postdeploy_blocked_xcode_account_production_blocked`입니다.
 
 ## 현재 후보
 
@@ -12,7 +12,7 @@ Updated: 2026-07-27
 - Working branch: `agent/silsigan-backend-finish-20260724`
 - Upstream branch: `origin/codex/silsigan-progress-20260710`
 - Verified local source/evidence commit: `dfb9fe7ff2a086e1c333795b850294d9bd8cf740`
-- Working tree after the candidate commit: contains only release-truth documentation updates that reconcile the ledger to `dfb9fe7`; the source/evidence candidate is committed locally and neither commit has been pushed
+- Working tree after the candidate commits: contains release-truth documentation updates and sanitized post-deploy browser-smoke artifacts; the source/evidence commits are local and have not been pushed
 - Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
 - Final release-record commit: the docs-only commit containing this record; the remote branch remains unchanged until an explicit push
 - Security gate: manual source/diff review, high-confidence secret/log scan, same-day dependency audit, negative-path regressions, and the current Codex Security diff scan passed after remediation. The sealed scan has `7/7` completed diff rows, one candidate with discovery/validation/attack-path receipts, matching sealed artifact hashes, and a generated final report. It found one Medium CWE-345 client-location trust issue in `e760dd5`; `d35607a` makes location mandatory, validates radius/accuracy server-side, binds only coarse evidence to one-use tickets, removes server-endorsed physical-location wording and internal identifiers, and adds focused regressions
@@ -28,7 +28,7 @@ Updated: 2026-07-27
 - [x] Staging API/web deployment and exact staging web origin
 - [x] Earlier read-only API smoke: health, 14 places, detail/status, rankings, realtime, empty media/comments, admin deny
 - [x] Current staging API version `ccd09783-9104-411d-a165-aa31211ed7f0` receives `100%` traffic; transient Siteverify failures get one bounded retry while all auth, location, quota, replay, D1, and R2 boundaries stay fail closed
-- [x] Current staging web version `848cbc69-5da9-4bfb-a433-47b9f089fffe` receives `100%` traffic; the exact public staging API base and upload-readiness message reconciliation are deployed
+- [x] Current staging web version `7f7f8c85-a983-42e4-a40d-c1f49e35cc98` is deployed with the exact public staging API base and the upload-map fallback fix; the post-deploy browser smoke passed at `65/80`
 - [x] 2026-07-26 remote D1 check: pending migrations `0`, registry aligned, schema through `0026`, V2/core seed evidence pass
 - [x] 2026-07-26 remote R2 check: private bucket visible, `r2.dev` disabled, no direct custom domain, objects/bytes `0`/`0 B`
 - [x] Latest audited API-cost reconciliation and below-70% resume: Workers `3,000`, D1 rows read `504,922`, rows written `37,386`; generation `5`, public live mode restored
@@ -66,7 +66,7 @@ Staging URLs:
 
 - Focused provider-budget, provider-quota, and D1 route-calibration regressions: passed.
 - Current security-remediated verification: root tests `462/462`, mobile tests `4/4`, lint, typecheck, Next production build, WebView syntax check, OpenNext build, and staging/production web/API Wrangler dry-runs passed. Production checks were dry-runs only.
-- `pnpm audit:security`: root and mobile both report no known vulnerabilities.
+- 2026-07-27 approved live npm registry audit: root `735` and mobile `819` dependencies checked; both report `0` info/low/moderate/high/critical vulnerabilities.
 - 2026-07-26 live staging read-only API smoke: health, 14 places, detail/status, three realtime rooms, rankings, empty media/comments, and unauthenticated admin `403` passed.
 - 2026-07-24 post-deploy browser smoke: home/map/search/detail and live Worker paths passed at `72/80` requests.
 - TypeScript: passed.
