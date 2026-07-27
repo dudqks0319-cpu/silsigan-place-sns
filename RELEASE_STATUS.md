@@ -1,18 +1,18 @@
 # Release Status
 
-Updated: 2026-07-26
+Updated: 2026-07-27
 
 ## 한 줄 상태
 
-스테이징 백엔드의 구현·배포·읽기 전용 검증은 완료됐습니다. API `ccd09783-9104-411d-a165-aa31211ed7f0`와 web `848cbc69-5da9-4bfb-a433-47b9f089fffe`가 각각 `100%` 트래픽을 받고, live API smoke, D1 `0026`/마이그레이션 레지스트리, 비공개 R2, 무권한 admin `403`, 사진 예산·정리 큐를 다시 확인했습니다. D1 사진/바이트/사용 티켓/정리 작업과 R2 객체는 모두 `0`; 업로드 성공은 아직 주장하지 않습니다. 남은 백엔드 릴리스 항목은 새 코드가 아니라 사람 Turnstile 사진 생명주기, live WAF·알림 수신자·owner domain·source rights·production 승인 증적입니다. Production은 변경하지 않았고 현재 상태는 `staging_backend_verified_turnstile_human_confirm_pending_production_blocked`입니다.
+스테이징 백엔드의 구현·배포·읽기 전용 검증과 관리형 Turnstile을 통과한 bounded JPEG 업로드는 완료됐습니다. 최신 읽기 전용 확인에서 D1에 moderation `pending` 사진 1개와 대응하는 비공개 R2 JPEG가 존재하며, 공개 목록에는 아직 노출되지 않습니다. 남은 백엔드 릴리스 항목은 해당 사진의 감사 가능한 승인·읽기·삭제와 D1/R2 zero-residual 재검증, live WAF·알림 수신자·owner domain·source rights·production 승인 증적입니다. 2026-07-27에는 스테이징 URL을 사용하는 iPhone 12 Pro 빌드·설치·실행과 XCUITest 4개 중 3개 통과, 등록 장소 반경 밖에서의 사진 권리확인 테스트 1개 정상 스킵, 실패 0개를 확인했습니다. 이 과정에서 발견한 업로드 지도 fallback 레이아웃 깨짐은 로컬에서 수정하고 회귀 테스트를 추가했으며, Cloudflare 스테이징 재배포와 같은 실기기 재확인은 외부 전송 승인 전까지 대기합니다. Production은 변경하지 않았고 현재 상태는 `staging_upload_pending_moderation_iphone_xcuitest_3_pass_1_location_skip_production_blocked`입니다.
 
 ## 현재 후보
 
 - Version: `0.1.0`
 - Working branch: `agent/silsigan-backend-finish-20260724`
 - Upstream branch: `origin/codex/silsigan-progress-20260710`
-- Verified local source/evidence commit: `dca291dc93884921d4cfb26b48e73f458fbff29a`
-- Working tree after the candidate commit: clean before this documentation-only release record; generated 2026-07-24 staging smoke, safe-tail, static-directory, and public-source evidence are committed release inputs
+- Verified local source/evidence commit: `dfb9fe7ff2a086e1c333795b850294d9bd8cf740`
+- Working tree after the candidate commit: contains only release-truth documentation updates that reconcile the ledger to `dfb9fe7`; the source/evidence candidate is committed locally and neither commit has been pushed
 - Upstream branch: verify `origin/codex/silsigan-progress-20260710` equals the branch tip after push
 - Final release-record commit: the docs-only commit containing this record; the remote branch remains unchanged until an explicit push
 - Security gate: manual source/diff review, high-confidence secret/log scan, same-day dependency audit, negative-path regressions, and the current Codex Security diff scan passed after remediation. The sealed scan has `7/7` completed diff rows, one candidate with discovery/validation/attack-path receipts, matching sealed artifact hashes, and a generated final report. It found one Medium CWE-345 client-location trust issue in `e760dd5`; `d35607a` makes location mandatory, validates radius/accuracy server-side, binds only coarse evidence to one-use tickets, removes server-endorsed physical-location wording and internal identifiers, and adds focused regressions
@@ -36,7 +36,7 @@ Updated: 2026-07-26
 - [x] Current NAVER pstatic tiles and place markers remain after the stabilization window
 - [x] No external source ingestion target enabled
 - [x] Home `올리기` opens the photo flow directly; browser location auto-links the current place without manual selection and renders the real NAVER map. The QA run used explicit Chrome location emulation because the Mac fix was too imprecise, so it is interaction evidence rather than field-presence proof
-- [x] A bounded JPEG reached the exact-host managed Turnstile human checkbox. No CAPTCHA bypass or upload-success claim was made; post-selection D1 active photos/bytes/consumed claims/pending cleanup and R2 objects/bytes all remain zero
+- [x] A bounded JPEG passed managed Turnstile without bypass, the live UI reported upload success, and read-only D1/R2 checks matched one moderation-pending JPEG. Approval/read/delete and zero-residual proof remain open.
 
 Staging URLs:
 

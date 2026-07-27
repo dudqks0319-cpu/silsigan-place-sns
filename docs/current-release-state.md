@@ -1,8 +1,8 @@
 # #실시간 current release state
 
-Updated: 2026-07-26
+Updated: 2026-07-27
 Working branch: `agent/silsigan-backend-finish-20260724`; upstream: `origin/codex/silsigan-progress-20260710`
-Verified local source/evidence commit: `0cfff7ac851c292a6785a3b8d14e60e6ae411027`.
+Verified local source/evidence commit: `dfb9fe7ff2a086e1c333795b850294d9bd8cf740`.
 The source and dependency patch are committed at the candidate SHA; this release ledger is the only later documentation record. The 2026-07-24 photo-location security remediation plus the 2026-07-25/26 Turnstile retry, upload-readiness copy, staging deployment, read-only API/D1/R2 reconciliation, Computer Use flow, safe-tail, directory-failover, and public-source artifacts are candidate evidence. Verify any later record commit and remote branch tip separately before release use.
 Commit/push gate: manual source/diff security gate, high-confidence secret scan, same-day dependency audit, and negative-path regressions pass. The current Codex Security scan of `e760dd5` reported one Medium CWE-345 client-location trust finding; source `d35607ab2b4a4a8b8418355d24226c7d99e18585` requires server-validated client-location evidence, binds only coarse radius/accuracy claims into upload tickets, removes server-endorsed physical-location wording and internal identifiers from public photo responses, and adds missing-location/privacy regressions. The earlier cache-invalidation finding remains separately remediated at `656eb315cbde4505b6c7db342a0185bb2762baea`.
 
@@ -33,6 +33,16 @@ This section supersedes older staging backend versions and counters retained bel
 - The dependency diff contains no credential files or non-empty secret assignment, and the staged patch passed `git diff --check`. The Codex Security setup workspace could not be resumed after its continuation tool disappeared, so this dependency-only patch used the documented manual diff, secret, dependency, build, and negative-path gate rather than claiming a sealed Codex Security scan.
 - The managed-Turnstile upload portion of the lifecycle is now proven. Remaining backend release gates are external or human-operated: moderate and read the pending photo, delete it through the audited path, prove zero D1/R2 residue afterward, collect live pre-Worker WAF/rate-limit evidence, configure a real moderation-alert recipient, and obtain owner-domain/provider-rights/production approvals. These gates must not be simulated or marked complete from local code.
 - Production remained unchanged: no production Worker deployment, D1 migration, R2 mutation, secret change, provider activation, or traffic promotion occurred.
+
+## Latest iPhone release verification — 2026-07-27
+
+- The existing Capacitor candidate was rebuilt against the exact HTTPS staging web URL, signed for development without persisting a team identifier, installed over the existing app on a cable-connected iPhone 12 Pro / iOS 26.5.2, and launched successfully.
+- The live Korean home rendered on the physical device without a startup crash. Redacted evidence is stored under `artifacts/real-device-qa/2026-07-27-ios-build-1/`.
+- A native `AppUITests` target was restored to the current worktree. Its signed runner executed 4 tests on the phone: live home, primary tabs, and current-location upload without a manual place picker passed; the fail-closed photo-rights test was skipped because the device was outside the 300 m radius of a registered staging place; 0 tests failed. No passcode, device identifier, signing identifier, token, raw coordinate, or account value is retained, and the automation did not select or transmit a photo.
+- The current-location run exposed overlapping fallback-map text inside the upload card. Both upload wrappers now reuse the existing bounded mobile fallback-map styles, with an explicit 190 px upload-map height, and a UI-contract regression protects the composition. The pre-fix screenshot is retained as defect evidence; Cloudflare staging redeploy plus a fresh iPhone screenshot are still required before the fix is considered operationally verified.
+- Root lint, typecheck, tests `464/464`, Next production build, mobile verification `4/4`, and WebView checks pass on the current source. A fresh online npm vulnerability query remains unclaimed because sending the dependency inventory to npmjs.org requires explicit user authorization; the completed local security scan and prior candidate audits remain separate evidence.
+- A fresh local OpenNext 1.19.11 / Next.js 16.2.11 staging bundle was built with the exact staging API origin. The generated Worker contains the staging API host, contains no `localhost:8787` or production API host, and has no high-confidence secret-pattern hit. This is local bundle evidence only: no Wrangler dry-run, Cloudflare upload, deployment metadata transmission, staging traffic change, or Production change occurred without explicit approval.
+- App Store Connect is currently at its login screen. No metadata, agreement, build, TestFlight, or submission state has been changed. Public submission remains prohibited while the binary points to staging and the production API, legal/privacy, moderation lifecycle, and owner-domain gates are open.
 
 ## Latest external update — 2026-07-24
 
