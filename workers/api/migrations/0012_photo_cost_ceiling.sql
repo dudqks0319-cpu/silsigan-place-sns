@@ -1,0 +1,15 @@
+PRAGMA foreign_keys = ON;
+
+CREATE TRIGGER IF NOT EXISTS trg_photos_max_byte_size_insert
+BEFORE INSERT ON photos
+WHEN NEW.byte_size > 1048576
+BEGIN
+  SELECT RAISE(ABORT, 'PHOTO_MAX_BYTES_EXCEEDED');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_photos_max_byte_size_update
+BEFORE UPDATE OF byte_size ON photos
+WHEN NEW.byte_size > 1048576
+BEGIN
+  SELECT RAISE(ABORT, 'PHOTO_MAX_BYTES_EXCEEDED');
+END;

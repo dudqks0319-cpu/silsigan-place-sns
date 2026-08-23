@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { NativeBridgeBootstrap } from "@/components/silsigan/NativeBridgeBootstrap";
+import { getSiteUrl } from "@/lib/site-url";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getSiteUrl()),
   title: "#실시간 - 현장 상황 지도",
   description: "출발 전 10초, 지금 거기 상황을 사진과 위치 인증으로 확인하세요.",
   applicationName: "#실시간",

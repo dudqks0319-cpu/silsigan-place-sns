@@ -8,10 +8,13 @@ const {
   creditEventForQuestion,
   creditEventsForReport,
   evaluateRegionActivation,
+  formatDistanceMeters,
   judgementFromStatus,
   getCategorySafetyWarning,
+  getPostExpiry,
   getQuestionCost,
   getReportExpiry,
+  isPostExpired,
   isReportExpired,
   recommendHashtags,
   shouldHideForFlags,
@@ -20,18 +23,27 @@ const {
 
 const { createPost, createReport, flagPost, listPlaces, listPostModerationQueue, listPosts, listQuestions, listReports, listRegionActivationDashboard, moderatePost } = await import(new URL("../src/lib/mock-store.ts", import.meta.url).href);
 const { isAdminTokenValid } = await import(new URL("../src/lib/admin-auth.ts", import.meta.url).href);
-const { assertRateLimit, clearRateLimitBucketsForTests } = await import(new URL("../src/lib/rate-limit.ts", import.meta.url).href);
+const { assertRateLimit, clearRateLimitBucketsForTests, rateLimitKey } = await import(new URL("../src/lib/rate-limit.ts", import.meta.url).href);
 const { getStore } = await import(new URL("../src/lib/store.ts", import.meta.url).href);
 const { redactAnalyticsProperties, trackEvent } = await import(new URL("../src/lib/analytics.ts", import.meta.url).href);
 const { buildScopedApiPath, clampApiLimit, normalizeRegionScope } = await import(new URL("../src/lib/api-scope.ts", import.meta.url).href);
 const { workerPlaceToAppPlace } = await import(new URL("../src/lib/cloudflare-place-adapter.ts", import.meta.url).href);
-const { findSharedPost } = await import(new URL("../src/lib/shared-post.ts", import.meta.url).href);
+const { findSharedPost, formatSharedPostObservedAt } = await import(new URL("../src/lib/shared-post.ts", import.meta.url).href);
 const { createReportSchema, moderatePostSchema } = await import(new URL("../src/lib/validators.ts", import.meta.url).href);
-const { listWorkerModerationReports, moderateWorkerReport, workerAdminApiConfigured } = await import(new URL("../src/lib/worker-admin-api.ts", import.meta.url).href);
+const {
+  listWorkerDataSources,
+  listWorkerModerationReports,
+  listWorkerSourceHealth,
+  moderateWorkerReport,
+  workerAdminApiConfigured,
+} = await import(new URL("../src/lib/worker-admin-api.ts", import.meta.url).href);
 const {
   handleAdminWorkerCoordinateStatusPost,
+  handleAdminWorkerFieldReportsGet,
+  handleAdminWorkerFieldReportsPost,
   handleAdminWorkerReportsGet,
   handleAdminWorkerReportsPost,
+  handleAdminWorkerSourceHealthGet,
   handleAdminWorkerUserRestrictPost,
   handleAdminWorkerUserUnrestrictPost,
 } = await import(new URL("../src/lib/worker-admin-route.ts", import.meta.url).href);
@@ -43,6 +55,16 @@ test("reports expire three hours after creation", () => {
   assert.equal(expiresAt.toISOString(), "2026-05-08T03:00:00.000Z");
   assert.equal(isReportExpired(expiresAt, new Date("2026-05-08T02:59:59.000Z")), false);
   assert.equal(isReportExpired(expiresAt, new Date("2026-05-08T03:00:00.000Z")), true);
+});
+
+test("status posts expire three hours after creation and invalid expiry fails closed", () => {
+  const createdAt = new Date("2026-05-08T00:00:00.000Z");
+  const expiresAt = getPostExpiry(createdAt).toISOString();
+
+  assert.equal(expiresAt, "2026-05-08T03:00:00.000Z");
+  assert.equal(isPostExpired(expiresAt, new Date("2026-05-08T02:59:59.000Z")), false);
+  assert.equal(isPostExpired(expiresAt, new Date("2026-05-08T03:00:00.000Z")), true);
+  assert.equal(isPostExpired("not-a-timestamp", createdAt), true);
 });
 
 test("question credits follow MVP cost rules", () => {
@@ -99,6 +121,13 @@ test("verified radius stores only coarse radius buckets", () => {
   assert.equal(verifiedRadiusFromDistance(120), 150);
   assert.equal(verifiedRadiusFromDistance(250), 300);
   assert.equal(verifiedRadiusFromDistance(301), null);
+});
+
+test("distance labels are human-readable without implying precision", () => {
+  assert.equal(formatDistanceMeters(42), "40m");
+  assert.equal(formatDistanceMeters(999), "1.0km");
+  assert.equal(formatDistanceMeters(1_250), "1.3km");
+  assert.equal(formatDistanceMeters(Number.NaN), "거리 정보 없음");
 });
 
 test("distance outside 300m cannot produce a persisted verification radius", () => {
@@ -265,7 +294,10 @@ test("feed posts generate share cards and privacy reports can hide posts", () =>
   assert.equal(created.post.hashtagNames.length, 5);
   assert.equal(created.post.verifiedRadiusM, 50);
   assert.equal(created.post.locationVerified, true);
+  assert.equal(created.post.isExpired, false);
+  assert.equal(Date.parse(created.post.expiresAt) - Date.parse(created.post.createdAt), 3 * 60 * 60 * 1000);
   assert.match(created.post.shareCard.headline, /지금은 비추/);
+  assert.match(created.post.shareCard.body, /현장 인증 제보/);
   assert.equal(created.post.shareCard.url, "https://silsigan.pages.dev/place/busan-gwangalli");
   assert.equal(judgementFromStatus("packed", "full"), "지금은 비추");
 
@@ -298,6 +330,8 @@ test("posts without real user location remain status reports", () => {
 
   assert.equal(created.post.verifiedRadiusM, null);
   assert.equal(created.post.locationVerified, false);
+  assert.match(created.post.shareCard.body, /상태 제보/);
+  assert.doesNotMatch(created.post.shareCard.body, /현장 인증 제보/);
 });
 
 test("posts more than 300m from the place are created without verification", () => {
@@ -344,11 +378,14 @@ test("scoped API paths normalize nationwide and clamp broad list limits", () => 
 test("local demo lists support region-scoped bounded reads", () => {
   const busanPlaces = listPlaces({ regionId: "busan", limit: 1 });
   const busanPlaceIds = new Set(listPlaces({ regionId: "busan", limit: 100 }).map((place: { id: string }) => place.id));
+  const gyeongbukPlaceIds = new Set(listPlaces({ regionId: "gyeongbuk", limit: 100 }).map((place: { id: string }) => place.id));
   const busanHashtagPosts = listPosts({ regionId: "busan", hashtagName: "광안리주차살려줘", limit: 100 });
 
   assert.equal(busanPlaces.length, 1);
   assert.equal(busanPlaces.every((place: { regionId: string }) => place.regionId === "busan"), true);
   assert.equal(listPlaces({ regionId: "seoul", limit: 100 }).length, 0);
+  assert.equal(gyeongbukPlaceIds.has("gyeongju-hwangridan"), true);
+  assert.equal(listPosts({ regionId: "gyeongbuk", limit: 100 }).every((post: { placeId: string }) => gyeongbukPlaceIds.has(post.placeId)), true);
   assert.equal(listReports({ regionId: "busan", limit: 100 }).every((report: { placeId: string }) => busanPlaceIds.has(report.placeId)), true);
   assert.equal(listPosts({ regionId: "busan", limit: 1 }).length, 1);
   assert.equal(listPosts({ regionId: "busan", limit: 100 }).every((post: { placeId: string }) => busanPlaceIds.has(post.placeId)), true);
@@ -398,6 +435,8 @@ test("shared post lookup reads from Worker API when configured", async () => {
   });
 
   assert.equal(post?.shareCard.headline, "Worker 공유 카드");
+  assert.equal(post?.createdAt, workerPost.createdAt);
+  assert.match(formatSharedPostObservedAt(post?.createdAt ?? ""), /\d+\.\s*\d+/);
   assert.equal(requests[0]?.url, "https://worker.example.test/api/posts?limit=200");
   assert.equal(requests[0]?.headers.get("accept"), "application/json");
 });
@@ -418,6 +457,25 @@ test("shared post lookup does not fall back to demo posts when Worker API is con
   assert.equal(post, null);
 });
 
+test("shared post lookup rejects Worker share data without a valid observation time", async () => {
+  const workerPost = {
+    ...listPosts({ includeHidden: true, limit: 1 })[0],
+    id: "worker_share_post_without_time",
+    createdAt: "not-a-timestamp",
+  };
+
+  const post = await findSharedPost(workerPost.id, {
+    env: { SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test" },
+    fetcher: async (): Promise<Response> =>
+      Response.json({
+        success: true,
+        data: [workerPost],
+      }),
+  });
+
+  assert.equal(post, null);
+});
+
 test("shared post lookup keeps demo fallback only when Worker API is not configured", async () => {
   const demoPost = listPosts({ includeHidden: true, limit: 1 })[0];
   const fetcher = async (): Promise<Response> => {
@@ -431,6 +489,18 @@ test("shared post lookup keeps demo fallback only when Worker API is not configu
 
   assert.equal(post?.id, demoPost.id);
   assert.equal(post?.shareCard.headline, demoPost.shareCard.headline);
+});
+
+test("shared post lookup fails closed instead of falling back to demo data in production", async () => {
+  const demoPost = listPosts({ includeHidden: true, limit: 1 })[0];
+  const post = await findSharedPost(demoPost.id, {
+    env: { NODE_ENV: "production" },
+    fetcher: async (): Promise<Response> => {
+      throw new Error("fetcher should not run without Worker API URL");
+    },
+  });
+
+  assert.equal(post, null);
 });
 
 test("shared post lookup does not expose hidden demo posts", async () => {
@@ -484,6 +554,24 @@ test("worker place adapter maps Cloudflare place records into the frontend place
   });
 });
 
+test("worker place adapter accepts every nationwide first-level region", () => {
+  const place = workerPlaceToAppPlace({
+    id: "incheon-seed",
+    name: "인천 준비 장소",
+    categoryId: "tourism",
+    areaId: "incheon",
+    regionId: "incheon",
+    latitude: 37.4563,
+    longitude: 126.7052,
+    score: 0,
+    status: "seed",
+    coordinateStatus: "verified",
+  });
+
+  assert.equal(place.regionId, "incheon");
+  assert.equal(place.address, "인천 · 인천 준비 장소");
+});
+
 test("api routes can use the store abstraction in demo mode", () => {
   const store = getStore("demo");
 
@@ -518,6 +606,26 @@ test("rate limit blocks excess requests within a window", () => {
   assert.doesNotThrow(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }));
   assert.doesNotThrow(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }));
   assert.throws(() => assertRateLimit({ key: "test:rate", limit: 2, windowMs: 60_000 }), /요청이 너무 많습니다/);
+});
+
+test("rate limit fingerprints IP addresses and ignores user-agent rotation", async () => {
+  const first = await rateLimitKey(
+    new Request("https://example.test", { headers: { "x-forwarded-for": "203.0.113.7", "user-agent": "bot-a" } }),
+    "metered-api",
+  );
+  const rotatedAgent = await rateLimitKey(
+    new Request("https://example.test", { headers: { "x-forwarded-for": "203.0.113.7", "user-agent": "bot-b" } }),
+    "metered-api",
+  );
+  const otherIp = await rateLimitKey(
+    new Request("https://example.test", { headers: { "x-forwarded-for": "203.0.113.8", "user-agent": "bot-a" } }),
+    "metered-api",
+  );
+
+  assert.equal(first, rotatedAgent);
+  assert.notEqual(first, otherIp);
+  assert.equal(first.includes("203.0.113.7"), false);
+  assert.match(first, /^metered-api:ip:[a-f0-9]{32}$/);
 });
 
 test("admin token is deny-by-default when configured", () => {
@@ -589,6 +697,210 @@ test("worker admin moderation helper proxies reports without leaking raw reporte
   assert.equal(requests[0]?.headers.get("x-silsigan-admin-token"), "worker-admin-token");
   assert.equal(JSON.stringify(reports).includes("anon_raw_reporter"), false);
   assert.equal(JSON.stringify(reports).includes("reporter@example.com"), false);
+});
+
+test("worker source health helper clamps limits and returns only safe health fields", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    requests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({
+      success: true,
+      data: [
+        {
+          id: "source_health_1",
+          sourceId: "source_internal_1",
+          sourceKey: "kma-weather",
+          status: "healthy",
+          message: "공식 출처 확인 완료",
+          responseTimeMs: 182,
+          checkedAt: "2026-06-19T00:00:00.000Z",
+          anonymousUserId: "anon_should_not_escape",
+          token: "worker-secret-should-not-escape",
+        },
+      ],
+    });
+  };
+
+  const health = await listWorkerSourceHealth(
+    { limit: 99 },
+    {
+      fetcher,
+      env: {
+        SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+        SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+      },
+    },
+  );
+
+  assert.deepEqual(health, [
+    {
+      id: "source_health_1",
+      sourceId: "source_internal_1",
+      sourceKey: "kma-weather",
+      status: "healthy",
+      message: "공식 출처 확인 완료",
+      responseTimeMs: 182,
+      checkedAt: "2026-06-19T00:00:00.000Z",
+    },
+  ]);
+  assert.equal(requests[0]?.url, "https://worker.example.test/api/admin/sources/health?limit=50");
+  assert.equal(requests[0]?.headers.get("x-silsigan-admin-token"), "worker-admin-token");
+  assert.equal(JSON.stringify(health).includes("anon_should_not_escape"), false);
+  assert.equal(JSON.stringify(health).includes("worker-secret-should-not-escape"), false);
+});
+
+test("worker source health helper rejects invalid status, response time, and array shape", async () => {
+  const invalidItemFetcher = async (): Promise<Response> =>
+    Response.json({
+      success: true,
+      data: [
+        {
+          id: "source_health_invalid",
+          sourceId: "source_internal_invalid",
+          sourceKey: "kma-weather",
+          status: "unknown",
+          message: null,
+          responseTimeMs: -1,
+          checkedAt: "2026-06-19T00:00:00.000Z",
+        },
+      ],
+    });
+
+  await assert.rejects(
+    () =>
+      listWorkerSourceHealth(
+        {},
+        {
+          fetcher: invalidItemFetcher,
+          env: {
+            SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+            SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+          },
+        },
+      ),
+    /Worker 응답 status 필드가 올바르지 않습니다\./,
+  );
+
+  const invalidArrayFetcher = async (): Promise<Response> =>
+    Response.json({ success: true, data: { unexpected: true } });
+
+  await assert.rejects(
+    () =>
+      listWorkerSourceHealth(
+        {},
+        {
+          fetcher: invalidArrayFetcher,
+          env: {
+            SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+            SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+          },
+        },
+      ),
+    /Worker 데이터 출처 상태 응답 형식이 올바르지 않습니다\./,
+  );
+});
+
+test("worker source registry helper returns only safe rights and activation fields", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    requests.push(input instanceof Request ? input : new Request(input, init));
+    return Response.json({
+      success: true,
+      data: [
+        {
+          id: "source_internal_1",
+          sourceKey: "kma_weather",
+          sourceName: "기상청 단기예보",
+          providerName: "기상청",
+          sourceType: "official_periodic",
+          commercialUseStatus: "allowed_with_attribution",
+          agreementRequired: false,
+          enabled: true,
+          enabledRegions: ["*"],
+          healthStatus: "healthy",
+          activationStatus: "active",
+          documentationUrl: "https://example.test/docs",
+          termsUrl: "https://example.test/terms",
+          lastTermsCheckedAt: "2026-06-18T00:00:00.000Z",
+          lastHealthCheckedAt: "2026-06-19T00:00:00.000Z",
+          token: "worker-secret-should-not-escape",
+        },
+      ],
+    });
+  };
+
+  const sources = await listWorkerDataSources({
+    fetcher,
+    env: {
+      SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+      SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+    },
+  });
+
+  assert.deepEqual(sources, [
+    {
+      sourceKey: "kma_weather",
+      sourceName: "기상청 단기예보",
+      providerName: "기상청",
+      sourceType: "official_periodic",
+      commercialUseStatus: "allowed_with_attribution",
+      enabled: true,
+      healthStatus: "healthy",
+      activationStatus: "active",
+      lastTermsCheckedAt: "2026-06-18T00:00:00.000Z",
+      lastHealthCheckedAt: "2026-06-19T00:00:00.000Z",
+    },
+  ]);
+  assert.equal(requests[0]?.url, "https://worker.example.test/api/sources");
+  assert.equal(requests[0]?.headers.get("x-silsigan-admin-token"), "worker-admin-token");
+  assert.equal(JSON.stringify(sources).includes("worker-secret-should-not-escape"), false);
+  assert.equal(JSON.stringify(sources).includes("documentationUrl"), false);
+});
+
+test("worker source registry helper rejects invalid activation and response shape", async () => {
+  const invalidItemFetcher = async (): Promise<Response> =>
+    Response.json({
+      success: true,
+      data: [
+        {
+          sourceKey: "kma_weather",
+          sourceName: "기상청 단기예보",
+          providerName: "기상청",
+          sourceType: "official_periodic",
+          commercialUseStatus: "unknown",
+          enabled: true,
+          healthStatus: "healthy",
+          activationStatus: "approved",
+          lastTermsCheckedAt: null,
+          lastHealthCheckedAt: null,
+        },
+      ],
+    });
+
+  await assert.rejects(
+    () =>
+      listWorkerDataSources({
+        fetcher: invalidItemFetcher,
+        env: {
+          SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+          SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+        },
+      }),
+    /Worker 응답 activationStatus 필드가 올바르지 않습니다\./,
+  );
+
+  const invalidArrayFetcher = async (): Promise<Response> => Response.json({ success: true, data: { unexpected: true } });
+  await assert.rejects(
+    () =>
+      listWorkerDataSources({
+        fetcher: invalidArrayFetcher,
+        env: {
+          SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test",
+          SILSIGAN_WORKER_ADMIN_TOKEN: "worker-admin-token",
+        },
+      }),
+    /Worker 데이터 출처 목록 응답 형식이 올바르지 않습니다\./,
+  );
 });
 
 test("worker admin moderation helper prefers dedicated Worker token over staging smoke token", async () => {
@@ -663,6 +975,85 @@ test("worker admin moderation helper posts report actions through server token",
   });
 });
 
+test("worker field-report admin queue keeps the response coarse and proxies moderator decisions", async () => {
+  const previousAdminToken = process.env["SILSIGAN_ADMIN_TOKEN"];
+  const previousWorkerBaseUrl = process.env["SILSIGAN_WORKER_API_BASE_URL"];
+  const previousWorkerToken = process.env["SILSIGAN_WORKER_ADMIN_TOKEN"];
+  const originalFetch = globalThis.fetch;
+  const requests: Request[] = [];
+
+  clearRateLimitBucketsForTests();
+  process.env["SILSIGAN_ADMIN_TOKEN"] = "next-admin-token";
+  process.env["SILSIGAN_WORKER_API_BASE_URL"] = "https://worker.example.test";
+  process.env["SILSIGAN_WORKER_ADMIN_TOKEN"] = "worker-moderator-token";
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    if (request.method === "POST") {
+      return Response.json({
+        success: true,
+        data: {
+          reportId: "field_report_route-123456",
+          decision: "approved",
+          public: true,
+          previousStatus: "pending",
+          anonymousUserId: "anon_should_not_escape",
+        },
+      });
+    }
+
+    return Response.json({
+      success: true,
+      data: [{
+        id: "field_report_route-123456",
+        placeId: "busan-gwangalli",
+        placeName: "광안리해수욕장",
+        category: "tourism",
+        crowdLevel: "busy",
+        lineStatus: null,
+        parkingStatus: "limited",
+        verifiedRadiusM: 50,
+        observedDimensions: ["crowd", "parking"],
+        createdAt: "2026-06-19T00:00:00.000Z",
+        expiresAt: "2026-06-19T03:00:00.000Z",
+        moderationStatus: "pending",
+        isExpired: false,
+        anonymousUserId: "anon_should_not_escape",
+        rawLatitude: 35.1532,
+      }],
+    });
+  };
+
+  try {
+    const authHeaders = { "x-silsigan-admin-token": "next-admin-token" };
+    const list = await handleAdminWorkerFieldReportsGet(
+      new Request("http://localhost/api/admin/field-reports?status=pending&limit=99", { headers: authHeaders }),
+    );
+    const decision = await handleAdminWorkerFieldReportsPost(
+      new Request("http://localhost/api/admin/field-reports", {
+        method: "POST",
+        headers: { ...authHeaders, "content-type": "application/json" },
+        body: JSON.stringify({ reportId: "field_report_route-123456", decision: "approved", reason: "운영자 승인" }),
+      }),
+    );
+
+    assert.equal(list[0]?.placeName, "광안리해수욕장");
+    assert.equal(JSON.stringify(list).includes("anon_should_not_escape"), false);
+    assert.equal(JSON.stringify(list).includes("35.1532"), false);
+    assert.equal(decision.public, true);
+    assert.equal(requests[0]?.url, "https://worker.example.test/api/admin/field-reports?status=pending&limit=50");
+    assert.equal(requests[1]?.url, "https://worker.example.test/api/admin/field-reports/field_report_route-123456/moderation");
+    assert.equal(requests[1]?.headers.get("x-silsigan-admin-token"), "worker-moderator-token");
+    assert.deepEqual(await requests[1]?.json(), { decision: "approved", reason: "운영자 승인" });
+  } finally {
+    restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
+    restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);
+    restoreEnv("SILSIGAN_WORKER_ADMIN_TOKEN", previousWorkerToken);
+    globalThis.fetch = originalFetch;
+    clearRateLimitBucketsForTests();
+  }
+});
+
 test("worker admin moderation helper is deny-by-default without server token", () => {
   assert.equal(workerAdminApiConfigured({ SILSIGAN_WORKER_API_BASE_URL: "https://worker.example.test" }), false);
 });
@@ -688,6 +1079,94 @@ test("admin worker reports route requires Next admin auth before proxying", asyn
       /관리자 인증이 필요합니다/,
     );
     assert.equal(fetchCalls, 0);
+  } finally {
+    restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
+    restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);
+    restoreEnv("SILSIGAN_WORKER_ADMIN_TOKEN", previousWorkerToken);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("admin source health route requires Next admin auth before proxying", async () => {
+  const previousAdminToken = process.env["SILSIGAN_ADMIN_TOKEN"];
+  const previousWorkerBaseUrl = process.env["SILSIGAN_WORKER_API_BASE_URL"];
+  const previousWorkerToken = process.env["SILSIGAN_WORKER_ADMIN_TOKEN"];
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+
+  process.env["SILSIGAN_ADMIN_TOKEN"] = "next-admin-token";
+  process.env["SILSIGAN_WORKER_API_BASE_URL"] = "https://worker.example.test";
+  process.env["SILSIGAN_WORKER_ADMIN_TOKEN"] = "worker-admin-token";
+  globalThis.fetch = async (): Promise<Response> => {
+    fetchCalls += 1;
+    return Response.json({ success: true, data: [] });
+  };
+
+  try {
+    await assert.rejects(
+      () => handleAdminWorkerSourceHealthGet(new Request("http://localhost/api/admin/sources/health?limit=50")),
+      /관리자 인증이 필요합니다/,
+    );
+    assert.equal(fetchCalls, 0);
+  } finally {
+    restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
+    restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);
+    restoreEnv("SILSIGAN_WORKER_ADMIN_TOKEN", previousWorkerToken);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("admin source health route proxies with the server token and clamps the limit", async () => {
+  const previousAdminToken = process.env["SILSIGAN_ADMIN_TOKEN"];
+  const previousWorkerBaseUrl = process.env["SILSIGAN_WORKER_API_BASE_URL"];
+  const previousWorkerToken = process.env["SILSIGAN_WORKER_ADMIN_TOKEN"];
+  const originalFetch = globalThis.fetch;
+  const requests: Request[] = [];
+
+  process.env["SILSIGAN_ADMIN_TOKEN"] = "next-admin-token";
+  process.env["SILSIGAN_WORKER_API_BASE_URL"] = "https://worker.example.test";
+  process.env["SILSIGAN_WORKER_ADMIN_TOKEN"] = "worker-admin-token";
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    return Response.json({
+      success: true,
+      data: [
+        {
+          id: "source_health_route",
+          sourceId: "source_internal_route",
+          sourceKey: "tour-api",
+          status: "degraded",
+          message: "공식 출처 응답 지연",
+          responseTimeMs: 1_250,
+          checkedAt: "2026-06-19T00:00:00.000Z",
+          rawToken: "should-not-escape",
+        },
+      ],
+    });
+  };
+
+  try {
+    const health = await handleAdminWorkerSourceHealthGet(
+      new Request("http://localhost/api/admin/sources/health?limit=99", {
+        headers: { "x-silsigan-admin-token": "next-admin-token" },
+      }),
+    );
+
+    assert.deepEqual(health, [
+      {
+        id: "source_health_route",
+        sourceId: "source_internal_route",
+        sourceKey: "tour-api",
+        status: "degraded",
+        message: "공식 출처 응답 지연",
+        responseTimeMs: 1_250,
+        checkedAt: "2026-06-19T00:00:00.000Z",
+      },
+    ]);
+    assert.equal(requests[0]?.url, "https://worker.example.test/api/admin/sources/health?limit=50");
+    assert.equal(requests[0]?.headers.get("x-silsigan-admin-token"), "worker-admin-token");
+    assert.equal(JSON.stringify(health).includes("should-not-escape"), false);
   } finally {
     restoreEnv("SILSIGAN_ADMIN_TOKEN", previousAdminToken);
     restoreEnv("SILSIGAN_WORKER_API_BASE_URL", previousWorkerBaseUrl);

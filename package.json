@@ -16,10 +16,11 @@
     "smoke:tail-redaction": "node scripts/cloudflare-staging-smoke.mjs --tail-only",
     "release:gate": "node scripts/cloudflare-release-gate.mjs",
     "release:status": "node scripts/release-state-check.mjs",
-    "cf:build": "opennextjs-cloudflare build",
-    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf:build": "node scripts/cloudflare-web-build.mjs --env=staging",
+    "cf:preview": "pnpm cf:build && opennextjs-cloudflare preview",
+    "cf:deploy": "node scripts/cloudflare-web-deploy.mjs",
     "cf:typegen": "wrangler types cloudflare-env.d.ts --env-interface CloudflareEnv --env-file .env.example --include-runtime false",
+    "cf:api:typegen": "wrangler types workers/api/worker-configuration.d.ts --env staging --config workers/api/wrangler.jsonc --env-interface CloudflareApiEnv --include-runtime false",
     "cf:web:dry-run": "wrangler deploy --dry-run --env=\"\" --config wrangler.jsonc",
     "cf:web:dry-run:staging": "wrangler deploy --dry-run --env staging --config wrangler.jsonc",
     "cf:web:dry-run:production": "wrangler deploy --dry-run --env production --config wrangler.jsonc",
@@ -32,7 +33,7 @@
     "cf:dry-run:production": "npx --yes wrangler deploy --dry-run --env production --config workers/api/wrangler.jsonc",
     "cf:d1:evidence": "node scripts/cloudflare-d1-release-evidence.mjs",
     "cf:r2:evidence": "node scripts/cloudflare-r2-release-evidence.mjs",
-    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm cf:build"
   },
   "dependencies": {
     "@capacitor/app": "8.0.0",
@@ -45,32 +46,36 @@
     "@capacitor/push-notifications": "8.0.0",
     "@capacitor/share": "8.0.0",
     "lucide-react": "0.575.0",
-    "next": "16.2.6",
+    "next": "16.3.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "zod": "3.24.2"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.19.11",
+    "@opennextjs/cloudflare": "1.20.2",
     "@types/node": "22.13.10",
     "@types/react": "19.0.10",
     "@types/react-dom": "19.0.4",
     "eslint": "9.39.1",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.3.1",
     "typescript": "5.8.2",
-    "wrangler": "4.103.0"
+    "wrangler": "4.124.0"
   },
   "pnpm": {
     "overrides": {
-      "brace-expansion@<2.0.0": "1.1.13",
-      "brace-expansion@>=4.0.0 <5.0.5": "5.0.5",
+      "brace-expansion@<2.0.0": "1.1.18",
+      "brace-expansion@>=2.0.0 <3.0.0": "2.1.4",
+      "brace-expansion@>=4.0.0 <5.0.9": "5.0.9",
       "flatted": "3.4.2",
-      "picomatch@<4.0.0": "2.3.2",
-      "picomatch@>=4.0.0 <4.0.4": "4.0.4",
-      "postcss": "8.5.10",
+      "picomatch@>=2.0.0 <2.3.2": "2.3.2",
+      "picomatch@>=4.0.0 <4.0.5": "4.0.5",
+      "nanoid": "3.3.18",
+      "postcss": "8.5.23",
+      "sharp": "0.35.3",
+      "next>sharp": "file:./packages/sharp-disabled",
       "tar": "7.5.11",
       "ws": "8.21.0",
-      "js-yaml": "4.2.0",
+      "js-yaml": "4.3.1",
       "@babel/core": "7.29.6"
     }
   }

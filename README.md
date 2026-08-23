@@ -55,6 +55,8 @@ wrangler dev --config workers/api/wrangler.jsonc
 
 `workers/api/wrangler.jsonc`는 development, staging, production binding을 분리합니다. 기본 development Worker dry-run은 local config sanity check이며, root config의 D1/KV ID는 development 리소스를 만들기 전까지 placeholder로 남습니다. release evidence는 staging/production dry-run만 사용합니다. 현재 staging/production D1/KV ID는 실제 Cloudflare 리소스로 반영되어 있으며, 리소스를 재생성할 때만 해당 environment ID를 새 값으로 교체합니다. environment별 secret은 `wrangler secret put <KEY> --env staging|production`으로 등록합니다. 신고 큐 알림은 `MODERATION_ALERT_WEBHOOK_URL`과 선택값 `MODERATION_ALERT_WEBHOOK_TOKEN`을 Worker secret으로 등록합니다.
 
+Worker API의 브라우저 요청은 `CORS_ALLOWED_ORIGINS`에 등록된 정확한 origin만 허용합니다. development는 `workers/api/wrangler.jsonc`의 loopback origin을 사용하고, staging/production은 실제 Pages HTTPS origin을 각 environment의 `vars`에 넣어야 합니다. 프론트가 `credentials: include`를 사용하므로 wildcard(`*`)를 사용하지 않으며, `pnpm cf:preflight`가 Pages origin과 CORS allowlist의 일치를 배포 전에 검증합니다. staging/production 값이 비어 있으면 의도적으로 preflight가 실패합니다.
+
 남은 외부 배포 blocker는 Cloudflare Dashboard의 R2 활성화와 staging/production Pages/API HTTPS URL 설정입니다. R2가 활성화되기 전에는 `wrangler deploy --env staging`이 Cloudflare code `10042`로 실패합니다.
 
 `pnpm cf:preflight`는 Worker binding뿐 아니라 staging/production Pages URL과 Worker API URL도 확인합니다. 출시 전 CI 또는 로컬 shell에 아래 값을 실제 HTTPS 배포 URL로 지정해야 합니다.

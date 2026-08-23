@@ -3,7 +3,10 @@ import { ApiError } from "./errors.ts";
 import { assertRateLimit, rateLimitKey } from "./rate-limit.ts";
 import {
   listWorkerModerationReports,
+  listWorkerFieldReports,
+  listWorkerSourceHealth,
   moderateWorkerReport,
+  moderateWorkerFieldReport,
   restrictWorkerAnonymousUser,
   unrestrictWorkerAnonymousUser,
   updateWorkerPlaceCoordinateStatus,
@@ -14,6 +17,7 @@ import {
 const reportStatuses = new Set<WorkerModerationStatus>(["open", "accepted", "rejected"]);
 const actionStatuses = new Set<Exclude<WorkerModerationStatus, "open">>(["accepted", "rejected"]);
 const coordinateStatuses = new Set<WorkerCoordinateStatus>(["verified", "TODO_COORDINATE_VERIFY", "rejected"]);
+const fieldReportStatuses = new Set(["pending", "approved", "rejected", "all"] as const);
 
 export async function handleAdminWorkerReportsGet(request: Request) {
   assertAdminRequest(request);
@@ -26,7 +30,7 @@ export async function handleAdminWorkerReportsGet(request: Request) {
 
 export async function handleAdminWorkerReportsPost(request: Request) {
   assertAdminRequest(request);
-  assertRateLimit({ key: rateLimitKey(request, "admin-moderate-worker-report"), limit: 30, windowMs: 60_000 });
+  assertRateLimit({ key: await rateLimitKey(request, "admin-moderate-worker-report"), limit: 30, windowMs: 60_000 });
   const input = (await request.json()) as { reportId?: string; status?: WorkerModerationStatus; reason?: string };
 
   if (!input.reportId) {
@@ -44,9 +48,49 @@ export async function handleAdminWorkerReportsPost(request: Request) {
   });
 }
 
+export async function handleAdminWorkerFieldReportsGet(request: Request) {
+  assertAdminRequest(request);
+  const url = new URL(request.url);
+  const statusValue = url.searchParams.get("status") ?? "pending";
+  const status = fieldReportStatuses.has(statusValue as "pending" | "approved" | "rejected" | "all")
+    ? (statusValue as "pending" | "approved" | "rejected" | "all")
+    : "pending";
+  const limit = Number(url.searchParams.get("limit") ?? "50");
+
+  return listWorkerFieldReports({ status, limit });
+}
+
+export async function handleAdminWorkerSourceHealthGet(request: Request) {
+  assertAdminRequest(request);
+  const url = new URL(request.url);
+  const limit = Number(url.searchParams.get("limit") ?? "50");
+
+  return listWorkerSourceHealth({ limit });
+}
+
+export async function handleAdminWorkerFieldReportsPost(request: Request) {
+  assertAdminRequest(request);
+  assertRateLimit({ key: await rateLimitKey(request, "admin-moderate-field-report"), limit: 30, windowMs: 60_000 });
+  const input = (await request.json()) as { reportId?: string; decision?: "approved" | "rejected"; reason?: string };
+
+  if (!input.reportId) {
+    throw new ApiError(400, "FIELD_REPORT_ID_REQUIRED", "현장 제보 ID가 필요합니다.");
+  }
+
+  if (input.decision !== "approved" && input.decision !== "rejected") {
+    throw new ApiError(400, "FIELD_REPORT_DECISION_INVALID", "현장 제보 처리 상태가 올바르지 않습니다.");
+  }
+
+  return moderateWorkerFieldReport({
+    reportId: input.reportId,
+    decision: input.decision,
+    reason: input.reason,
+  });
+}
+
 export async function handleAdminWorkerCoordinateStatusPost(request: Request) {
   assertAdminRequest(request);
-  assertRateLimit({ key: rateLimitKey(request, "admin-worker-coordinate-status"), limit: 20, windowMs: 60_000 });
+  assertRateLimit({ key: await rateLimitKey(request, "admin-worker-coordinate-status"), limit: 20, windowMs: 60_000 });
   const input = (await request.json()) as {
     placeId?: string;
     coordinateStatus?: WorkerCoordinateStatus;
@@ -84,7 +128,7 @@ export async function handleAdminWorkerCoordinateStatusPost(request: Request) {
 
 export async function handleAdminWorkerUserRestrictPost(request: Request) {
   assertAdminRequest(request);
-  assertRateLimit({ key: rateLimitKey(request, "admin-worker-user-restrict"), limit: 20, windowMs: 60_000 });
+  assertRateLimit({ key: await rateLimitKey(request, "admin-worker-user-restrict"), limit: 20, windowMs: 60_000 });
   const input = (await request.json()) as { anonymousUserId?: string; reason?: string; blockedUntil?: string };
 
   if (!input.anonymousUserId) {
@@ -104,7 +148,7 @@ export async function handleAdminWorkerUserRestrictPost(request: Request) {
 
 export async function handleAdminWorkerUserUnrestrictPost(request: Request) {
   assertAdminRequest(request);
-  assertRateLimit({ key: rateLimitKey(request, "admin-worker-user-unrestrict"), limit: 20, windowMs: 60_000 });
+  assertRateLimit({ key: await rateLimitKey(request, "admin-worker-user-unrestrict"), limit: 20, windowMs: 60_000 });
   const input = (await request.json()) as { anonymousUserId?: string; reason?: string };
 
   if (!input.anonymousUserId) {

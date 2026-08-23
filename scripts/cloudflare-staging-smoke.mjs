@@ -2,6 +2,7 @@
 
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 
 const DEFAULT_ANON_ID = "anon_staging_smoke";
 const NATIONWIDE_BBOX = "124,33,132,39";
@@ -15,85 +16,96 @@ class SmokeError extends Error {
   }
 }
 
-const { flags, options } = parseArgs(process.argv.slice(2));
-const mutating = flags.has("mutating") || process.env.SILSIGAN_STAGING_MUTATION === "1";
-const tailOnly = flags.has("tail-only");
-const adminRequired = flags.has("require-admin") || process.env.SILSIGAN_STAGING_ADMIN_REQUIRED === "1";
-const baseUrlInput = options.get("base-url") ?? process.env.SILSIGAN_STAGING_API_BASE_URL ?? process.env.NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL;
-const tailFile = options.get("tail-file") ?? process.env.SILSIGAN_STAGING_TAIL_LOG_FILE;
-const anonymousId = options.get("anon-id") ?? process.env.SILSIGAN_STAGING_ANON_ID ?? (mutating ? `anon_staging_smoke_${Date.now()}` : DEFAULT_ANON_ID);
-const adminToken = options.get("admin-token") ?? process.env.SILSIGAN_STAGING_ADMIN_TOKEN;
-const restrictionAnonymousId =
-  options.get("restriction-anon-id") ?? process.env.SILSIGAN_STAGING_RESTRICTION_ANON_ID ?? `anon_staging_restrict_${Date.now()}`;
-const coordinateStatusSmokeEnabled = flags.has("coordinate-status") || process.env.SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE === "1";
-const coordinateSmokePlaceId = options.get("coordinate-place-id") ?? process.env.SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID;
-const coordinateSmokeLatitude = options.get("coordinate-latitude") ?? process.env.SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE;
-const coordinateSmokeLongitude = options.get("coordinate-longitude") ?? process.env.SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE;
-const coordinateSmokeSource = options.get("coordinate-source") ?? process.env.SILSIGAN_STAGING_COORDINATE_SMOKE_SOURCE ?? "staging smoke coordinate verification";
-const coordinateSmokeReason = options.get("coordinate-reason") ?? process.env.SILSIGAN_STAGING_COORDINATE_SMOKE_REASON ?? "staging smoke verified coordinate";
+export async function runSmoke({ rawArgs = [], env = process.env, fetchImpl = globalThis.fetch } = {}) {
+  const { flags, options } = parseArgs(rawArgs);
+  const mutating = flags.has("mutating") || env.SILSIGAN_STAGING_MUTATION === "1";
+  const configuredAnonymousId = options.get("anon-id") ?? env.SILSIGAN_STAGING_ANON_ID;
+  const context = {
+    adminRequired: flags.has("require-admin") || env.SILSIGAN_STAGING_ADMIN_REQUIRED === "1",
+    adminToken: options.get("admin-token") ?? env.SILSIGAN_STAGING_ADMIN_TOKEN,
+    anonymousId:
+      configuredAnonymousId ?? (mutating ? `anon_staging_smoke_${Date.now()}` : DEFAULT_ANON_ID),
+    anonymousSessionCredentials: new Map(),
+    checks: [],
+    coordinateSmokeLatitude: options.get("coordinate-latitude") ?? env.SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE,
+    coordinateSmokeLongitude: options.get("coordinate-longitude") ?? env.SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE,
+    coordinateSmokePlaceId: options.get("coordinate-place-id") ?? env.SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID,
+    coordinateSmokeReason: options.get("coordinate-reason") ?? env.SILSIGAN_STAGING_COORDINATE_SMOKE_REASON ?? "staging smoke verified coordinate",
+    coordinateSmokeSource: options.get("coordinate-source") ?? env.SILSIGAN_STAGING_COORDINATE_SMOKE_SOURCE ?? "staging smoke coordinate verification",
+    coordinateStatusSmokeEnabled: flags.has("coordinate-status") || env.SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE === "1",
+    fetchImpl,
+    mutating,
+    restrictionAnonymousId:
+      options.get("restriction-anon-id") ?? env.SILSIGAN_STAGING_RESTRICTION_ANON_ID ?? `anon_staging_restrict_${Date.now()}`,
+    sendAnonymousSession: mutating || Boolean(configuredAnonymousId),
+    tailOnly: flags.has("tail-only"),
+  };
+  const baseUrlInput = options.get("base-url") ?? env.SILSIGAN_STAGING_API_BASE_URL ?? env.NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL;
+  const tailFile = options.get("tail-file") ?? env.SILSIGAN_STAGING_TAIL_LOG_FILE;
 
-const checks = [];
-
-try {
-  if (tailFile) {
-    await validateTailLogFile(tailFile);
-  } else {
-    record("tail.redaction", "skip", "SILSIGAN_STAGING_TAIL_LOG_FILE 또는 --tail-file 이 없어 로그 샘플 검증을 건너뜁니다.");
-  }
-
-  if (!tailOnly) {
-    if (mutating && adminRequired && !adminToken) {
-      throw new SmokeError("ADMIN_TOKEN_REQUIRED", "운영 보호장치 smoke에는 SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 필요합니다.");
-    }
-
-    if (!baseUrlInput) {
-      throw new SmokeError("BASE_URL_REQUIRED", "SILSIGAN_STAGING_API_BASE_URL 또는 NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL 이 필요합니다.");
-    }
-
-    const baseUrl = normalizeBaseUrl(baseUrlInput);
-    const selectedPlace = await runReadOnlySmoke(baseUrl);
-    if (mutating) {
-      await runPhotoMutationSmoke(baseUrl, selectedPlace.id);
-      await runInteractionMutationSmoke(baseUrl, selectedPlace.id);
-      await runModerationMutationSmoke(baseUrl, selectedPlace.id);
-      await runUserRestrictionMutationSmoke(baseUrl, selectedPlace.id);
-      await runCoordinateStatusMutationSmoke(baseUrl);
+  try {
+    if (tailFile) {
+      await validateTailLogFile(tailFile, context);
     } else {
-      record("photos.images.mutation", "skip", "실제 사진/R2/Images smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
-      record("interactions.mutation", "skip", "실제 댓글/좋아요 mutation smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
-      record("moderation.mutation", "skip", "실제 신고/운영자 처리 smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
-      record("users.restriction.mutation", "skip", "실제 사용자 제한 smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
-      record("coordinateStatus.mutation", "skip", "실제 좌표 검증 smoke는 --mutating 과 --coordinate-status 또는 SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE=1 일 때만 실행합니다.");
+      record(context, "tail.redaction", "skip", "SILSIGAN_STAGING_TAIL_LOG_FILE 또는 --tail-file 이 없어 로그 샘플 검증을 건너뜁니다.");
     }
+
+    if (!context.tailOnly) {
+      if (context.mutating && context.adminRequired && !context.adminToken) {
+        throw new SmokeError("ADMIN_TOKEN_REQUIRED", "운영 보호장치 smoke에는 SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 필요합니다.");
+      }
+
+      if (!baseUrlInput) {
+        throw new SmokeError("BASE_URL_REQUIRED", "SILSIGAN_STAGING_API_BASE_URL 또는 NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL 이 필요합니다.");
+      }
+
+      const baseUrl = normalizeBaseUrl(baseUrlInput);
+      const selectedPlace = await runReadOnlySmoke(baseUrl, context);
+      if (context.mutating) {
+        await runPhotoMutationSmoke(baseUrl, selectedPlace.id, context);
+        await runInteractionMutationSmoke(baseUrl, selectedPlace.id, context);
+        await runModerationMutationSmoke(baseUrl, selectedPlace.id, context);
+        await runUserRestrictionMutationSmoke(baseUrl, selectedPlace.id, context);
+        await runCoordinateStatusMutationSmoke(baseUrl, context);
+      } else {
+        record(context, "photos.images.mutation", "skip", "실제 사진/R2/Images smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
+        record(context, "interactions.mutation", "skip", "실제 댓글/좋아요 mutation smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
+        record(context, "moderation.mutation", "skip", "실제 신고/운영자 처리 smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
+        record(context, "users.restriction.mutation", "skip", "실제 사용자 제한 smoke는 --mutating 또는 SILSIGAN_STAGING_MUTATION=1 일 때만 실행합니다.");
+        record(context, "coordinateStatus.mutation", "skip", "실제 좌표 검증 smoke는 --mutating 과 --coordinate-status 또는 SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE=1 일 때만 실행합니다.");
+      }
+    }
+  } catch (error) {
+    record(context, "harness", "fail", publicErrorMessage(error));
   }
-} catch (error) {
-  record("harness", "fail", publicErrorMessage(error));
+
+  const failed = context.checks.filter((check) => check.status === "fail");
+  return {
+    ok: failed.length === 0,
+    baseUrl: context.tailOnly ? null : sanitizeBaseUrl(baseUrlInput),
+    mutating: context.mutating,
+    checks: context.checks,
+  };
 }
 
-const failed = checks.filter((check) => check.status === "fail");
-const summary = {
-  ok: failed.length === 0,
-  baseUrl: tailOnly ? null : sanitizeBaseUrl(baseUrlInput),
-  mutating,
-  checks,
-};
-
-console.log(JSON.stringify(summary, null, 2));
-
-if (failed.length > 0) {
-  process.exitCode = 1;
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const summary = await runSmoke({ rawArgs: process.argv.slice(2) });
+  console.log(JSON.stringify(summary, null, 2));
+  if (!summary.ok) {
+    process.exitCode = 1;
+  }
 }
 
-async function runReadOnlySmoke(baseUrl) {
-  const health = await requestJson(baseUrl, "/api/health");
+async function runReadOnlySmoke(baseUrl, context) {
+  const health = await requestJson(baseUrl, "/api/health", context);
   const healthData = expectSuccess("health", health, 200);
   assert(healthData.ok === true, "health", "health 응답의 data.ok가 true가 아닙니다.");
-  record("health", "pass", "Worker health 응답이 정상입니다.", {
+  record(context, "health", "pass", "Worker health 응답이 정상입니다.", {
     service: safeString(healthData.service),
     storage: safeString(healthData.storage),
   });
 
-  const placesResponse = await requestJson(baseUrl, "/api/places?limit=20");
+  const placesResponse = await requestJson(baseUrl, "/api/places?limit=20", context);
   const places = expectSuccess("places.list", placesResponse, 200);
   assert(Array.isArray(places), "places.list", "places 응답이 배열이 아닙니다.");
   assert(places.length > 0, "places.list", "공개 장소가 없습니다.");
@@ -105,56 +117,56 @@ async function runReadOnlySmoke(baseUrl) {
 
   const selectedPlace = places[0];
   assert(typeof selectedPlace.regionId === "string" && selectedPlace.regionId.length > 0, "places.list", "공개 장소에 regionId가 없습니다.");
-  record("places.list", "pass", "공개 장소 목록과 지도 좌표를 확인했습니다.", {
+  record(context, "places.list", "pass", "공개 장소 목록과 지도 좌표를 확인했습니다.", {
     count: places.length,
     firstPlaceId: safeString(selectedPlace.id),
   });
 
-  const placeResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(selectedPlace.id)}`);
+  const placeResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(selectedPlace.id)}`, context);
   const placeDetail = expectSuccess("places.detail", placeResponse, 200);
   assert(placeDetail.id === selectedPlace.id, "places.detail", "장소 상세 id가 목록의 id와 일치하지 않습니다.");
-  record("places.detail", "pass", "장소 상세 응답을 확인했습니다.", { placeId: safeString(selectedPlace.id) });
+  record(context, "places.detail", "pass", "장소 상세 응답을 확인했습니다.", { placeId: safeString(selectedPlace.id) });
 
-  const liveResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(selectedPlace.id)}/live`);
+  const liveResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(selectedPlace.id)}/live`, context);
   expectSuccess("places.live", liveResponse, 200);
-  record("places.live", "pass", "장소 실시간 요약 응답을 확인했습니다.", { placeId: safeString(selectedPlace.id) });
+  record(context, "places.live", "pass", "장소 실시간 요약 응답을 확인했습니다.", { placeId: safeString(selectedPlace.id) });
 
-  const placeRealtimeResponse = await requestJson(baseUrl, `/api/realtime/place/${encodeURIComponent(selectedPlace.id)}`);
+  const placeRealtimeResponse = await requestJson(baseUrl, `/api/realtime/place/${encodeURIComponent(selectedPlace.id)}`, context);
   const placeRealtime = expectSuccess("realtime.place", placeRealtimeResponse, 200);
-  assertRealtimeRoom("realtime.place", placeRealtime, "place", selectedPlace.id);
-  record("realtime.place", "pass", "장소 realtime room 응답을 확인했습니다.", { mode: safeString(placeRealtime.mode), roomId: safeString(placeRealtime.roomId) });
+  assertRealtimeRoom("realtime.place", placeRealtime, "place", selectedPlace.id, context);
+  record(context, "realtime.place", "pass", "장소 realtime room 응답을 확인했습니다.", { mode: safeString(placeRealtime.mode), roomId: safeString(placeRealtime.roomId) });
 
-  const regionRealtimeResponse = await requestJson(baseUrl, `/api/realtime/region/${encodeURIComponent(selectedPlace.regionId)}`);
+  const regionRealtimeResponse = await requestJson(baseUrl, `/api/realtime/region/${encodeURIComponent(selectedPlace.regionId)}`, context);
   const regionRealtime = expectSuccess("realtime.region", regionRealtimeResponse, 200);
-  assertRealtimeRoom("realtime.region", regionRealtime, "region", selectedPlace.regionId);
-  record("realtime.region", "pass", "지역 realtime room 응답을 확인했습니다.", { mode: safeString(regionRealtime.mode), roomId: safeString(regionRealtime.roomId) });
+  assertRealtimeRoom("realtime.region", regionRealtime, "region", selectedPlace.regionId, context);
+  record(context, "realtime.region", "pass", "지역 realtime room 응답을 확인했습니다.", { mode: safeString(regionRealtime.mode), roomId: safeString(regionRealtime.roomId) });
 
-  const globalRealtimeResponse = await requestJson(baseUrl, "/api/realtime/global");
+  const globalRealtimeResponse = await requestJson(baseUrl, "/api/realtime/global", context);
   const globalRealtime = expectSuccess("realtime.global", globalRealtimeResponse, 200);
-  assertRealtimeRoom("realtime.global", globalRealtime, "global", "global");
-  record("realtime.global", "pass", "전국 realtime room 응답을 확인했습니다.", { mode: safeString(globalRealtime.mode), roomId: safeString(globalRealtime.roomId) });
+  assertRealtimeRoom("realtime.global", globalRealtime, "global", "global", context);
+  record(context, "realtime.global", "pass", "전국 realtime room 응답을 확인했습니다.", { mode: safeString(globalRealtime.mode), roomId: safeString(globalRealtime.roomId) });
 
-  const globalRankingsResponse = await requestJson(baseUrl, "/api/rankings/global?limit=10");
+  const globalRankingsResponse = await requestJson(baseUrl, "/api/rankings/global?limit=10", context);
   const globalRankings = expectSuccess("rankings.global", globalRankingsResponse, 200);
   assert(Array.isArray(globalRankings), "rankings.global", "전국 랭킹 응답이 배열이 아닙니다.");
-  record("rankings.global", "pass", "전국 랭킹 응답을 확인했습니다.", { count: globalRankings.length });
+  record(context, "rankings.global", "pass", "전국 랭킹 응답을 확인했습니다.", { count: globalRankings.length });
 
-  const mapRankingsResponse = await requestJson(baseUrl, `/api/rankings?bbox=${encodeURIComponent(NATIONWIDE_BBOX)}&limit=10`);
+  const mapRankingsResponse = await requestJson(baseUrl, `/api/rankings?bbox=${encodeURIComponent(NATIONWIDE_BBOX)}&limit=10`, context);
   const mapRankings = expectSuccess("rankings.mapBounds", mapRankingsResponse, 200);
   assert(Array.isArray(mapRankings), "rankings.mapBounds", "지도 bounds 랭킹 응답이 배열이 아닙니다.");
-  record("rankings.mapBounds", "pass", "전국 bbox 랭킹 응답을 확인했습니다.", { count: mapRankings.length });
+  record(context, "rankings.mapBounds", "pass", "전국 bbox 랭킹 응답을 확인했습니다.", { count: mapRankings.length });
 
-  const commentsResponse = await requestJson(baseUrl, `/api/comments?placeId=${encodeURIComponent(selectedPlace.id)}`);
+  const commentsResponse = await requestJson(baseUrl, `/api/comments?placeId=${encodeURIComponent(selectedPlace.id)}`, context);
   const comments = expectSuccess("comments.list", commentsResponse, 200);
   assert(Array.isArray(comments), "comments.list", "댓글 목록 응답이 배열이 아닙니다.");
-  record("comments.list", "pass", "댓글 목록 응답을 확인했습니다.", { count: comments.length });
+  record(context, "comments.list", "pass", "댓글 목록 응답을 확인했습니다.", { count: comments.length });
 
-  const photosResponse = await requestJson(baseUrl, `/api/photos?placeId=${encodeURIComponent(selectedPlace.id)}`);
+  const photosResponse = await requestJson(baseUrl, `/api/photos?placeId=${encodeURIComponent(selectedPlace.id)}`, context);
   const photos = expectSuccess("photos.list", photosResponse, 200);
   assert(Array.isArray(photos), "photos.list", "사진 목록 응답이 배열이 아닙니다.");
-  record("photos.list", "pass", "사진 목록 응답을 확인했습니다.", { count: photos.length });
+  record(context, "photos.list", "pass", "사진 목록 응답을 확인했습니다.", { count: photos.length });
 
-  const deniedAdminResponse = await requestJson(baseUrl, "/api/admin/moderation/hide", {
+  const deniedAdminResponse = await requestJson(baseUrl, "/api/admin/moderation/hide", context, {
     method: "POST",
     body: JSON.stringify({
       targetType: "place",
@@ -167,17 +179,17 @@ async function runReadOnlySmoke(baseUrl) {
     "admin.denyByDefault",
     `무권한 admin 요청이 ${deniedAdminResponse.status} 상태로 반환되었습니다.`,
   );
-  record("admin.denyByDefault", "pass", "무권한 admin mutation이 deny-by-default로 차단되었습니다.", {
-    status: deniedAdminResponse.status,
+  record(context, "admin.denyByDefault", "pass", "무권한 admin mutation이 deny-by-default로 차단되었습니다.", {
+    httpStatus: deniedAdminResponse.status,
   });
 
   return selectedPlace;
 }
 
-async function runPhotoMutationSmoke(baseUrl, placeId) {
+async function runPhotoMutationSmoke(baseUrl, placeId, context) {
   const bytes = Buffer.from(TINY_JPEG_BASE64, "base64");
   const uploadId = `staging-smoke-${Date.now()}`;
-  const completeResponse = await requestJson(baseUrl, "/api/photos/complete", {
+  const completeResponse = await requestJson(baseUrl, "/api/photos/complete", context, {
     method: "POST",
     body: JSON.stringify({
       uploadId,
@@ -197,36 +209,36 @@ async function runPhotoMutationSmoke(baseUrl, placeId) {
     "photos.images.binding",
     "Cloudflare Images binding 픽셀 재인코딩 증적이 없습니다.",
   );
-  record("photos.complete", "pass", "staging R2/Images 사진 완료 smoke가 통과했습니다.", {
+  record(context, "photos.complete", "pass", "staging R2/Images 사진 완료 smoke가 통과했습니다.", {
     photoId: safeString(completed.photo.id),
   });
 
   const photoId = completed.photo.id;
-  const photosAfterCreateResponse = await requestJson(baseUrl, `/api/photos?placeId=${encodeURIComponent(placeId)}&limit=20`);
+  const photosAfterCreateResponse = await requestJson(baseUrl, `/api/photos?placeId=${encodeURIComponent(placeId)}&limit=20`, context);
   const photosAfterCreate = expectSuccess("photos.previewList", photosAfterCreateResponse, 200);
   assert(Array.isArray(photosAfterCreate), "photos.previewList", "사진 완료 후 목록 응답이 배열이 아닙니다.");
   const listedPhoto = photosAfterCreate.find((photo) => photo?.id === photoId);
   assert(isRecord(listedPhoto), "photos.previewList", "생성한 smoke 사진이 공개 사진 목록에 없습니다.");
   assert(typeof listedPhoto.previewUrl === "string" && listedPhoto.previewUrl.length > 0, "photos.previewList", "생성한 smoke 사진에 previewUrl이 없습니다.");
   assertPublicPhotoShape("photos.previewList", listedPhoto);
-  record("photos.previewList", "pass", "생성한 smoke 사진이 최소 공개 필드와 previewUrl로 노출됩니다.", { photoId: safeString(photoId) });
+  record(context, "photos.previewList", "pass", "생성한 smoke 사진이 최소 공개 필드와 previewUrl로 노출됩니다.", { photoId: safeString(photoId) });
 
-  const previewResponse = await requestBytes(baseUrl, listedPhoto.previewUrl);
+  const previewResponse = await requestBytes(baseUrl, listedPhoto.previewUrl, context);
   assert(previewResponse.status === 200, "photos.previewFile", `previewUrl 파일 상태가 200이 아니라 ${previewResponse.status}입니다.`);
   const previewContentType = previewResponse.headers.get("content-type") ?? "";
   assert(previewContentType.startsWith("image/"), "photos.previewFile", `previewUrl content-type이 이미지가 아닙니다: ${previewContentType}`);
   assert(previewResponse.bytes.byteLength > 0, "photos.previewFile", "previewUrl 파일 바이트가 비어 있습니다.");
-  record("photos.previewFile", "pass", "previewUrl 파일이 staging Worker/R2 경로에서 이미지 바이트로 반환됩니다.", {
+  record(context, "photos.previewFile", "pass", "previewUrl 파일이 staging Worker/R2 경로에서 이미지 바이트로 반환됩니다.", {
     photoId: safeString(photoId),
     byteLength: previewResponse.bytes.byteLength,
     contentType: safeString(previewContentType),
   });
 
-  const deleteResponse = await requestJson(baseUrl, `/api/photos/${encodeURIComponent(photoId)}`, { method: "DELETE" });
+  const deleteResponse = await requestJson(baseUrl, `/api/photos/${encodeURIComponent(photoId)}`, context, { method: "DELETE" });
   expectSuccess("photos.deleteOwn", deleteResponse, 200);
-  record("photos.deleteOwn", "pass", "smoke 사진을 같은 익명 세션으로 삭제했습니다.", { photoId: safeString(photoId) });
+  record(context, "photos.deleteOwn", "pass", "smoke 사진을 같은 익명 세션으로 삭제했습니다.", { photoId: safeString(photoId) });
 
-  const photosAfterDeleteResponse = await requestJson(baseUrl, `/api/photos?placeId=${encodeURIComponent(placeId)}`);
+  const photosAfterDeleteResponse = await requestJson(baseUrl, `/api/photos?placeId=${encodeURIComponent(placeId)}`, context);
   const photosAfterDelete = expectSuccess("photos.deleteNotPublic", photosAfterDeleteResponse, 200);
   assert(Array.isArray(photosAfterDelete), "photos.deleteNotPublic", "삭제 후 사진 목록 응답이 배열이 아닙니다.");
   assert(
@@ -234,35 +246,35 @@ async function runPhotoMutationSmoke(baseUrl, placeId) {
     "photos.deleteNotPublic",
     "삭제한 smoke 사진이 공개 사진 목록에 남아 있습니다.",
   );
-  record("photos.deleteNotPublic", "pass", "삭제한 smoke 사진이 공개 사진 목록에서 제외됐습니다.", { photoId: safeString(photoId) });
+  record(context, "photos.deleteNotPublic", "pass", "삭제한 smoke 사진이 공개 사진 목록에서 제외됐습니다.", { photoId: safeString(photoId) });
 }
 
-async function runInteractionMutationSmoke(baseUrl, placeId) {
-  const unlikeBeforeLikeResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(placeId)}/like`, { method: "DELETE" });
+async function runInteractionMutationSmoke(baseUrl, placeId, context) {
+  const unlikeBeforeLikeResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(placeId)}/like`, context, { method: "DELETE" });
   expectSuccess("places.unlikePreclean", unlikeBeforeLikeResponse, 200);
 
-  const likeResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(placeId)}/like`, { method: "POST" });
+  const likeResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(placeId)}/like`, context, { method: "POST" });
   const liked = expectSuccess("places.like", likeResponse, 200);
   assert(liked.placeId === placeId, "places.like", "좋아요 응답 placeId가 요청 placeId와 일치하지 않습니다.");
   assert(liked.created === true, "places.like", "좋아요 생성 응답 created가 true가 아닙니다.");
   assert(typeof liked.likeCount === "number" && liked.likeCount >= 1, "places.like", "좋아요 count가 올바르지 않습니다.");
-  record("places.like", "pass", "같은 익명 세션의 장소 좋아요 생성을 확인했습니다.", {
+  record(context, "places.like", "pass", "같은 익명 세션의 장소 좋아요 생성을 확인했습니다.", {
     placeId: safeString(placeId),
     likeCount: liked.likeCount,
   });
 
-  const unlikeResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(placeId)}/like`, { method: "DELETE" });
+  const unlikeResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(placeId)}/like`, context, { method: "DELETE" });
   const unliked = expectSuccess("places.unlike", unlikeResponse, 200);
   assert(unliked.placeId === placeId, "places.unlike", "좋아요 취소 응답 placeId가 요청 placeId와 일치하지 않습니다.");
   assert(unliked.deleted === true, "places.unlike", "좋아요 취소 응답 deleted가 true가 아닙니다.");
   assert(typeof unliked.likeCount === "number" && unliked.likeCount >= 0, "places.unlike", "좋아요 취소 count가 올바르지 않습니다.");
-  record("places.unlike", "pass", "같은 익명 세션의 장소 좋아요 취소를 확인했습니다.", {
+  record(context, "places.unlike", "pass", "같은 익명 세션의 장소 좋아요 취소를 확인했습니다.", {
     placeId: safeString(placeId),
     likeCount: unliked.likeCount,
   });
 
   const commentBody = `staging smoke comment ${new Date().toISOString()}`;
-  const commentCreateResponse = await requestJson(baseUrl, "/api/comments", {
+  const commentCreateResponse = await requestJson(baseUrl, "/api/comments", context, {
     method: "POST",
     body: JSON.stringify({
       placeId,
@@ -274,7 +286,7 @@ async function runInteractionMutationSmoke(baseUrl, placeId) {
   assert(createdComment.placeId === placeId, "comments.create", "댓글 생성 응답 placeId가 요청 placeId와 일치하지 않습니다.");
 
   const commentId = createdComment.id;
-  const commentsAfterCreateResponse = await requestJson(baseUrl, `/api/comments?placeId=${encodeURIComponent(placeId)}&limit=20`);
+  const commentsAfterCreateResponse = await requestJson(baseUrl, `/api/comments?placeId=${encodeURIComponent(placeId)}&limit=20`, context);
   const commentsAfterCreate = expectSuccess("comments.create", commentsAfterCreateResponse, 200);
   assert(Array.isArray(commentsAfterCreate), "comments.create", "댓글 생성 후 목록 응답이 배열이 아닙니다.");
   assert(
@@ -282,14 +294,14 @@ async function runInteractionMutationSmoke(baseUrl, placeId) {
     "comments.create",
     "생성한 smoke 댓글이 공개 댓글 목록에 없습니다.",
   );
-  record("comments.create", "pass", "smoke 댓글 생성과 공개 목록 노출을 확인했습니다.", { commentId: safeString(commentId) });
+  record(context, "comments.create", "pass", "smoke 댓글 생성과 공개 목록 노출을 확인했습니다.", { commentId: safeString(commentId) });
 
-  const commentDeleteResponse = await requestJson(baseUrl, `/api/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
+  const commentDeleteResponse = await requestJson(baseUrl, `/api/comments/${encodeURIComponent(commentId)}`, context, { method: "DELETE" });
   const deletedComment = expectSuccess("comments.deleteOwn", commentDeleteResponse, 200);
   assert(deletedComment.deleted === true, "comments.deleteOwn", "댓글 삭제 응답 deleted가 true가 아닙니다.");
-  record("comments.deleteOwn", "pass", "smoke 댓글을 같은 익명 세션으로 삭제했습니다.", { commentId: safeString(commentId) });
+  record(context, "comments.deleteOwn", "pass", "smoke 댓글을 같은 익명 세션으로 삭제했습니다.", { commentId: safeString(commentId) });
 
-  const commentsAfterDeleteResponse = await requestJson(baseUrl, `/api/comments?placeId=${encodeURIComponent(placeId)}&limit=20`);
+  const commentsAfterDeleteResponse = await requestJson(baseUrl, `/api/comments?placeId=${encodeURIComponent(placeId)}&limit=20`, context);
   const commentsAfterDelete = expectSuccess("comments.deleteNotPublic", commentsAfterDeleteResponse, 200);
   assert(Array.isArray(commentsAfterDelete), "comments.deleteNotPublic", "삭제 후 댓글 목록 응답이 배열이 아닙니다.");
   assert(
@@ -297,26 +309,26 @@ async function runInteractionMutationSmoke(baseUrl, placeId) {
     "comments.deleteNotPublic",
     "삭제한 smoke 댓글이 공개 댓글 목록에 남아 있습니다.",
   );
-  record("comments.deleteNotPublic", "pass", "삭제한 smoke 댓글이 공개 댓글 목록에서 제외됐습니다.", { commentId: safeString(commentId) });
+  record(context, "comments.deleteNotPublic", "pass", "삭제한 smoke 댓글이 공개 댓글 목록에서 제외됐습니다.", { commentId: safeString(commentId) });
 }
 
-async function runModerationMutationSmoke(baseUrl, placeId) {
-  if (!adminToken) {
-    if (adminRequired) {
+async function runModerationMutationSmoke(baseUrl, placeId, context) {
+  if (!context.adminToken) {
+    if (context.adminRequired) {
       throw new SmokeError("ADMIN_TOKEN_REQUIRED", "운영자 신고 처리 smoke에는 SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 필요합니다.");
     }
-    record("moderation.adminAction", "skip", "SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 없어 신고 생성/운영자 처리 smoke를 건너뜁니다.");
+    record(context, "moderation.adminAction", "skip", "SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 없어 신고 생성/운영자 처리 smoke를 건너뜁니다.");
     return;
   }
 
-  const queueAuthResponse = await requestJson(baseUrl, "/api/moderation/reports?status=open&limit=20", {
-    headers: adminHeaders(),
+  const queueAuthResponse = await requestJson(baseUrl, "/api/moderation/reports?status=open&limit=20", context, {
+    headers: adminHeaders(context),
   });
   const queueBefore = expectSuccess("moderation.queueAuth", queueAuthResponse, 200);
   assert(Array.isArray(queueBefore), "moderation.queueAuth", "운영자 신고 큐 응답이 배열이 아닙니다.");
-  record("moderation.queueAuth", "pass", "운영자 토큰으로 신고 큐 조회가 가능합니다.", { openCount: queueBefore.length });
+  record(context, "moderation.queueAuth", "pass", "운영자 토큰으로 신고 큐 조회가 가능합니다.", { openCount: queueBefore.length });
 
-  const reportResponse = await requestJson(baseUrl, "/api/moderation/reports", {
+  const reportResponse = await requestJson(baseUrl, "/api/moderation/reports", context, {
     method: "POST",
     body: JSON.stringify({
       targetType: "place",
@@ -329,11 +341,11 @@ async function runModerationMutationSmoke(baseUrl, placeId) {
   assert(report.targetType === "place", "moderation.reportCreate", "신고 생성 응답 targetType이 place가 아닙니다.");
   assert(report.targetId === placeId, "moderation.reportCreate", "신고 생성 응답 targetId가 요청 placeId와 일치하지 않습니다.");
   assert(report.status === "open", "moderation.reportCreate", "신고 생성 응답 status가 open이 아닙니다.");
-  record("moderation.reportCreate", "pass", "smoke 장소 신고 생성을 확인했습니다.", { reportId: safeString(report.id) });
+  record(context, "moderation.reportCreate", "pass", "smoke 장소 신고 생성을 확인했습니다.", { reportId: safeString(report.id) });
 
   const reportId = report.id;
-  const queueAfterCreateResponse = await requestJson(baseUrl, "/api/moderation/reports?status=open&limit=50", {
-    headers: adminHeaders(),
+  const queueAfterCreateResponse = await requestJson(baseUrl, "/api/moderation/reports?status=open&limit=50", context, {
+    headers: adminHeaders(context),
   });
   const queueAfterCreate = expectSuccess("moderation.queueVisible", queueAfterCreateResponse, 200);
   assert(Array.isArray(queueAfterCreate), "moderation.queueVisible", "신고 생성 후 운영자 큐 응답이 배열이 아닙니다.");
@@ -342,11 +354,11 @@ async function runModerationMutationSmoke(baseUrl, placeId) {
     "moderation.queueVisible",
     "생성한 smoke 신고가 운영자 open 큐에 없습니다.",
   );
-  record("moderation.queueVisible", "pass", "생성한 smoke 신고가 운영자 open 큐에 노출됩니다.", { reportId: safeString(reportId) });
+  record(context, "moderation.queueVisible", "pass", "생성한 smoke 신고가 운영자 open 큐에 노출됩니다.", { reportId: safeString(reportId) });
 
-  const rejectResponse = await requestJson(baseUrl, `/api/moderation/reports/${encodeURIComponent(reportId)}/action`, {
+  const rejectResponse = await requestJson(baseUrl, `/api/moderation/reports/${encodeURIComponent(reportId)}/action`, context, {
     method: "POST",
-    headers: adminHeaders(),
+    headers: adminHeaders(context),
     body: JSON.stringify({
       status: "rejected",
       reason: "staging smoke cleanup",
@@ -355,10 +367,10 @@ async function runModerationMutationSmoke(baseUrl, placeId) {
   const rejected = expectSuccess("moderation.reportReject", rejectResponse, 200);
   assert(rejected.id === reportId, "moderation.reportReject", "운영자 처리 응답 id가 신고 id와 일치하지 않습니다.");
   assert(rejected.status === "rejected", "moderation.reportReject", "운영자 처리 응답 status가 rejected가 아닙니다.");
-  record("moderation.reportReject", "pass", "smoke 신고를 운영자 action으로 rejected 처리했습니다.", { reportId: safeString(reportId) });
+  record(context, "moderation.reportReject", "pass", "smoke 신고를 운영자 action으로 rejected 처리했습니다.", { reportId: safeString(reportId) });
 
-  const queueAfterRejectResponse = await requestJson(baseUrl, "/api/moderation/reports?status=open&limit=50", {
-    headers: adminHeaders(),
+  const queueAfterRejectResponse = await requestJson(baseUrl, "/api/moderation/reports?status=open&limit=50", context, {
+    headers: adminHeaders(context),
   });
   const queueAfterReject = expectSuccess("moderation.queueClean", queueAfterRejectResponse, 200);
   assert(Array.isArray(queueAfterReject), "moderation.queueClean", "신고 처리 후 운영자 큐 응답이 배열이 아닙니다.");
@@ -367,15 +379,15 @@ async function runModerationMutationSmoke(baseUrl, placeId) {
     "moderation.queueClean",
     "rejected 처리한 smoke 신고가 open 큐에 남아 있습니다.",
   );
-  record("moderation.queueClean", "pass", "rejected 처리한 smoke 신고가 open 큐에서 제외됐습니다.", { reportId: safeString(reportId) });
+  record(context, "moderation.queueClean", "pass", "rejected 처리한 smoke 신고가 open 큐에서 제외됐습니다.", { reportId: safeString(reportId) });
 }
 
-async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
-  if (!adminToken) {
-    if (adminRequired) {
+async function runUserRestrictionMutationSmoke(baseUrl, placeId, context) {
+  if (!context.adminToken) {
+    if (context.adminRequired) {
       throw new SmokeError("ADMIN_TOKEN_REQUIRED", "사용자 제한 smoke에는 SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 필요합니다.");
     }
-    record("users.restriction.adminAction", "skip", "SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 없어 사용자 제한/해제 smoke를 건너뜁니다.");
+    record(context, "users.restriction.adminAction", "skip", "SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 없어 사용자 제한/해제 smoke를 건너뜁니다.");
     return;
   }
 
@@ -385,7 +397,7 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
   let unrestricted = false;
 
   try {
-    const seedCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousId, {
+    const seedCommentResponse = await requestJsonAs(baseUrl, "/api/comments", context.restrictionAnonymousId, context, {
       method: "POST",
       body: JSON.stringify({
         placeId,
@@ -399,9 +411,9 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
     anonymousUserId = seedComment.anonymousUserId;
 
     const blockedUntil = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    const restrictResponse = await requestJson(baseUrl, "/api/admin/users/restrict", {
+    const restrictResponse = await requestJson(baseUrl, "/api/admin/users/restrict", context, {
       method: "POST",
-      headers: adminHeaders(),
+      headers: adminHeaders(context),
       body: JSON.stringify({
         anonymousUserId,
         reason: "staging smoke temporary restriction",
@@ -412,11 +424,11 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
     assert(restrictPayload.restricted === true, "users.restrict", "사용자 제한 응답 restricted가 true가 아닙니다.");
     assert(restrictPayload.blockedUntil === blockedUntil, "users.restrict", "사용자 제한 blockedUntil이 요청값과 일치하지 않습니다.");
     restricted = true;
-    record("users.restrict", "pass", "전용 smoke 익명 사용자를 임시 제한했습니다.", {
+    record(context, "users.restrict", "pass", "전용 smoke 익명 사용자를 임시 제한했습니다.", {
       blockedUntil,
     });
 
-    const blockedCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousId, {
+    const blockedCommentResponse = await requestJsonAs(baseUrl, "/api/comments", context.restrictionAnonymousId, context, {
       method: "POST",
       body: JSON.stringify({
         placeId,
@@ -434,11 +446,11 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
     const blockedSerialized = JSON.stringify(blockedCommentResponse.payload);
     assert(!blockedSerialized.includes(anonymousUserId), "users.restrictBlocksWrites", "제한 사용자 public 오류에 anonymousUserId가 포함됐습니다.");
     assert(!blockedSerialized.includes("staging smoke temporary restriction"), "users.restrictBlocksWrites", "제한 사용자 public 오류에 제한 사유가 포함됐습니다.");
-    record("users.restrictBlocksWrites", "pass", "제한된 익명 사용자의 새 댓글 작성이 public 민감값 없이 차단됩니다.");
+    record(context, "users.restrictBlocksWrites", "pass", "제한된 익명 사용자의 새 댓글 작성이 public 민감값 없이 차단됩니다.");
 
-    const unrestrictResponse = await requestJson(baseUrl, "/api/admin/users/unrestrict", {
+    const unrestrictResponse = await requestJson(baseUrl, "/api/admin/users/unrestrict", context, {
       method: "POST",
-      headers: adminHeaders(),
+      headers: adminHeaders(context),
       body: JSON.stringify({
         anonymousUserId,
         reason: "staging smoke cleanup",
@@ -447,9 +459,9 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
     const unrestrictPayload = expectSuccess("users.unrestrict", unrestrictResponse, 200);
     assert(unrestrictPayload.restricted === false, "users.unrestrict", "사용자 제한 해제 응답 restricted가 false가 아닙니다.");
     unrestricted = true;
-    record("users.unrestrict", "pass", "전용 smoke 익명 사용자의 제한을 해제했습니다.");
+    record(context, "users.unrestrict", "pass", "전용 smoke 익명 사용자의 제한을 해제했습니다.");
 
-    const restoredCommentResponse = await requestJsonAs(baseUrl, "/api/comments", restrictionAnonymousId, {
+    const restoredCommentResponse = await requestJsonAs(baseUrl, "/api/comments", context.restrictionAnonymousId, context, {
       method: "POST",
       body: JSON.stringify({
         placeId,
@@ -459,12 +471,12 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
     const restoredComment = expectSuccess("users.unrestrictRestoresWrites", restoredCommentResponse, 201);
     assert(restoredComment.id, "users.unrestrictRestoresWrites", "제한 해제 후 댓글 응답에 id가 없습니다.");
     cleanupCommentIds.push(restoredComment.id);
-    record("users.unrestrictRestoresWrites", "pass", "제한 해제 후 같은 익명 세션의 댓글 작성이 다시 허용됩니다.");
+    record(context, "users.unrestrictRestoresWrites", "pass", "제한 해제 후 같은 익명 세션의 댓글 작성이 다시 허용됩니다.");
   } finally {
     if (anonymousUserId && restricted && !unrestricted) {
-      await requestJson(baseUrl, "/api/admin/users/unrestrict", {
+      await requestJson(baseUrl, "/api/admin/users/unrestrict", context, {
         method: "POST",
-        headers: adminHeaders(),
+        headers: adminHeaders(context),
         body: JSON.stringify({
           anonymousUserId,
           reason: "staging smoke cleanup after failure",
@@ -474,77 +486,77 @@ async function runUserRestrictionMutationSmoke(baseUrl, placeId) {
 
     let deleted = 0;
     for (const commentId of cleanupCommentIds) {
-      const deleteResponse = await requestJsonAs(baseUrl, `/api/comments/${encodeURIComponent(commentId)}`, restrictionAnonymousId, { method: "DELETE" });
+      const deleteResponse = await requestJsonAs(baseUrl, `/api/comments/${encodeURIComponent(commentId)}`, context.restrictionAnonymousId, context, { method: "DELETE" });
       expectSuccess("users.restrictionCleanup", deleteResponse, 200);
       deleted += 1;
     }
 
     if (deleted > 0) {
-      record("users.restrictionCleanup", "pass", "사용자 제한 smoke 댓글을 같은 익명 세션으로 정리했습니다.", { deleted });
+      record(context, "users.restrictionCleanup", "pass", "사용자 제한 smoke 댓글을 같은 익명 세션으로 정리했습니다.", { deleted });
     }
   }
 }
 
-async function runCoordinateStatusMutationSmoke(baseUrl) {
-  if (!coordinateStatusSmokeEnabled) {
-    record("coordinateStatus.mutation", "skip", "좌표 상태 smoke는 --coordinate-status 또는 SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE=1 로 명시 opt-in 해야 실행합니다.");
+async function runCoordinateStatusMutationSmoke(baseUrl, context) {
+  if (!context.coordinateStatusSmokeEnabled) {
+    record(context, "coordinateStatus.mutation", "skip", "좌표 상태 smoke는 --coordinate-status 또는 SILSIGAN_STAGING_COORDINATE_STATUS_SMOKE=1 로 명시 opt-in 해야 실행합니다.");
     return;
   }
 
-  if (!adminToken) {
+  if (!context.adminToken) {
     throw new SmokeError("coordinateStatus.adminToken", "좌표 상태 smoke에는 SILSIGAN_STAGING_ADMIN_TOKEN 또는 --admin-token 이 필요합니다.");
   }
 
-  if (!coordinateSmokePlaceId) {
+  if (!context.coordinateSmokePlaceId) {
     throw new SmokeError("coordinateStatus.placeId", "좌표 상태 smoke에는 SILSIGAN_STAGING_COORDINATE_SMOKE_PLACE_ID 또는 --coordinate-place-id 가 필요합니다.");
   }
 
-  const latitude = parseCoordinateOption(coordinateSmokeLatitude, "coordinateStatus.latitude", "SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE 또는 --coordinate-latitude");
-  const longitude = parseCoordinateOption(coordinateSmokeLongitude, "coordinateStatus.longitude", "SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE 또는 --coordinate-longitude");
+  const latitude = parseCoordinateOption(context.coordinateSmokeLatitude, "coordinateStatus.latitude", "SILSIGAN_STAGING_COORDINATE_SMOKE_LATITUDE 또는 --coordinate-latitude");
+  const longitude = parseCoordinateOption(context.coordinateSmokeLongitude, "coordinateStatus.longitude", "SILSIGAN_STAGING_COORDINATE_SMOKE_LONGITUDE 또는 --coordinate-longitude");
 
-  const coordinateResponse = await requestJson(baseUrl, "/api/admin/places/coordinate-status", {
+  const coordinateResponse = await requestJson(baseUrl, "/api/admin/places/coordinate-status", context, {
     method: "POST",
-    headers: adminHeaders(),
+    headers: adminHeaders(context),
     body: JSON.stringify({
-      placeId: coordinateSmokePlaceId,
+      placeId: context.coordinateSmokePlaceId,
       coordinateStatus: "verified",
       latitude,
       longitude,
-      source: coordinateSmokeSource,
-      reason: coordinateSmokeReason,
+      source: context.coordinateSmokeSource,
+      reason: context.coordinateSmokeReason,
     }),
   });
   const coordinatePayload = expectSuccess("coordinateStatus.verify", coordinateResponse, 200);
-  assert(coordinatePayload.placeId === coordinateSmokePlaceId, "coordinateStatus.verify", "좌표 상태 응답 placeId가 요청값과 일치하지 않습니다.");
+  assert(coordinatePayload.placeId === context.coordinateSmokePlaceId, "coordinateStatus.verify", "좌표 상태 응답 placeId가 요청값과 일치하지 않습니다.");
   assert(coordinatePayload.coordinateStatus === "verified", "coordinateStatus.verify", "좌표 상태 응답이 verified가 아닙니다.");
   assert(coordinatePayload.latitude === latitude, "coordinateStatus.verify", "좌표 상태 응답 latitude가 요청값과 일치하지 않습니다.");
   assert(coordinatePayload.longitude === longitude, "coordinateStatus.verify", "좌표 상태 응답 longitude가 요청값과 일치하지 않습니다.");
-  record("coordinateStatus.verify", "pass", "명시 opt-in 장소의 좌표 verified 운영 경로를 확인했습니다.", {
-    placeId: safeString(coordinateSmokePlaceId),
+  record(context, "coordinateStatus.verify", "pass", "명시 opt-in 장소의 좌표 verified 운영 경로를 확인했습니다.", {
+    placeId: safeString(context.coordinateSmokePlaceId),
   });
 
-  const detailResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(coordinateSmokePlaceId)}`);
+  const detailResponse = await requestJson(baseUrl, `/api/places/${encodeURIComponent(context.coordinateSmokePlaceId)}`, context);
   const detailPayload = expectSuccess("coordinateStatus.publicDetail", detailResponse, 200);
-  assert(detailPayload.id === coordinateSmokePlaceId, "coordinateStatus.publicDetail", "좌표 검증 후 공개 상세 id가 요청값과 일치하지 않습니다.");
+  assert(detailPayload.id === context.coordinateSmokePlaceId, "coordinateStatus.publicDetail", "좌표 검증 후 공개 상세 id가 요청값과 일치하지 않습니다.");
   assert(detailPayload.coordinateStatus === "verified", "coordinateStatus.publicDetail", "좌표 검증 후 공개 상세 coordinateStatus가 verified가 아닙니다.");
   assert(detailPayload.latitude === latitude, "coordinateStatus.publicDetail", "좌표 검증 후 공개 상세 latitude가 요청값과 일치하지 않습니다.");
   assert(detailPayload.longitude === longitude, "coordinateStatus.publicDetail", "좌표 검증 후 공개 상세 longitude가 요청값과 일치하지 않습니다.");
-  record("coordinateStatus.publicDetail", "pass", "좌표 verified 후 공개 장소 상세 노출을 확인했습니다.", {
-    placeId: safeString(coordinateSmokePlaceId),
+  record(context, "coordinateStatus.publicDetail", "pass", "좌표 verified 후 공개 장소 상세 노출을 확인했습니다.", {
+    placeId: safeString(context.coordinateSmokePlaceId),
   });
 }
 
-async function validateTailLogFile(filePath) {
+async function validateTailLogFile(filePath, context) {
   const text = await readFile(filePath, "utf8");
   const findings = findSensitiveTailLogFindings(text);
   if (findings.length > 0) {
-    record("tail.redaction", "fail", "captured tail log에 민감값 패턴이 남아 있습니다.", {
+    record(context, "tail.redaction", "fail", "captured tail log에 민감값 패턴이 남아 있습니다.", {
       findings,
     });
     return;
   }
 
-  record("tail.redaction", "pass", "captured tail log에서 raw token/coordinate/anon id/original filename 패턴이 발견되지 않았습니다.", {
+  record(context, "tail.redaction", "pass", "captured tail log에서 raw token/coordinate/anon id/original filename 패턴이 발견되지 않았습니다.", {
     file: filePath,
   });
 }
@@ -569,20 +581,20 @@ export function findSensitiveTailLogFindings(text) {
     .map(({ label }) => label);
 }
 
-async function requestJson(baseUrl, path, init = {}) {
-  return requestJsonAs(baseUrl, path, anonymousId, init);
+async function requestJson(baseUrl, path, context, init = {}) {
+  return requestJsonAs(baseUrl, path, context.anonymousId, context, init);
 }
 
-async function requestBytes(baseUrl, path, init = {}) {
+async function requestBytes(baseUrl, path, context, init = {}) {
   const url = new URL(path, baseUrl);
   const headers = new Headers(init.headers ?? {});
-  headers.set("x-silsigan-anon-id", anonymousId);
+  applyAnonymousSessionHeaders(headers, context.anonymousId, context);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   let response;
   try {
-    response = await fetch(url, { ...init, headers, signal: controller.signal });
+    response = await context.fetchImpl(url, { ...init, headers, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new SmokeError("REQUEST_TIMEOUT", `${path} 요청이 10초 안에 완료되지 않았습니다.`);
@@ -591,6 +603,8 @@ async function requestBytes(baseUrl, path, init = {}) {
   } finally {
     clearTimeout(timeout);
   }
+
+  rememberAnonymousSession(response.headers, context.anonymousId, context);
 
   return {
     status: response.status,
@@ -599,10 +613,10 @@ async function requestBytes(baseUrl, path, init = {}) {
   };
 }
 
-async function requestJsonAs(baseUrl, path, requestAnonymousId, init = {}) {
+async function requestJsonAs(baseUrl, path, requestAnonymousId, context, init = {}) {
   const url = new URL(path, baseUrl);
   const headers = new Headers(init.headers ?? {});
-  headers.set("x-silsigan-anon-id", requestAnonymousId);
+  applyAnonymousSessionHeaders(headers, requestAnonymousId, context);
   if (init.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
@@ -611,7 +625,7 @@ async function requestJsonAs(baseUrl, path, requestAnonymousId, init = {}) {
   const timeout = setTimeout(() => controller.abort(), 10_000);
   let response;
   try {
-    response = await fetch(url, { ...init, headers, signal: controller.signal });
+    response = await context.fetchImpl(url, { ...init, headers, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new SmokeError("REQUEST_TIMEOUT", `${path} 요청이 10초 안에 완료되지 않았습니다.`);
@@ -620,6 +634,8 @@ async function requestJsonAs(baseUrl, path, requestAnonymousId, init = {}) {
   } finally {
     clearTimeout(timeout);
   }
+
+  rememberAnonymousSession(response.headers, requestAnonymousId, context);
 
   const raw = await response.text();
   let payload = null;
@@ -632,6 +648,29 @@ async function requestJsonAs(baseUrl, path, requestAnonymousId, init = {}) {
   }
 
   return { status: response.status, payload };
+}
+
+function applyAnonymousSessionHeaders(headers, anonymousId, context) {
+  const credentials = context.anonymousSessionCredentials.get(anonymousId);
+  if (!context.sendAnonymousSession && !credentials) return;
+
+  headers.set("x-silsigan-anon-id", anonymousId);
+  if (credentials?.proof) headers.set("x-silsigan-anon-proof", credentials.proof);
+  if (credentials?.signature) headers.set("x-silsigan-anon-signature", credentials.signature);
+}
+
+function rememberAnonymousSession(headers, requestedAnonymousId, context) {
+  const anonymousId = headers.get("x-silsigan-anon-id");
+  const proof = headers.get("x-silsigan-anon-proof");
+  const signature = headers.get("x-silsigan-anon-signature");
+  if (!anonymousId || (!proof && !signature)) return;
+
+  const credentials = { proof, signature };
+  context.anonymousSessionCredentials.set(anonymousId, credentials);
+  context.anonymousSessionCredentials.set(requestedAnonymousId, credentials);
+  if (requestedAnonymousId === context.anonymousId) {
+    context.anonymousId = anonymousId;
+  }
 }
 
 function parseCoordinateOption(value, code, label) {
@@ -647,9 +686,9 @@ function parseCoordinateOption(value, code, label) {
   return parsed;
 }
 
-function adminHeaders() {
+function adminHeaders(context) {
   return {
-    "x-silsigan-admin-token": adminToken,
+    "x-silsigan-admin-token": context.adminToken,
     "x-silsigan-admin-subject": "staging-smoke",
   };
 }
@@ -678,14 +717,14 @@ function isAnonymousUserId(value) {
   return typeof value === "string" && /^anon_[a-f0-9]{48}$/i.test(value);
 }
 
-function assertRealtimeRoom(name, room, scope, roomId) {
+function assertRealtimeRoom(name, room, scope, roomId, context) {
   assert(isRecord(room), name, `${name} 응답 data가 객체가 아닙니다.`);
   assert(room.mode === "polling" || room.mode === "durable-object-polling" || room.mode === "durable-object", name, `${name} mode가 올바르지 않습니다.`);
   assert(room.scope === scope, name, `${name} scope가 ${scope}가 아닙니다.`);
   assert(room.roomId === roomId, name, `${name} roomId가 ${roomId}가 아닙니다.`);
   assert(Array.isArray(room.events), name, `${name} events가 배열이 아닙니다.`);
   const serialized = JSON.stringify(room);
-  assert(!serialized.includes(anonymousId), name, `${name} 응답에 raw anonymous id가 포함됐습니다.`);
+  assert(!serialized.includes(context.anonymousId), name, `${name} 응답에 raw anonymous id가 포함됐습니다.`);
   assert(!serialized.includes("anonymousUserId"), name, `${name} 응답에 anonymousUserId 필드가 포함됐습니다.`);
   assert(!serialized.includes("latitude") && !serialized.includes("longitude"), name, `${name} 응답에 raw coordinate 필드가 포함됐습니다.`);
 }
@@ -747,8 +786,8 @@ function parseArgs(rawArgs) {
   return { flags: parsedFlags, options: parsedOptions };
 }
 
-function record(name, status, message, details = {}) {
-  checks.push({
+function record(context, name, status, message, details = {}) {
+  context.checks.push({
     name,
     status,
     message,

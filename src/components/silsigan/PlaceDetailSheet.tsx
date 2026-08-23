@@ -18,7 +18,7 @@ export type SheetPlace = {
   weather: string;
   updated: string;
   score: number;
-  tone: "calm" | "normal" | "busy" | "danger";
+  tone: "calm" | "normal" | "busy" | "danger" | "unknown";
   isSample?: boolean;
 };
 
@@ -39,6 +39,7 @@ export function PlaceDetailSheet({
   onPhotoDelete,
   onPhotoClick,
   onPhotoUpload,
+  photoUploadReady,
   onReportComment,
   onReport,
   onReportPhoto,
@@ -60,6 +61,7 @@ export function PlaceDetailSheet({
   onPhotoDelete: (photo: PlacePhoto) => Promise<void>;
   onPhotoClick: (photo: PlacePhoto) => Promise<void>;
   onPhotoUpload: (photo: PreparedPhotoUpload) => Promise<void>;
+  photoUploadReady: boolean;
   onReportComment: (comment: PlaceComment) => void;
   onReport: () => void;
   onReportPhoto: (photo: PlacePhoto) => void;
@@ -204,6 +206,7 @@ export function PlaceDetailSheet({
           onPhotoClick={onPhotoClick}
           onReportPhoto={onReportPhoto}
           onUpload={onPhotoUpload}
+          uploadEnabled={photoUploadReady}
           safetyNotice={safetyNotice}
         />
       </section>

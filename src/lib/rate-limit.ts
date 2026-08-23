@@ -34,12 +34,17 @@ export function assertRateLimit({ key, limit, windowMs }: RateLimitOptions) {
   bucket.count += 1;
 }
 
-export function rateLimitKey(request: Request, scope: string) {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const realIp = request.headers.get("x-real-ip")?.trim();
-  const userAgent = request.headers.get("user-agent")?.slice(0, 80) ?? "unknown";
+export async function rateLimitKey(request: Request, scope: string) {
+  const forwarded = request.headers.get("cf-connecting-ip")
+    ?? request.headers.get("x-vercel-forwarded-for")
+    ?? request.headers.get("x-forwarded-for")?.split(",")[0]
+    ?? request.headers.get("x-real-ip")
+    ?? "local";
+  const input = new TextEncoder().encode(`silsigan-rate-limit:${forwarded.trim()}`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
+  const fingerprint = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
 
-  return `${scope}:${forwarded || realIp || "local"}:${userAgent}`;
+  return `${scope}:ip:${fingerprint}`;
 }
 
 export function clearRateLimitBucketsForTests() {

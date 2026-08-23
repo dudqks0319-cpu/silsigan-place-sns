@@ -9,6 +9,7 @@
 .hero,
 .metrics div,
 .activationPanel,
+.sourcePanel,
 .workerQueuePanel,
 .activationItem,
 .queueItem,
@@ -75,6 +76,216 @@
 .activationPanel {
   padding: 20px;
   margin-bottom: 16px;
+}
+
+.sourcePanel {
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.sourcePanelBadge {
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.sourceHealthList {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.sourceHealthItem {
+  min-width: 0;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.sourceHealthTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sourceHealthTitleRow strong,
+.sourceHealthTitleRow span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.sourceHealthTitleRow strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.sourceHealthTitleRow span,
+.sourceHealthItem small {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sourceHealthStatus {
+  border-radius: 999px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.sourceHealthStatusHealthy {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.sourceHealthStatusDegraded {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.sourceHealthStatusDown {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.sourceHealthItem p {
+  min-height: 38px;
+  margin: 12px 0 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sourceHealthItem small {
+  display: block;
+}
+
+.sourceHealthEmpty {
+  display: grid;
+  gap: 6px;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 18px;
+}
+
+.sourceHealthEmpty strong {
+  font-size: 14px;
+}
+
+.sourceHealthEmpty span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.sourceRegistryBlock {
+  margin-top: 18px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  padding-top: 16px;
+}
+
+.sourceRegistryHeading {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.sourceRegistryHeading strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.sourceRegistryHeading span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sourceRegistryList {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.sourceRegistryItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.sourceRegistryItem > div:first-child {
+  min-width: 0;
+}
+
+.sourceRegistryItem strong,
+.sourceRegistryItem span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.sourceRegistryItem strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.sourceRegistryItem span,
+.sourceRegistryItem small {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sourceRegistryBadges {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.sourceRegistryBadges em {
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.sourceRegistryActivationActive {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.sourceRegistryActivationAwaiting_rights,
+.sourceRegistryActivationUnhealthy {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.sourceRegistryActivationInactive {
+  background: #e2e8f0;
+  color: #475569;
 }
 
 .workerQueuePanel {
@@ -397,12 +608,14 @@
   }
 
   .metrics,
-  .activationGrid {
+  .activationGrid,
+  .sourceHealthList {
     grid-template-columns: 1fr;
   }
 
   .sectionHeader,
-  .activationTitleRow {
+  .activationTitleRow,
+  .sourceRegistryItem {
     display: block;
   }
 
@@ -410,6 +623,11 @@
   .readyBadge,
   .holdBadge {
     display: inline-flex;
+    margin-top: 10px;
+  }
+
+  .sourceRegistryBadges {
+    justify-items: start;
     margin-top: 10px;
   }
 

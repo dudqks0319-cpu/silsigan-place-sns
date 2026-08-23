@@ -74,8 +74,13 @@ test("live signals require a real provider observation timestamp", () => {
   );
 });
 
-test("expired and official static signals never count as current state", () => {
+test("expired, unbounded, and official static signals never count as current state", () => {
   assert.equal(isLiveSignalCurrent(signal({ expiresAt: "2026-07-10T00:29:59.000Z" }), now), false);
+  assert.equal(isLiveSignalCurrent(signal({ expiresAt: undefined }), now), false);
+  assert.equal(
+    isLiveSignalCurrent(signal({ sourceType: "official_periodic", expiresAt: undefined }), now),
+    false,
+  );
   assert.equal(isLiveSignalCurrent(signal({ sourceType: "official_static" }), now), false);
   assert.equal(isLiveSignalCurrent(signal({ isPubliclyVisible: false }), now), false);
 });

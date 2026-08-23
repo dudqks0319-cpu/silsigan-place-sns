@@ -11,7 +11,7 @@ export type RankingPlace = {
   signal: string;
   summary: string;
   score: number;
-  tone: "calm" | "normal" | "busy" | "danger";
+  tone: "calm" | "normal" | "busy" | "danger" | "unknown";
   visitors: string;
 };
 

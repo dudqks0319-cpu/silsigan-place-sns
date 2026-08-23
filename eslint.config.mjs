@@ -7,6 +7,8 @@ const eslintConfig = [
       ".next/**",
       ".open-next/**",
       ".wrangler/**",
+      ".worktrees/**",
+      "apps/webview/android/app/build/**",
       "cloudflare-env.d.ts",
       "worker-configuration.d.ts",
       "coverage/**",

@@ -24,7 +24,7 @@ export function fail(error: unknown) {
   }
 
   if (error instanceof ApiError) {
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         success: false,
         error: {
@@ -35,6 +35,13 @@ export function fail(error: unknown) {
       },
       { status: error.status },
     );
+    if (error.status === 429 && error.details && typeof error.details === "object" && "retryAfterSeconds" in error.details) {
+      const retryAfterSeconds = (error.details as { retryAfterSeconds?: unknown }).retryAfterSeconds;
+      if (typeof retryAfterSeconds === "number" && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+        response.headers.set("retry-after", String(Math.ceil(retryAfterSeconds)));
+      }
+    }
+    return response;
   }
 
   return NextResponse.json(

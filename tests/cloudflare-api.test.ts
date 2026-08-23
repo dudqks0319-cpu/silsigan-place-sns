@@ -1,24 +1,27 @@
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import test from "node:test";
-import { promisify } from "node:util";
 import { createCloudflareApiClient } from "../src/lib/cloudflare-api.ts";
 import * as worker from "../workers/api/src/index.ts";
 import * as policies from "../workers/api/src/policies.ts";
 
-const execFileAsync = promisify(execFile);
 const pagesSmoke = await import(new URL("../scripts/cloudflare-pages-smoke.mjs", import.meta.url).href);
 const pagesLocalReportSmoke = await import(new URL("../scripts/cloudflare-pages-local-report-smoke.mjs", import.meta.url).href);
+const stagingSmoke = await import(new URL("../scripts/cloudflare-staging-smoke.mjs", import.meta.url).href);
 const releaseGate = await import(new URL("../scripts/cloudflare-release-gate.mjs", import.meta.url).href);
 const externalState = await import(new URL("../scripts/cloudflare-external-state-check.mjs", import.meta.url).href);
 const d1ReleaseEvidence = await import(new URL("../scripts/cloudflare-d1-release-evidence.mjs", import.meta.url).href);
 const r2ReleaseEvidence = await import(new URL("../scripts/cloudflare-r2-release-evidence.mjs", import.meta.url).href);
+const buildSecretScan = await import(new URL("../scripts/scan-build-env-secrets.mjs", import.meta.url).href);
+const buildEnvPolicy = await import(new URL("../scripts/build-env-policy.mjs", import.meta.url).href);
+const cloudflareWebBuild = await import(new URL("../scripts/cloudflare-web-build.mjs", import.meta.url).href);
+const cloudflareWebDeploy = await import(new URL("../scripts/cloudflare-web-deploy.mjs", import.meta.url).href);
+const require = createRequire(import.meta.url);
 
 type SuccessPayload<TData> = {
   success: true;
@@ -93,12 +96,25 @@ type FieldReportData = {
     localConditions: string[];
     observations: Array<{ dimension: string; valueCode: string; expiresAt: string }>;
     verifiedRadiusM: number | null;
+    photoId?: string;
     createdAt: string;
     expiresAt: string;
+    moderationStatus: "pending" | "approved" | "rejected";
   };
   credits: Array<{ type: "verified_report" | "photo_report"; amount: number }>;
   safetyWarning: string | null;
   privacyNotice: string;
+};
+
+type SmokeFixtureRequest = AsyncIterable<Uint8Array> & {
+  method: string;
+  url: string;
+  headers: Record<string, string | undefined>;
+};
+
+type SmokeFixtureResponse = {
+  writeHead: (status: number, headers?: Record<string, string>) => void;
+  end: (body?: BodyInit | null) => void;
 };
 
 type FeedPost = {
@@ -111,10 +127,13 @@ type FeedPost = {
   helpfulCount: number;
   hashtagNames: string[];
   hashtags: Array<{ name: string; tagType: string; postCount: number }>;
-  shareCard: { headline: string; body: string; hashtags: string[] };
+  shareCard: { headline: string; body: string; url: string; hashtags: string[] };
   judgement: "가도 좋음" | "주의" | "지금은 비추";
   safetyWarning: string | null;
   hiddenAt: string | null;
+  createdAt: string;
+  expiresAt: string;
+  isExpired: boolean;
 };
 
 type QuestionData = {
@@ -164,6 +183,35 @@ const testAdminTokens = JSON.stringify({
   moderator: "test-moderator-token",
   admin: "test-admin-token",
 });
+const testCostGuardSecret = "test-cost-guard-secret-that-is-long-enough";
+
+function signedPhotoRequestHeaders(anonymousId: string, idempotencyKey: string): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    "idempotency-key": idempotencyKey,
+    "x-silsigan-anon-id": anonymousId,
+    "x-silsigan-anon-signature": `v1.${createHmac("sha256", testCostGuardSecret)
+      .update(`photo-session:v1:${anonymousId}`)
+      .digest("hex")}`,
+  };
+}
+
+function persistentPhotoBindings(db: SqliteD1Database, r2: FakeR2Bucket) {
+  return {
+    DB: db,
+    PHOTOS: r2,
+    CACHE: new FakeKVNamespace(),
+    PLACE_ROOM: new FakeDurableObjectNamespace(() => new worker.PlaceRoom()),
+    REGION_ROOM: new FakeDurableObjectNamespace(() => new worker.RegionRoom()),
+    GLOBAL_ROOM: new FakeDurableObjectNamespace(() => new worker.GlobalRoom()),
+    ENVIRONMENT: "staging",
+    PHOTO_UPLOADS_ENABLED: "true",
+    COST_GUARD_HASH_SECRET: testCostGuardSecret,
+    PHOTO_GLOBAL_DAILY_LIMIT: "150",
+    PHOTO_GLOBAL_MONTHLY_LIMIT: "4500",
+    PHOTO_GLOBAL_STORED_LIMIT: "9000",
+  } as const;
+}
 const tinyJpegBase64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
 
@@ -181,6 +229,316 @@ test("Cloudflare resource preflight accepts concrete staging and production bind
 
     assert.equal(payload.ok, true);
     assert.equal(payload.checks.every((check) => check.status === "pass"), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare frontend staging config pins the selected public API and site origins", () => {
+  const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8")) as {
+    env?: { staging?: { vars?: Record<string, string>; services?: Array<{ binding?: string; service?: string }> } };
+  };
+  const vars = config.env?.staging?.vars;
+  const services = config.env?.staging?.services;
+
+  assert.equal(vars?.SILSIGAN_STAGING_API_BASE_URL, "https://silsigan-api-staging.dudqks0319.workers.dev");
+  assert.equal(vars?.NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL, "https://silsigan-api-staging.dudqks0319.workers.dev");
+  assert.equal(vars?.NEXT_PUBLIC_SITE_URL, "https://silsigan-web-staging.dudqks0319.workers.dev");
+  assert.deepEqual(services, [{ binding: "SILSIGAN_API", service: "silsigan-api-staging" }]);
+  assert.equal(Object.keys(vars ?? {}).some((key) => /token|secret|password|api[_-]?key/i.test(key)), false);
+});
+
+test("build secret scan reports only key names and fails when a local secret is bundled", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-build-secret-scan-"));
+  const envPath = join(tempDir, ".env.local");
+  const buildDir = join(tempDir, "build");
+  const secretValue = "test-secret-value-that-must-not-be-reported";
+
+  try {
+    mkdirSync(buildDir, { recursive: true });
+    writeFileSync(envPath, `SERVICE_API_KEY=${secretValue}\nNEXT_PUBLIC_SITE_URL=https://example.test\n`, "utf8");
+    writeFileSync(join(buildDir, "safe.js"), "export const safe = true;", "utf8");
+
+    const safeResult = await buildSecretScan.scanBuildForEnvValues(envPath, buildDir);
+    assert.equal(safeResult.ok, true);
+    assert.deepEqual(safeResult.matchedSecretKeys, []);
+
+    writeFileSync(join(buildDir, "leaked.js"), `export const leaked = ${JSON.stringify(secretValue)};`, "utf8");
+    const leakedResult = await buildSecretScan.scanBuildForEnvValues(envPath, buildDir);
+    assert.equal(leakedResult.ok, false);
+    assert.deepEqual(leakedResult.matchedSecretKeys, ["SERVICE_API_KEY"]);
+    assert.equal(JSON.stringify(leakedResult).includes(secretValue), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Next build policy strips server secrets before bundling and preserves public origins", () => {
+  const secretValue = "test-runtime-secret-that-must-not-be-reported";
+  const env: Record<string, string> = {
+    PATH: "/usr/bin",
+    NEXT_PUBLIC_SITE_URL: "https://example.test",
+    NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "public-client-id",
+    KOREA_DATA_API_KEY: secretValue,
+    VERCEL_OIDC_TOKEN: secretValue,
+    SUPABASE_SERVICE_ROLE_KEY: secretValue,
+  };
+
+  const removedKeys = buildEnvPolicy.stripServerSecretsFromBuildEnv(env);
+  assert.deepEqual(removedKeys, ["KOREA_DATA_API_KEY", "SUPABASE_SERVICE_ROLE_KEY", "VERCEL_OIDC_TOKEN"]);
+  assert.deepEqual(env, {
+    PATH: "/usr/bin",
+    NEXT_PUBLIC_SITE_URL: "https://example.test",
+    NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "public-client-id",
+  });
+  assert.equal(JSON.stringify(removedKeys).includes(secretValue), false);
+  const nextConfigSource = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
+  assert.match(nextConfigSource, /stripServerSecretsFromBuildEnv\(process\.env\)/);
+  assert.match(nextConfigSource, /images:\s*\{[\s\S]*?unoptimized:\s*true/);
+
+  const sharpShim = require(new URL("../packages/sharp-disabled/index.cjs", import.meta.url).pathname);
+  assert.throws(() => sharpShim(), /Native sharp image optimization is disabled/);
+});
+
+test("Cloudflare web build isolates dotenv files and requires exact public staging origins", () => {
+  const root = "/tmp/silsigan-source";
+  const config = JSON.stringify({
+    env: {
+      staging: {
+        vars: {
+          SILSIGAN_STAGING_API_BASE_URL: "https://api.example.test",
+          NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL: "https://api.example.test",
+          NEXT_PUBLIC_SITE_URL: "https://web.example.test",
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(cloudflareWebBuild.parseBuildEnv(config, "staging"), {
+    SILSIGAN_STAGING_API_BASE_URL: "https://api.example.test",
+    NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL: "https://api.example.test",
+    NEXT_PUBLIC_SITE_URL: "https://web.example.test",
+  });
+  assert.equal(cloudflareWebBuild.parseEnvironmentArgument([]), "staging");
+  assert.equal(cloudflareWebBuild.shouldCopyBuildSource(join(root, "src", "app.ts"), root), true);
+  assert.equal(cloudflareWebBuild.shouldCopyBuildSource(join(root, ".env.local"), root), false);
+  assert.equal(cloudflareWebBuild.shouldCopyBuildSource(join(root, ".open-next", "worker.js"), root), false);
+  assert.equal(cloudflareWebBuild.shouldCopyBuildSource(join(root, ".open-next.safe-build-123", "worker.js"), root), false);
+  assert.equal(cloudflareWebBuild.shouldCopyBuildSource(join(root, "artifacts", "packet.json"), root), false);
+  assert.equal(cloudflareWebBuild.shouldCopyBuildSource(join(root, "apps", "webview", "ios", "App.xcodeproj"), root), false);
+});
+
+test("Cloudflare web build fails closed for production without public origins", () => {
+  assert.throws(
+    () => cloudflareWebBuild.parseBuildEnv(JSON.stringify({ env: { production: { name: "web-production" } } }), "production"),
+    /production public build vars are not configured/,
+  );
+  assert.throws(
+    () =>
+      cloudflareWebBuild.parseBuildEnv(
+        JSON.stringify({
+          env: {
+            staging: {
+              vars: {
+                SILSIGAN_STAGING_API_BASE_URL: "https://api.example.test",
+                NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL: "https://other.example.test",
+                NEXT_PUBLIC_SITE_URL: "https://web.example.test",
+              },
+            },
+          },
+        }),
+        "staging",
+      ),
+    /same exact origin/,
+  );
+  assert.throws(
+    () =>
+      cloudflareWebBuild.parseBuildEnv(
+        JSON.stringify({
+          env: {
+            production: {
+              vars: {
+                NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL: "https://api.example.test/private",
+                NEXT_PUBLIC_SITE_URL: "https://web.example.test",
+              },
+            },
+          },
+        }),
+        "production",
+      ),
+    /credential-free HTTPS origin/,
+  );
+});
+
+test("Cloudflare web build removes OpenNext's unsupported dynamic middleware manifest require", () => {
+  const unsafe = "before;getMiddlewareManifest(){return this.minimalMode?null:require(this.middlewareManifestPath)};after";
+  const patched = cloudflareWebBuild.patchOpenNextMiddlewareManifestSource(unsafe);
+
+  assert.equal(patched.status, "patched");
+  assert.equal(patched.source, "before;getMiddlewareManifest(){return null};after");
+  assert.equal(patched.source.includes("require(this.middlewareManifestPath)"), false);
+
+  const alreadySafe = cloudflareWebBuild.patchOpenNextMiddlewareManifestSource(patched.source);
+  assert.equal(alreadySafe.status, "already-safe");
+  assert.equal(alreadySafe.source, patched.source);
+
+  assert.throws(
+    () => cloudflareWebBuild.patchOpenNextMiddlewareManifestSource("getMiddlewareManifest(){return this.minimalMode}"),
+    /expected one unsafe runtime implementation/,
+  );
+});
+
+test("Cloudflare web deploy requires explicit staging approval and an exact candidate digest", () => {
+  const digest = "a".repeat(64);
+  assert.deepEqual(
+    cloudflareWebDeploy.validateWebDeployAuthorization({
+      apply: false,
+      confirmStagingDeploy: false,
+      providedDigest: "",
+      recordedDigest: digest,
+      currentDigest: digest,
+    }),
+    { ok: true, mode: "plan-only", errors: [] },
+  );
+
+  const unconfirmed = cloudflareWebDeploy.validateWebDeployAuthorization({
+    apply: true,
+    confirmStagingDeploy: false,
+    providedDigest: "",
+    recordedDigest: digest,
+    currentDigest: digest,
+  });
+  assert.equal(unconfirmed.ok, false);
+  assert.ok(unconfirmed.errors.some((error: { code: string }) => error.code === "STAGING_DEPLOY_CONFIRMATION_REQUIRED"));
+  assert.ok(unconfirmed.errors.some((error: { code: string }) => error.code === "CANDIDATE_DIGEST_REQUIRED"));
+
+  const drifted = cloudflareWebDeploy.validateWebDeployAuthorization({
+    apply: true,
+    confirmStagingDeploy: true,
+    providedDigest: digest,
+    recordedDigest: digest,
+    currentDigest: "b".repeat(64),
+  });
+  assert.equal(drifted.ok, false);
+  assert.ok(drifted.errors.some((error: { code: string }) => error.code === "CANDIDATE_SOURCE_DRIFT"));
+
+  const wrongConfirmation = cloudflareWebDeploy.validateWebDeployAuthorization({
+    apply: true,
+    confirmStagingDeploy: true,
+    providedDigest: "c".repeat(64),
+    recordedDigest: digest,
+    currentDigest: digest,
+  });
+  assert.equal(wrongConfirmation.ok, false);
+  assert.ok(wrongConfirmation.errors.some((error: { code: string }) => error.code === "CANDIDATE_DIGEST_CONFIRMATION_MISMATCH"));
+
+  assert.deepEqual(
+    cloudflareWebDeploy.validateWebDeployAuthorization({
+      apply: true,
+      confirmStagingDeploy: true,
+      providedDigest: digest,
+      recordedDigest: digest,
+      currentDigest: digest,
+    }),
+    { ok: true, mode: "apply", errors: [] },
+  );
+});
+
+test("Cloudflare resource preflight rejects a missing native photo rate limiter", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-rate-limit-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    const config = createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" });
+    config.env.staging.ratelimits = config.env.staging.ratelimits.filter((binding) => binding.name !== "PHOTO_WRITE_RATE_LIMITER");
+    writeFileSync(configPath, JSON.stringify(config), "utf8");
+
+    try {
+      execFileSync(process.execPath, [new URL("../scripts/cloudflare-resource-preflight.mjs", import.meta.url).pathname, "--config", configPath, "--env", "staging"], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("preflight should reject a missing native photo write limiter");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      assert.match(stdout, /PHOTO_WRITE_RATE_LIMITER binding is missing/);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare resource preflight rejects a hidden Images binding while transforms are disabled", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-images-cost-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    const config = createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" });
+    Object.assign(config.env.staging, { images: { binding: "IMAGES" } });
+    writeFileSync(configPath, JSON.stringify(config), "utf8");
+
+    try {
+      execFileSync(process.execPath, [new URL("../scripts/cloudflare-resource-preflight.mjs", import.meta.url).pathname, "--config", configPath, "--env", "staging"], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("preflight should reject a hidden metered Images binding");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      assert.match(stdout, /Remove the Cloudflare Images binding/);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare resource preflight rejects enabled photo uploads without server pixel reencoding", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-photo-processing-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    const config = createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" });
+    config.env.staging.vars.PHOTO_UPLOADS_ENABLED = "true";
+    writeFileSync(configPath, JSON.stringify(config), "utf8");
+
+    try {
+      execFileSync(process.execPath, [new URL("../scripts/cloudflare-resource-preflight.mjs", import.meta.url).pathname, "--config", configPath, "--env", "staging"], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("preflight should reject photo writes without server pixel reencoding");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      assert.match(stdout, /Enabled photo uploads require the approved server pixel-reencode path/);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare resource preflight rejects photo ceilings above the free-plan envelope", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-preflight-photo-free-envelope-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    const config = createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" });
+    config.env.staging.vars.PHOTO_GLOBAL_DAILY_LIMIT = "151";
+    config.env.staging.vars.PHOTO_GLOBAL_MONTHLY_LIMIT = "4501";
+    config.env.staging.vars.PHOTO_GLOBAL_STORED_LIMIT = "9001";
+    writeFileSync(configPath, JSON.stringify(config), "utf8");
+
+    try {
+      execFileSync(process.execPath, [new URL("../scripts/cloudflare-resource-preflight.mjs", import.meta.url).pathname, "--config", configPath, "--env", "staging"], {
+        encoding: "utf8",
+        env: createReadyPreflightProcessEnv(),
+        stdio: "pipe",
+      });
+      assert.fail("preflight should reject photo ceilings above the approved free envelope");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      assert.match(stdout, /PHOTO_GLOBAL_DAILY_LIMIT must be an integer string between 1 and 150/);
+      assert.match(stdout, /PHOTO_GLOBAL_MONTHLY_LIMIT must be an integer string between 1 and 4500/);
+      assert.match(stdout, /PHOTO_GLOBAL_STORED_LIMIT must be an integer string between 1 and 9000/);
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -330,13 +688,13 @@ test("release state check separates ready fixtures from external release blocker
                 message: "SILSIGAN_PRODUCTION_PAGES_URL is required.",
               },
               {
-                name: "cloudflare.d1.production.migration_0006",
+                name: "cloudflare.d1.production.migration_0012",
                 status: "fail",
-                code: "D1_0006_NOT_APPLIED",
-                message: "Remote production D1 is missing the V2 data-truth migrations.",
+                code: "D1_0012_NOT_APPLIED",
+                message: "Remote production D1 is missing the V2 cost-abuse guard and nationwide-region migrations.",
               },
             ],
-            blockers: ["R2_NOT_ENABLED", "deployment_url.production.pages", "D1_0006_NOT_APPLIED"],
+                blockers: ["R2_NOT_ENABLED", "deployment_url.production.pages", "D1_0012_NOT_APPLIED"],
           },
           null,
           2,
@@ -384,6 +742,8 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "ugc_moderation.runbook.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_cost_usage.runbook" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_cost_usage.runbook.required_tokens" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_operator_packet.doc" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "cloudflare_operator_packet.doc.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "testflight_review_notes.doc.required_tokens" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "real_device_qa.ledger" && check.status === "pass"));
@@ -397,6 +757,8 @@ test("release state check separates ready fixtures from external release blocker
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.support" && check.status === "pass"));
     assert.ok(readyPayload.checks.some((check) => check.name === "policy_url.privacy_policy.support" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "deployment_url.staging.pages.public_site_url_origin" && check.status === "pass"));
+    assert.ok(readyPayload.checks.some((check) => check.name === "deployment_url.production.pages.public_site_url_origin" && check.status === "pass"));
 
     try {
       execFileSync(process.execPath, [
@@ -431,7 +793,73 @@ test("release state check separates ready fixtures from external release blocker
       assert.ok(blockedPayload.blockers.includes("deployment_url.staging.worker_api"));
       assert.ok(blockedPayload.blockers.includes("R2_NOT_ENABLED"));
       assert.ok(blockedPayload.blockers.includes("deployment_url.production.pages"));
-      assert.ok(blockedPayload.blockers.includes("D1_0006_NOT_APPLIED"));
+      assert.ok(blockedPayload.blockers.includes("D1_0012_NOT_APPLIED"));
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release state check blocks missing or mismatched Worker CORS and share origins", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-release-cors-state-"));
+  try {
+    const configPath = join(tempDir, "cors-wrangler.jsonc");
+    const ledgerPath = join(tempDir, "current-release-state.md");
+    const ugcRunbookPath = join(tempDir, "ugc-moderation-runbook.md");
+    const costUsageRunbookPath = join(tempDir, "cloudflare-cost-usage-runbook.md");
+    const testFlightReviewNotesPath = join(tempDir, "testflight-review-notes.md");
+    const realDeviceQaPath = join(tempDir, "real-device-qa.md");
+    const privacyPagePath = join(tempDir, "privacy-page.tsx");
+    const supportPagePath = join(tempDir, "support-page.tsx");
+    const { releaseLedgerPath, releaseStatusPath } = writeReleaseHarnessFiles(tempDir, ledgerPath);
+    const config = createPreflightConfig({
+      stagingD1Id: "d1-staging-ready-id",
+      stagingKvId: "kv-staging-ready-id",
+    });
+    config.env.staging.vars.CORS_ALLOWED_ORIGINS = "";
+    config.env.staging.vars.PUBLIC_SITE_URL = "";
+    config.env.production.vars.CORS_ALLOWED_ORIGINS = "https://wrong-origin.example";
+    config.env.production.vars.PUBLIC_SITE_URL = "https://wrong-origin.example";
+    writeFileSync(configPath, JSON.stringify(config), "utf8");
+    writeReleaseStateLedger(ledgerPath);
+    writeUgcModerationRunbook(ugcRunbookPath);
+    writeCloudflareCostUsageRunbook(costUsageRunbookPath);
+    writeTestFlightReviewNotes(testFlightReviewNotesPath);
+    writeRealDeviceQaLedger(realDeviceQaPath);
+    writePublicPolicySupportPages(privacyPagePath, supportPagePath);
+
+    const releaseStateScript = new URL("../scripts/release-state-check.mjs", import.meta.url).pathname;
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          releaseStateScript,
+          `--config=${configPath}`,
+          `--ledger=${ledgerPath}`,
+          `--release-ledger=${releaseLedgerPath}`,
+          `--release-status=${releaseStatusPath}`,
+          `--ugc-runbook=${ugcRunbookPath}`,
+          `--cost-usage-runbook=${costUsageRunbookPath}`,
+          `--review-notes=${testFlightReviewNotesPath}`,
+          `--real-device-qa=${realDeviceQaPath}`,
+          `--privacy-page=${privacyPagePath}`,
+          `--support-page=${supportPagePath}`,
+          "--strict",
+        ],
+        { encoding: "utf8", env: createReadyPreflightProcessEnv(), stdio: "pipe" },
+      );
+      assert.fail("strict release state should fail when Worker CORS origins are unsafe");
+    } catch (error) {
+      const stdout = error && typeof error === "object" && "stdout" in error ? String((error as { stdout?: unknown }).stdout) : "";
+      const payload = JSON.parse(stdout) as { ok: boolean; state: string; blockers: string[] };
+      assert.equal(payload.ok, false);
+      assert.equal(payload.state, "blocked-external");
+      assert.ok(payload.blockers.includes("wrangler.staging.vars.CORS_ALLOWED_ORIGINS"));
+      assert.ok(payload.blockers.includes("wrangler.staging.vars.PUBLIC_SITE_URL"));
+      assert.ok(payload.blockers.includes("deployment_url.production.pages.public_site_url_origin"));
+      assert.ok(payload.blockers.includes("deployment_url.staging.pages.cors_origin"));
+      assert.ok(payload.blockers.includes("deployment_url.production.pages.cors_origin"));
+      assert.equal(stdout.includes("user:secret"), false);
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -1255,12 +1683,64 @@ test("Cloudflare Pages browser smoke helpers parse args and redact URLs", () => 
   const parsed = pagesSmoke.parseArgs([
     "--pages-url=https://user:pass@silsigan-staging.pages.dev?token=secret#debug",
     "--api-base-url=https://api.example.test",
+    "--field-report-photo-file=/tmp/synthetic-field-report.jpg",
     "--mutating",
   ]);
 
   assert.equal(parsed.flags.has("mutating"), true);
   assert.equal(parsed.options.get("api-base-url"), "https://api.example.test");
+  assert.equal(parsed.options.get("field-report-photo-file"), "/tmp/synthetic-field-report.jpg");
   assert.equal(pagesSmoke.sanitizeUrl(parsed.options.get("pages-url")), "https://silsigan-staging.pages.dev/");
+});
+
+test("Cloudflare Pages browser smoke retries a hit-test until the transitioned button is clickable", async () => {
+  let runtimeEvaluateCalls = 0;
+  const mouseEvents: string[] = [];
+  const client = {
+    async send(method: string) {
+      if (method === "Runtime.evaluate") {
+        runtimeEvaluateCalls += 1;
+        return {
+          result: {
+            value: runtimeEvaluateCalls === 1 ? null : { x: 339, y: 796 },
+          },
+        };
+      }
+      if (method === "Input.dispatchMouseEvent") {
+        mouseEvents.push(method);
+      }
+      return {};
+    },
+  };
+
+  await pagesSmoke.clickHitTestedTextButton(client, "마이", { exact: true, timeoutMs: 500 });
+
+  assert.equal(runtimeEvaluateCalls, 2);
+  assert.deepEqual(mouseEvents, ["Input.dispatchMouseEvent", "Input.dispatchMouseEvent"]);
+});
+
+test("Cloudflare Pages browser smoke accepts current and deployed map search labels", async () => {
+  let evaluatedExpression = "";
+  const client = {
+    async send(method: string, params: { expression?: string }) {
+      if (method === "Runtime.evaluate") {
+        evaluatedExpression = params.expression ?? "";
+        return { result: { value: true } };
+      }
+      return {};
+    },
+  };
+
+  await pagesSmoke.fillSearchInput(client, ["사진 올라온 장소 검색", "지도 장소 검색"], "광안리");
+
+  assert.match(evaluatedExpression, /사진 올라온 장소 검색/);
+  assert.match(evaluatedExpression, /지도 장소 검색/);
+});
+
+test("Cloudflare Pages browser smoke maps configured region IDs to visible tabs", () => {
+  assert.equal(pagesSmoke.regionLabelForId("busan"), "부산");
+  assert.equal(pagesSmoke.regionLabelForId("nationwide"), "전국");
+  assert.equal(pagesSmoke.regionLabelForId("unknown-region"), null);
 });
 
 test("Cloudflare Pages browser smoke matches Worker API requests by parsed path and query", () => {
@@ -1311,7 +1791,14 @@ test("local Pages report smoke validates redacted network artifacts and required
       reportTargetTypes: ["comment", "photo", "place"],
       storesPostData: false,
       sensitiveHits: [],
+      notFoundCount: 0,
     });
+
+    assert.deepEqual(pagesLocalReportSmoke.validateConsoleMessages(["console.info: smoke ok"]), { errorWarnCount: 0 });
+    assert.throws(
+      () => pagesLocalReportSmoke.validateConsoleMessages(["log.error: Failed to load resource"]),
+      /console error\/warning/,
+    );
 
     const unsafePostDataPath = join(tempDir, "unsafe-post-data.json");
     writeFileSync(
@@ -1333,6 +1820,17 @@ test("local Pages report smoke validates redacted network artifacts and required
     await assert.rejects(
       () => pagesLocalReportSmoke.validateNetworkArtifactRedaction(unsafeSensitivePath),
       /sensitive values/,
+    );
+
+    const unsafeNotFoundPath = join(tempDir, "unsafe-not-found.json");
+    writeFileSync(
+      unsafeNotFoundPath,
+      JSON.stringify([{ type: "response", status: 404, url: "https://api.example.test/api/blocks" }]),
+      "utf8",
+    );
+    await assert.rejects(
+      () => pagesLocalReportSmoke.validateNetworkArtifactRedaction(unsafeNotFoundPath),
+      /HTTP 404/,
     );
 
     await assert.rejects(
@@ -1393,6 +1891,7 @@ test("Cloudflare release gate plan orders strict staging and browser evidence wi
       "release.status.strict",
       "audit.critical",
       "frontend.typegen",
+      "api.typegen",
       "frontend.openNextBuild",
       "frontend.wranglerDryRun.development",
       "frontend.wranglerDryRun.staging",
@@ -1753,7 +2252,7 @@ test("Cloudflare external state check canonicalizes missing auth before remote c
       "In a non-interactive environment, set CLOUDFLARE_API_TOKEN. Account user@example.com /accounts/2a0a85b82393ae6cfb2dea0b41853458 failed.",
   });
   const r2Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.r2.enabled", "R2 bucket visibility check");
-  const d1Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.d1.staging.migration_0006", "Remote staging D1 migration evidence check");
+  const d1Check = externalState.classifyAuthBlockedRemoteCheck("cloudflare.d1.staging.migration_0014", "Remote staging D1 migration evidence check");
 
   assert.equal(authCheck.name, "cloudflare.auth");
   assert.equal(authCheck.status, "fail");
@@ -1797,15 +2296,39 @@ test("Cloudflare external state check classifies remote D1 migration and seed ev
     },
     "staging",
   );
-  assert.equal(missingMigration.name, "cloudflare.d1.staging.migration_0006");
+  assert.equal(missingMigration.name, "cloudflare.d1.staging.migration_0012");
   assert.equal(missingMigration.status, "fail");
-  assert.equal(missingMigration.code, "D1_0006_NOT_APPLIED");
+  assert.equal(missingMigration.code, "D1_0012_NOT_APPLIED");
   assert.equal(JSON.stringify(missingMigration).includes("no such table"), false);
+
+  const currentBaseCounters =
+    "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nfield_report_moderation_table=1\nfield_report_photos_table=1\nfield_report_photos_indexes=2\ncost_guard_tables=2\ncost_guard_indexes=4\nphoto_size_triggers=2\nkorea_sido_regions=17\nposts=4\nquestions=3\n";
+  const missingPhotoIdempotency = externalState.classifyD1MigrationResult(
+    {
+      exitCode: 0,
+      stdout: `${currentBaseCounters}photo_idempotency_table=0\nphoto_idempotency_indexes=0\ningestion_target_table=0\ningestion_target_indexes=0\n`,
+      stderr: "",
+    },
+    "staging",
+  );
+  assert.equal(missingPhotoIdempotency.name, "cloudflare.d1.staging.migration_0013");
+  assert.equal(missingPhotoIdempotency.code, "D1_0013_NOT_APPLIED");
+
+  const missingOfficialIngestion = externalState.classifyD1MigrationResult(
+    {
+      exitCode: 0,
+      stdout: `${currentBaseCounters}photo_idempotency_table=1\nphoto_idempotency_indexes=1\ningestion_target_table=0\ningestion_target_indexes=0\n`,
+      stderr: "",
+    },
+    "staging",
+  );
+  assert.equal(missingOfficialIngestion.name, "cloudflare.d1.staging.migration_0014");
+  assert.equal(missingOfficialIngestion.code, "D1_0014_NOT_APPLIED");
 
   const incompleteSeed = externalState.classifyD1MigrationResult(
     {
       exitCode: 0,
-      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nposts=3\nquestions=2\n",
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nfield_report_moderation_table=1\nfield_report_photos_table=1\nfield_report_photos_indexes=2\nphoto_idempotency_table=1\nphoto_idempotency_indexes=1\ningestion_target_table=1\ningestion_target_indexes=2\ncost_guard_tables=2\ncost_guard_indexes=4\nphoto_size_triggers=2\nkorea_sido_regions=17\nposts=3\nquestions=2\n",
       stderr: "",
     },
     "production",
@@ -1818,12 +2341,12 @@ test("Cloudflare external state check classifies remote D1 migration and seed ev
   const ready = externalState.classifyD1MigrationResult(
     {
       exitCode: 0,
-      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nposts=4\nquestions=3\n",
+      stdout: "posts_table=1\nquestions_table=1\npost_indexes=2\nquestion_indexes=2\nv2_tables=6\nv2_flags=7\nv2_settings=12\nsource_registry=8\ntrust_safety_tables=7\nfield_report_moderation_table=1\nfield_report_photos_table=1\nfield_report_photos_indexes=2\nphoto_idempotency_table=1\nphoto_idempotency_indexes=1\ningestion_target_table=1\ningestion_target_indexes=2\ncost_guard_tables=2\ncost_guard_indexes=4\nphoto_size_triggers=2\nkorea_sido_regions=17\nposts=4\nquestions=3\n",
       stderr: "",
     },
     "staging",
   );
-  assert.equal(ready.name, "cloudflare.d1.staging.migration_0006");
+  assert.equal(ready.name, "cloudflare.d1.staging.migration_0014");
   assert.equal(ready.status, "pass");
   assert.deepEqual(ready.counts, { posts: 4, questions: 3 });
 });
@@ -1871,8 +2394,16 @@ test("Cloudflare D1 release evidence planner gates mutating production apply", a
     })) as { ok: boolean; errors: Array<{ code: string }> };
     assert.equal(blocked.ok, false);
     assert.ok(blocked.errors.some((error) => error.code === "PRODUCTION_CONFIRMATION_REQUIRED"));
+    assert.ok(blocked.errors.some((error) => error.code === "ROLLBACK_STRATEGY_REQUIRED"));
 
-    const confirmedArgs = d1ReleaseEvidence.parseArgs(["--env=production", "--config", configPath, "--apply", "--confirm-production"]);
+    const confirmedArgs = d1ReleaseEvidence.parseArgs([
+      "--env=production",
+      "--config",
+      configPath,
+      "--apply",
+      "--confirm-production",
+      "--accept-time-travel-only",
+    ]);
     const confirmed = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
       flags: confirmedArgs.flags,
       options: confirmedArgs.options,
@@ -1893,6 +2424,62 @@ test("Cloudflare D1 release evidence planner gates mutating production apply", a
         ["d1.posts_questions.evidence", false],
       ],
     );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare D1 release evidence planner requires staging approval and one rollback strategy", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-release-staging-"));
+  try {
+    const configPath = join(tempDir, "wrangler.jsonc");
+    writeFileSync(configPath, JSON.stringify(createPreflightConfig({ stagingD1Id: "d1-staging-ready-id", stagingKvId: "kv-staging-ready-id" })), "utf8");
+
+    const blockedArgs = d1ReleaseEvidence.parseArgs(["--env=staging", "--config", configPath, "--apply"]);
+    const blocked = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: blockedArgs.flags,
+      options: blockedArgs.options,
+      env: {},
+    })) as { ok: boolean; errors: Array<{ code: string }> };
+    assert.equal(blocked.ok, false);
+    assert.ok(blocked.errors.some((error) => error.code === "STAGING_CONFIRMATION_REQUIRED"));
+    assert.ok(blocked.errors.some((error) => error.code === "ROLLBACK_STRATEGY_REQUIRED"));
+
+    const conflictArgs = d1ReleaseEvidence.parseArgs([
+      "--env=staging",
+      "--config",
+      configPath,
+      "--apply",
+      "--confirm-staging",
+      "--accept-time-travel-only",
+      "--full-backup-sha256",
+      "a".repeat(64),
+    ]);
+    const conflict = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: conflictArgs.flags,
+      options: conflictArgs.options,
+      env: {},
+    })) as { ok: boolean; errors: Array<{ code: string }> };
+    assert.equal(conflict.ok, false);
+    assert.ok(conflict.errors.some((error) => error.code === "ROLLBACK_STRATEGY_CONFLICT"));
+
+    const approvedArgs = d1ReleaseEvidence.parseArgs([
+      "--env=staging",
+      "--config",
+      configPath,
+      "--apply",
+      "--confirm-staging",
+      "--full-backup-sha256",
+      "b".repeat(64),
+    ]);
+    const approved = (await d1ReleaseEvidence.resolveD1ReleaseEvidencePlan({
+      flags: approvedArgs.flags,
+      options: approvedArgs.options,
+      env: {},
+    })) as { ok: boolean; rollbackStrategy: string; fullBackupSha256?: string };
+    assert.equal(approved.ok, true);
+    assert.equal(approved.rollbackStrategy, "full-data-backup");
+    assert.equal(approved.fullBackupSha256, "b".repeat(64));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -2006,8 +2593,8 @@ test("Cloudflare external state check summarizes canonical release blockers", ()
     { name: "deployment_url.staging.worker_api", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
     { name: "deployment_url.production.pages", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
     { name: "deployment_url.production.worker_api", status: "fail", code: "DEPLOYMENT_URL_REQUIRED" },
-    { name: "cloudflare.d1.production.migration_0006", status: "fail", code: "D1_0006_NOT_APPLIED" },
-    { name: "cloudflare.d1.production.migration_0006", status: "fail", code: "D1_0006_NOT_APPLIED" },
+    { name: "cloudflare.d1.production.migration_0012", status: "fail", code: "D1_0012_NOT_APPLIED" },
+    { name: "cloudflare.d1.production.migration_0012", status: "fail", code: "D1_0012_NOT_APPLIED" },
   ]);
 
   assert.deepEqual(blockers, [
@@ -2016,7 +2603,7 @@ test("Cloudflare external state check summarizes canonical release blockers", ()
     "deployment_url.staging.worker_api",
     "deployment_url.production.pages",
     "deployment_url.production.worker_api",
-    "D1_0006_NOT_APPLIED",
+    "D1_0012_NOT_APPLIED",
   ]);
 });
 
@@ -2122,11 +2709,13 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
   let placeLiked = false;
   let reportOpen = false;
   let reportTargetType = "place";
-  const server = createServer(async (request, response) => {
+  let liveRequestUsedSessionProof = false;
+  const smokeSessionProof = "staging-smoke-session-proof";
+  const fixtureHandler = async (request: SmokeFixtureRequest, response: SmokeFixtureResponse) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const requestAnonId = String(request.headers["x-silsigan-anon-id"] ?? "");
-    const send = (status: number, payload: unknown) => {
-      response.writeHead(status, { "content-type": "application/json" });
+    const send = (status: number, payload: unknown, headers: Record<string, string> = {}) => {
+      response.writeHead(status, { "content-type": "application/json", ...headers });
       response.end(JSON.stringify(payload));
     };
     const success = (data: unknown, meta: Record<string, unknown> = {}) => ({ success: true, data, meta });
@@ -2148,7 +2737,11 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
     }
 
     if (request.method === "GET" && url.pathname === "/api/places") {
-      send(200, success([{ id: placeId, regionId, latitude: 35.1532, longitude: 129.1186, coordinateStatus: "verified" }]));
+      send(
+        200,
+        success([{ id: placeId, regionId, latitude: 35.1532, longitude: 129.1186, coordinateStatus: "verified" }]),
+        { "x-silsigan-anon-id": requestAnonId, "x-silsigan-anon-proof": smokeSessionProof },
+      );
       return;
     }
 
@@ -2158,6 +2751,11 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
     }
 
     if (request.method === "GET" && url.pathname === `/api/places/${placeId}/live`) {
+      liveRequestUsedSessionProof = request.headers["x-silsigan-anon-proof"] === smokeSessionProof;
+      if (!liveRequestUsedSessionProof) {
+        send(401, { success: false, error: { code: "ANONYMOUS_SESSION_PROOF_REQUIRED", message: "proof required" } });
+        return;
+      }
       send(200, success({ commentCount: commentCreated && !commentDeleted ? 1 : 0, photoCount: photoDeleted ? 0 : 1, likeCount: placeLiked ? 1 : 0 }));
       return;
     }
@@ -2367,53 +2965,77 @@ test("staging mutation smoke verifies cleanup for photos comments likes admin re
     }
 
     send(404, { success: false, error: { code: "NOT_FOUND", message: url.pathname } });
-  });
+  };
 
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  try {
-    const address = server.address() as AddressInfo;
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      [
-        new URL("../scripts/cloudflare-staging-smoke.mjs", import.meta.url).pathname,
-        `--base-url=http://127.0.0.1:${address.port}`,
-        "--mutating",
-        "--coordinate-status",
-        `--coordinate-place-id=${placeId}`,
-        "--coordinate-latitude=35.1532",
-        "--coordinate-longitude=129.1186",
-      ],
-      { encoding: "utf8", env: { ...process.env, SILSIGAN_STAGING_ADMIN_TOKEN: adminToken } },
-    );
-    const payload = JSON.parse(stdout) as { ok: boolean; checks: Array<{ name: string; status: string }> };
+  const fixtureFetch = async (input: URL | string, init: RequestInit = {}) => {
+    const requestUrl = new URL(String(input));
+    const requestHeaders = new Headers(init.headers ?? {});
+    let responseStatus = 200;
+    let responseHeaders: Record<string, string> = {};
+    let responseBody: BodyInit | null = null;
+    const request = {
+      method: init.method ?? "GET",
+      url: `${requestUrl.pathname}${requestUrl.search}`,
+      headers: Object.fromEntries(requestHeaders.entries()),
+      async *[Symbol.asyncIterator]() {
+        if (typeof init.body === "string") {
+          yield Buffer.from(init.body);
+        }
+      },
+    };
+    const response = {
+      writeHead(status: number, headers: Record<string, string> = {}) {
+        responseStatus = status;
+        responseHeaders = headers;
+      },
+      end(body?: BodyInit | null) {
+        responseBody = body ?? null;
+      },
+    };
 
-    assert.equal(payload.ok, true);
-    assert.ok(payload.checks.some((check) => check.name === "realtime.place" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "realtime.region" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "realtime.global" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "photos.previewList" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "photos.previewFile" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "photos.deleteNotPublic" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "places.like" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "places.unlike" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "comments.create" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "comments.deleteOwn" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "comments.deleteNotPublic" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "moderation.queueAuth" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "moderation.reportCreate" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "moderation.queueVisible" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "moderation.reportReject" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "moderation.queueClean" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "users.restrict" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "users.restrictBlocksWrites" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "users.unrestrict" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "users.unrestrictRestoresWrites" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "users.restrictionCleanup" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "coordinateStatus.verify" && check.status === "pass"));
-    assert.ok(payload.checks.some((check) => check.name === "coordinateStatus.publicDetail" && check.status === "pass"));
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
-  }
+    await fixtureHandler(request, response);
+    return new Response(responseBody, { status: responseStatus, headers: responseHeaders });
+  };
+
+  const payload = (await stagingSmoke.runSmoke({
+    rawArgs: [
+      "--base-url=http://fixture.local",
+      "--mutating",
+      "--coordinate-status",
+      `--coordinate-place-id=${placeId}`,
+      "--coordinate-latitude=35.1532",
+      "--coordinate-longitude=129.1186",
+    ],
+    env: { ...process.env, SILSIGAN_STAGING_ADMIN_TOKEN: adminToken },
+    fetchImpl: fixtureFetch,
+  })) as { ok: boolean; checks: Array<{ name: string; status: string }> };
+
+  assert.equal(payload.ok, true);
+  assert.equal(liveRequestUsedSessionProof, true);
+  assert.ok(payload.checks.some((check) => check.name === "admin.denyByDefault" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "realtime.place" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "realtime.region" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "realtime.global" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "photos.previewList" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "photos.previewFile" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "photos.deleteNotPublic" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "places.like" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "places.unlike" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "comments.create" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "comments.deleteOwn" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "comments.deleteNotPublic" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "moderation.queueAuth" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "moderation.reportCreate" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "moderation.queueVisible" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "moderation.reportReject" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "moderation.queueClean" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "users.restrict" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "users.restrictBlocksWrites" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "users.unrestrict" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "users.unrestrictRestoresWrites" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "users.restrictionCleanup" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "coordinateStatus.verify" && check.status === "pass"));
+  assert.ok(payload.checks.some((check) => check.name === "coordinateStatus.publicDetail" && check.status === "pass"));
 });
 
 test("Cloudflare API clamps generic list and ranking limits", () => {
@@ -2621,6 +3243,7 @@ function writeCloudflareCostUsageRunbook(path: string) {
       "## Dashboard Checks",
       "",
       "Use Usage & billing for R2, D1, Workers, Durable Objects, and Cloudflare Images in staging and production.",
+      "Verify PHOTO_WRITE_RATE_LIMITER, PHOTO_READ_RATE_LIMITER, PHOTO_GLOBAL_DAILY_LIMIT, PHOTO_GLOBAL_MONTHLY_LIMIT, and PHOTO_GLOBAL_STORED_LIMIT before enabling photo traffic.",
       "",
       "## Baseline Thresholds",
       "",
@@ -2698,7 +3321,7 @@ function writeRealDeviceQaLedger(path: string) {
       "| --- | --- |",
       "| Staging Pages URL | ready |",
       "| Staging Worker API URL | ready |",
-      "| R2 staging bucket visibility | guarded against R2_NOT_ENABLED |",
+      "| R2 staging bucket visibility | visible; writes guarded by PHOTO_UPLOADS_ENABLED=false |",
       "| TestFlight build | selected |",
       "| Android internal/debug build | selected |",
       "",
@@ -2839,9 +3462,18 @@ function writeReleaseHarnessFiles(
 }
 
 function createPreflightEnv(input: { envName: "staging" | "production"; d1Id: string; kvId: string }) {
+  const pagesOrigin = input.envName === "production" ? "https://silsigan.kr" : "https://silsigan-staging.pages.dev";
+
   return {
     vars: {
       ENVIRONMENT: input.envName,
+      CORS_ALLOWED_ORIGINS: pagesOrigin,
+      PUBLIC_SITE_URL: pagesOrigin,
+      PHOTO_UPLOADS_ENABLED: "false",
+      IMAGE_TRANSFORMS_ENABLED: "false",
+      PHOTO_GLOBAL_DAILY_LIMIT: "150",
+      PHOTO_GLOBAL_MONTHLY_LIMIT: "4500",
+      PHOTO_GLOBAL_STORED_LIMIT: "9000",
     },
     d1_databases: [
       {
@@ -2862,9 +3494,18 @@ function createPreflightEnv(input: { envName: "staging" | "production"; d1Id: st
         bucket_name: `silsigan-photos-${input.envName}`,
       },
     ],
-    images: {
-      binding: "IMAGES",
-    },
+    ratelimits: [
+      {
+        name: "PHOTO_WRITE_RATE_LIMITER",
+        namespace_id: input.envName === "production" ? "9317301" : "9317201",
+        simple: { limit: 60, period: 60 },
+      },
+      {
+        name: "PHOTO_READ_RATE_LIMITER",
+        namespace_id: input.envName === "production" ? "9317302" : "9317202",
+        simple: { limit: 200, period: 60 },
+      },
+    ],
     durable_objects: {
       bindings: [
         { name: "PLACE_ROOM", class_name: "PlaceRoom" },
@@ -2981,13 +3622,22 @@ test("Cloudflare API supports required place and ranking route aliases", async (
 });
 
 test("Worker runtime config defaults launch flags to false in explicit demo storage", async () => {
-  const response = await worker.handleRequest(new Request("https://api.test/api/config"), { ENVIRONMENT: "development" });
+  const response = await worker.handleRequest(new Request("https://api.test/api/config"), {
+    ENVIRONMENT: "development",
+    PHOTOS: new FakeR2Bucket(),
+  });
   assert.equal(response.status, 200);
 
   const payload = (await response.json()) as SuccessPayload<{
     contractVersion: number;
     dataMode: string;
     featureFlags: Record<string, boolean>;
+    costControls: {
+      photoUploadsEnabled: boolean;
+      photoMaxBytes: number;
+      photoDailyLimit: number;
+      enforcement: string;
+    };
     dimensionSettings: Array<{ settingKey: string; defaultTtlSeconds: number }>;
   }>;
   assert.equal(payload.data.contractVersion, 2);
@@ -3001,8 +3651,42 @@ test("Worker runtime config defaults launch flags to false in explicit demo stor
     SEOUL_REALTIME_ENABLED: false,
     SOCIAL_FEED_ENABLED: false,
   });
+  assert.equal(payload.data.costControls.photoUploadsEnabled, false);
+  assert.equal(payload.data.costControls.photoMaxBytes, 1_048_576);
+  assert.equal(payload.data.costControls.photoDailyLimit, 12);
+  assert.equal(payload.data.costControls.enforcement, "worker-session-plus-ip");
   assert.equal(payload.data.dimensionSettings.find((setting) => setting.settingKey === "parking")?.defaultTtlSeconds, 900);
   assert.equal(payload.meta?.storage, "memory");
+});
+
+test("Worker province scope includes existing city-level places and keeps empty regions empty", async () => {
+  const anonymousId = "anon_nationwide_region_scope_test";
+  const gyeongbuk = await get<SuccessPayload<Place[]>>("https://api.test/api/places?regionId=gyeongbuk&limit=100", anonymousId);
+  const gyeongnam = await get<SuccessPayload<Place[]>>("https://api.test/api/places?regionId=gyeongnam&limit=100", anonymousId);
+  const nationwide = await get<SuccessPayload<Place[]>>("https://api.test/api/places?regionId=nationwide&limit=100", anonymousId);
+
+  assert.deepEqual(gyeongbuk.data.map((place) => place.id), ["gyeongju-hwangridan"]);
+  assert.deepEqual(gyeongnam.data, []);
+  assert.ok(nationwide.data.length >= gyeongbuk.data.length);
+});
+
+test("D1 province scope uses the same city-to-province mapping", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/places?regionId=gyeongbuk&limit=100", {
+        headers: { "x-silsigan-anon-id": "anon_d1_nationwide_region_scope" },
+      }),
+      { DB: db },
+    );
+    const payload = (await response.json()) as SuccessPayload<Place[]>;
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload.data.map((place) => place.id), ["gyeongju-hwangridan"]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("Worker runtime config applies a D1 region feature override", { skip: !sqlite3Available() }, async () => {
@@ -3265,7 +3949,7 @@ test("KMA ingestion stays disabled until approved and then persists hashed offic
       });
     };
 
-    const ingest = () => worker.handleRequest(
+    const ingest = (dailyLimit?: string) => worker.handleRequest(
       new Request("https://api.test/api/admin/sources/kma_weather/ingest", {
         method: "POST",
         headers: {
@@ -3274,7 +3958,12 @@ test("KMA ingestion stays disabled until approved and then persists hashed offic
         },
         body: JSON.stringify(requestBody),
       }),
-      { DB: db, ADMIN_TOKENS: testAdminTokens, KMA_SERVICE_KEY: serviceKey },
+      {
+        DB: db,
+        ADMIN_TOKENS: testAdminTokens,
+        KMA_SERVICE_KEY: serviceKey,
+        ...(dailyLimit ? { KMA_GLOBAL_DAILY_CALL_LIMIT: dailyLimit } : {}),
+      },
     );
     const first = await ingest();
     const firstPayload = (await first.json()) as SuccessPayload<{
@@ -3323,6 +4012,131 @@ test("KMA ingestion stays disabled until approved and then persists hashed offic
     const signalCount = await db.prepare("SELECT COUNT(*) AS count FROM live_signals WHERE source_id = 'source-kma-weather'").first<{ count: number }>();
     assert.equal(signalCount?.count, 1);
     assert.equal(fetchCount, 2);
+
+    const quotaBlocked = await ingest("2");
+    const quotaBlockedPayload = (await quotaBlocked.json()) as FailurePayload;
+    assert.equal(quotaBlocked.status, 429);
+    assert.equal(quotaBlockedPayload.error.code, "KMA_DAILY_QUOTA_EXCEEDED");
+    assert.equal(fetchCount, 2);
+
+    const quotaRun = await db.prepare(`
+      SELECT status, error_code AS errorCode
+      FROM api_ingestion_runs
+      WHERE status = 'quota_exceeded'
+      ORDER BY started_at DESC
+      LIMIT 1
+    `).first<{ status: string; errorCode: string }>();
+    assert.equal(quotaRun?.errorCode, "KMA_DAILY_QUOTA_EXCEEDED");
+    const providerUsage = await db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM metered_usage_events
+      WHERE scope = 'provider:kma:ultra-nowcast'
+    `).first<{ count: number }>();
+    assert.equal(providerUsage?.count, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("official ingestion targets are admin-managed and scheduled execution stays fail-closed", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const originalFetch = globalThis.fetch;
+  const serviceKey = "kma-scheduler-fixture-key";
+  let fetchCount = 0;
+
+  try {
+    await db.prepare(`
+      UPDATE data_sources
+      SET commercial_use_status = 'allowed_with_attribution', attribution_text = '기상청',
+          enabled = 1, enabled_regions_json = '["*"]', health_status = 'healthy', default_ttl_seconds = 1_800,
+          refresh_interval_seconds = 1_800
+      WHERE source_key = 'kma_weather'
+    `).run();
+
+    const targetResponse = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/kma_weather/ingestion-targets/busan-weather", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-admin-token": "test-admin-token",
+          "x-silsigan-admin-subject": "data-operator@example.test",
+        },
+        body: JSON.stringify({
+          placeId: "busan-gwangalli",
+          query: { nx: 98, ny: 76, useLatestKmaNowcast: true },
+          nextRunAt: "2026-07-13T00:00:00.000Z",
+        }),
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens },
+    );
+    assert.equal(targetResponse.status, 201);
+
+    const listed = await d1AdminGet<SuccessPayload<{
+      sourceKey: string;
+      targets: Array<{ targetKey: string; placeId: string; query: { nx: number; ny: number; useLatestKmaNowcast: boolean } }>;
+    }>>(db, "https://api.test/api/admin/sources/kma_weather/ingestion-targets");
+    assert.equal(listed.data.sourceKey, "kma_weather");
+    assert.deepEqual(listed.data.targets[0]?.query, { nx: 98, ny: 76, useLatestKmaNowcast: true });
+
+    globalThis.fetch = async (input: RequestInfo | URL): Promise<Response> => {
+      fetchCount += 1;
+      const requestedUrl = new URL(String(input));
+      assert.equal(requestedUrl.searchParams.get("ServiceKey"), serviceKey);
+      return Response.json({
+        response: {
+          header: { resultCode: "00", resultMsg: "NORMAL_SERVICE" },
+          body: {
+            totalCount: 4,
+            items: {
+              item: [
+                { baseDate: "20260713", baseTime: "0850", category: "T1H", nx: 98, ny: 76, obsrValue: "26.4" },
+                { baseDate: "20260713", baseTime: "0850", category: "RN1", nx: 98, ny: 76, obsrValue: "0" },
+                { baseDate: "20260713", baseTime: "0850", category: "WSD", nx: 98, ny: 76, obsrValue: "2.1" },
+                { baseDate: "20260713", baseTime: "0850", category: "PTY", nx: 98, ny: 76, obsrValue: "0" },
+              ],
+            },
+          },
+        },
+      });
+    };
+
+    await worker.default.scheduled(
+      { cron: "*/5 * * * *", type: "scheduled", scheduledTime: Date.parse("2026-07-13T00:03:00.000Z") },
+      { DB: db, KMA_SERVICE_KEY: serviceKey, OFFICIAL_INGESTION_SCHEDULER_ENABLED: "false" },
+    );
+    assert.equal(fetchCount, 0);
+
+    await worker.default.scheduled(
+      { cron: "*/5 * * * *", type: "scheduled", scheduledTime: Date.parse("2026-07-13T00:03:00.000Z") },
+      { DB: db, KMA_SERVICE_KEY: serviceKey, OFFICIAL_INGESTION_SCHEDULER_ENABLED: "true" },
+    );
+    assert.equal(fetchCount, 1);
+
+    const target = await db.prepare(`
+      SELECT last_status AS lastStatus, last_error_code AS lastErrorCode, next_run_at AS nextRunAt, lease_token AS leaseToken
+      FROM official_ingestion_targets
+      WHERE target_key = 'busan-weather'
+    `).first<{ lastStatus: string; lastErrorCode: string | null; nextRunAt: string; leaseToken: string | null }>();
+    assert.equal(target?.lastStatus, "succeeded");
+    assert.equal(target?.lastErrorCode, null);
+    assert.equal(target?.leaseToken, null);
+    assert.equal(Date.parse(target?.nextRunAt ?? "") > Date.parse("2026-07-13T00:03:00.000Z"), true);
+
+    await worker.default.scheduled(
+      { cron: "*/5 * * * *", type: "scheduled", scheduledTime: Date.parse("2026-07-13T00:03:00.000Z") },
+      { DB: db, KMA_SERVICE_KEY: serviceKey, OFFICIAL_INGESTION_SCHEDULER_ENABLED: "true" },
+    );
+    assert.equal(fetchCount, 1);
+
+    const deleted = await worker.handleRequest(
+      new Request("https://api.test/api/admin/sources/kma_weather/ingestion-targets/busan-weather", {
+        method: "DELETE",
+        headers: { "x-silsigan-admin-token": "test-admin-token" },
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens },
+    );
+    assert.equal(deleted.status, 200);
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(tempDir, { recursive: true, force: true });
@@ -3529,7 +4343,7 @@ test("staging and production reject memory fallback when D1 is unavailable", asy
   }
 });
 
-test("Cloudflare Worker serves posts hashtags and questions without Next.js mock APIs", async () => {
+test("Cloudflare Worker serves posts and hashtags without Next.js mock APIs", async () => {
   const anonymousId = "anon_posts_questions_test";
   const postsPayload = await get<SuccessPayload<FeedPost[]>>("https://api.test/api/posts?regionId=seoul&limit=10", anonymousId);
   assert.equal(postsPayload.meta?.storage, "memory-fallback");
@@ -3538,6 +4352,14 @@ test("Cloudflare Worker serves posts hashtags and questions without Next.js mock
   assert.equal(postsPayload.data.every((postItem) => !postItem.userId.startsWith("anon_")), true);
   assert.equal(postsPayload.data[0]?.hashtags.some((tag) => tag.name === "서울"), true);
   assert.match(postsPayload.data[0]?.shareCard.headline ?? "", /여의도 한강공원/);
+
+  const configuredShareResponse = await worker.handleRequest(
+    new Request("https://api.test/api/posts?regionId=seoul&limit=10"),
+    { ENVIRONMENT: "development", PUBLIC_SITE_URL: "https://staging.example" },
+  );
+  const configuredSharePayload = (await configuredShareResponse.json()) as SuccessPayload<FeedPost[]>;
+  assert.equal(configuredShareResponse.status, 200);
+  assert.match(configuredSharePayload.data[0]?.shareCard.url ?? "", /^https:\/\/staging\.example\/place\//);
 
   const hashtagsPayload = await get<SuccessPayload<Array<{ name: string; postCount: number }>>>("https://api.test/api/hashtags", anonymousId);
   assert.equal(hashtagsPayload.data.some((tag) => tag.name === "서울" && tag.postCount >= 1), true);
@@ -3548,25 +4370,28 @@ test("Cloudflare Worker serves posts hashtags and questions without Next.js mock
   );
   assert.equal(filteredPayload.data.every((postItem) => postItem.hashtagNames.includes("서울")), true);
 
-  const questionsPayload = await get<SuccessPayload<QuestionData[]>>("https://api.test/api/questions?regionId=seoul&limit=10", anonymousId);
-  assert.equal(questionsPayload.data.some((question) => question.placeId === "seoul-yeouido"), true);
+});
 
-  const created = await post<SuccessPayload<{ question: QuestionData; balance: number; creditEvent: { amount: number } }>>(
-    "https://api.test/api/questions",
-    anonymousId,
-    {
-      placeId: "seoul-yeouido",
-      questionType: "crowd",
-      body: "지금 잔디밭 자리 여유 있나요?",
-      availableCredits: 3,
-    },
-  );
-  assert.equal(created.data.question.placeId, "seoul-yeouido");
-  assert.equal(created.data.balance, 2);
-  assert.equal(created.data.creditEvent.amount, -1);
-
-  const mine = await get<SuccessPayload<QuestionData[]>>("https://api.test/api/my-questions", anonymousId);
-  assert.equal(mine.data.some((question) => question.id === created.data.question.id && question.status === "pending"), true);
+test("QNA routes fail closed while the launch feature flag is disabled", async () => {
+  for (const request of [
+    new Request("https://api.test/api/questions?regionId=seoul"),
+    new Request("https://api.test/api/my-questions"),
+    new Request("https://api.test/api/questions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        placeId: "seoul-yeouido",
+        questionType: "crowd",
+        body: "지금 잔디밭 자리 여유 있나요?",
+        availableCredits: 3,
+      }),
+    }),
+  ]) {
+    const response = await worker.handleRequest(request, {});
+    const payload = (await response.json()) as FailurePayload;
+    assert.equal(response.status, 404);
+    assert.equal(payload.error.code, "FEATURE_DISABLED");
+  }
 });
 
 test("Cloudflare Worker reads places and rankings from D1 when DB binding is present", async () => {
@@ -3679,6 +4504,38 @@ test("D1 core seed SQL is idempotent", { skip: !sqlite3Available() }, () => {
   }
 });
 
+test("D1 migration 0014 creates an isolated official-ingestion table idempotently", { skip: !sqlite3Available() }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-official-ingestion-"));
+  const dbPath = join(tempDir, "official-ingestion.db");
+  const migration = readFileSync(
+    new URL("../workers/api/migrations/0014_official_ingestion_targets.sql", import.meta.url),
+    "utf8",
+  );
+
+  try {
+    const output = execFileSync("sqlite3", [dbPath], {
+      encoding: "utf8",
+      input: `
+        PRAGMA foreign_keys = ON;
+        ${migration}
+        ${migration}
+        SELECT 'official_ingestion_target_table=' || COUNT(*)
+        FROM sqlite_schema
+        WHERE type = 'table' AND name = 'official_ingestion_targets';
+        SELECT 'official_ingestion_target_indexes=' || COUNT(*)
+        FROM sqlite_schema
+        WHERE type = 'index'
+          AND name IN ('idx_official_ingestion_targets_due', 'idx_official_ingestion_targets_source_place');
+      `,
+    });
+
+    assert.match(output, /official_ingestion_target_table=1/);
+    assert.match(output, /official_ingestion_target_indexes=2/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("D1 migration chain and core seed are release-order idempotent", { skip: !sqlite3Available() }, () => {
   const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-migrations-"));
   const dbPath = join(tempDir, "migrations.db");
@@ -3689,6 +4546,14 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
     "0004_v2_foundation.sql",
     "0005_v2_signals.sql",
     "0006_trust_safety_identity.sql",
+    "0007_field_report_moderation.sql",
+    "0008_source_ingestion_targets.sql",
+    "0009_field_report_photos.sql",
+    "0010_cost_abuse_guard.sql",
+    "0011_korea_sido_regions.sql",
+    "0012_photo_cost_ceiling.sql",
+    "0013_photo_upload_idempotency.sql",
+    "0014_official_ingestion_targets.sql",
   ]
     .map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8"))
     .join("\n");
@@ -3706,7 +4571,16 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
         SELECT 'post_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_posts_place_created', 'idx_posts_status_created');
         SELECT 'question_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_questions_place_created', 'idx_questions_anon_created');
         SELECT 'v2_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('profiles', 'identity_links', 'data_sources', 'place_source_mappings', 'dimension_settings', 'feature_flags', 'decision_profiles', 'decision_profile_dimensions', 'place_decision_profiles', 'live_signals', 'official_observations', 'aggregated_place_status');
+        SELECT 'official_ingestion_target_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'official_ingestion_targets';
+        SELECT 'official_ingestion_target_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_official_ingestion_targets_due', 'idx_official_ingestion_targets_source_place');
         SELECT 'trust_safety_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_moderation_states', 'report_votes', 'user_blocks', 'consents', 'terms_acceptances', 'account_deletion_requests', 'identity_link_events');
+        SELECT 'field_report_moderation_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'field_report_moderation';
+        SELECT 'field_report_photos_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'field_report_photos';
+        SELECT 'field_report_photos_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_field_report_photos_photo', 'idx_field_report_photos_report');
+        SELECT 'cost_guard_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('metered_usage_events', 'photo_upload_sessions');
+        SELECT 'cost_guard_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_metered_usage_actor', 'idx_metered_usage_ip', 'idx_metered_usage_expiry', 'idx_photo_upload_sessions_expiry');
+        SELECT 'photo_size_triggers=' || COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND name IN ('trg_photos_max_byte_size_insert', 'trg_photos_max_byte_size_update');
+        SELECT 'korea_sido_regions=' || COUNT(*) FROM regions WHERE parent_region_id IS NULL AND id IN ('seoul', 'busan', 'daegu', 'incheon', 'gwangju', 'daejeon', 'ulsan', 'sejong', 'gyeonggi', 'gangwon', 'chungbuk', 'chungnam', 'jeonbuk', 'jeonnam', 'gyeongbuk', 'gyeongnam', 'jeju');
         SELECT 'v2_flags=' || COUNT(*) FROM feature_flags WHERE scope_type = 'global' AND scope_key = '*' AND enabled = 0;
         SELECT 'parking_ttl=' || default_ttl_seconds FROM dimension_settings WHERE setting_key = 'parking';
         SELECT 'queue_ttl=' || default_ttl_seconds FROM dimension_settings WHERE setting_key = 'queue';
@@ -3726,7 +4600,15 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
     assert.match(output, /post_indexes=2/);
     assert.match(output, /question_indexes=2/);
     assert.match(output, /v2_tables=12/);
+    assert.match(output, /official_ingestion_target_table=1/);
+    assert.match(output, /official_ingestion_target_indexes=2/);
     assert.match(output, /trust_safety_tables=7/);
+    assert.match(output, /field_report_photos_table=1/);
+    assert.match(output, /field_report_photos_indexes=2/);
+    assert.match(output, /cost_guard_tables=2/);
+    assert.match(output, /cost_guard_indexes=4/);
+    assert.match(output, /photo_size_triggers=2/);
+    assert.match(output, /korea_sido_regions=17/);
     assert.match(output, /v2_flags=7/);
     assert.match(output, /parking_ttl=900/);
     assert.match(output, /queue_ttl=1200/);
@@ -3739,6 +4621,117 @@ test("D1 migration chain and core seed are release-order idempotent", { skip: !s
     assert.match(output, /rankings=6/);
     assert.match(output, /posts=4/);
     assert.match(output, /questions=3/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 field report migration backfills legacy reports as pending and hides their signals", { skip: !sqlite3Available() }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "silsigan-d1-field-report-migration-"));
+  const dbPath = join(tempDir, "migration.db");
+  const initialMigrations = [
+    "0001_initial.sql",
+    "0002_posts_questions.sql",
+    "0003_post_moderation_targets.sql",
+    "0004_v2_foundation.sql",
+    "0005_v2_signals.sql",
+    "0006_trust_safety_identity.sql",
+  ]
+    .map((fileName) => readFileSync(new URL(`../workers/api/migrations/${fileName}`, import.meta.url), "utf8"))
+    .join("\n");
+  const moderationMigration = readFileSync(new URL("../workers/api/migrations/0007_field_report_moderation.sql", import.meta.url), "utf8");
+  const seed = readFileSync(new URL("../workers/api/seeds/001_core_seed.sql", import.meta.url), "utf8");
+
+  try {
+    const output = execFileSync("sqlite3", [dbPath], {
+      encoding: "utf8",
+      input: `
+        ${initialMigrations}
+        ${seed}
+        INSERT INTO place_events (
+          id, place_id, anonymous_user_id, event_type, source, region_code, area_code, category,
+          crowd_level, created_at, expires_at
+        ) VALUES (
+          'field_report_legacy_no_moderation', 'busan-gwangalli', 'anon_seed_public', 'report',
+          'field_report', 'busan', 'busan-suyeong', 'tourism', 'busy',
+          '2026-07-13T00:00:00.000Z', '2026-07-13T01:00:00.000Z'
+        );
+        INSERT INTO live_signals (
+          id, place_id, dimension, value_code, source_id, source_type, source_name,
+          observed_at, fetched_at, expires_at, confidence_score, is_publicly_visible,
+          evidence_type, evidence_id, actor_type, actor_id
+        ) VALUES (
+          'signal_legacy_field_report', 'busan-gwangalli', 'crowd', 'busy', 'source-user-report',
+          'ugc', 'User field report', '2026-07-13T00:00:00.000Z', '2026-07-13T00:01:00.000Z',
+          '2026-07-13T01:00:00.000Z', 0.5, 1, 'user_report',
+          'field_report_legacy_no_moderation', 'anonymous', 'anon_seed_public'
+        );
+        ${moderationMigration}
+        SELECT 'legacy_status=' || status FROM field_report_moderation WHERE report_id = 'field_report_legacy_no_moderation';
+        SELECT 'legacy_signal_visibility=' || is_publicly_visible FROM live_signals WHERE evidence_id = 'field_report_legacy_no_moderation';
+        ${moderationMigration}
+        SELECT 'legacy_status_after_repeat=' || status FROM field_report_moderation WHERE report_id = 'field_report_legacy_no_moderation';
+      `,
+    });
+
+    assert.match(output, /legacy_status=pending/);
+    assert.match(output, /legacy_signal_visibility=0/);
+    assert.match(output, /legacy_status_after_repeat=pending/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 field reports fail closed when the moderation row is missing", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const reportId = "field_report_legacy_runtime";
+    const createdAt = new Date(Date.now() - 60_000).toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
+    await db
+      .prepare(
+        `INSERT INTO place_events (
+          id, place_id, anonymous_user_id, event_type, source, region_code, area_code, category,
+          crowd_level, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        reportId,
+        "busan-gwangalli",
+        "anon_seed_public",
+        "report",
+        "field_report",
+        "busan",
+        "busan-suyeong",
+        "tourism",
+        "busy",
+        createdAt,
+        expiresAt,
+      )
+      .run();
+
+    const publicReports = await d1Get<SuccessPayload<Array<{ id: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=10",
+      "anon_d1_legacy_reader",
+    );
+    assert.equal(publicReports.data.some((report) => report.id === reportId), false);
+
+    const pendingQueue = await d1AdminGet<SuccessPayload<Array<{ id: string; moderationStatus: string }>>>(
+      db,
+      "https://api.test/api/admin/field-reports?status=pending&limit=10",
+    );
+    const queuedReport = pendingQueue.data.find((report) => report.id === reportId);
+    assert.equal(queuedReport?.id, reportId);
+    assert.equal(queuedReport?.moderationStatus, "pending");
+
+    const ranking = await d1Get<SuccessPayload<Ranking[]>>(
+      db,
+      "https://api.test/api/rankings/regions/busan?limit=10",
+      "anon_d1_legacy_reader",
+    );
+    assert.equal(ranking.data.find((item) => item.placeId === "busan-gwangalli")?.reportCount, 0);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -3846,8 +4839,27 @@ test("D1 posts hashtags and questions use Cloudflare schema", { skip: !sqlite3Av
     assert.equal(createdPost.meta?.storage, "d1");
     assert.equal(createdPost.data.post.placeId, "seoul-yeouido");
     assert.equal(createdPost.data.post.userId.startsWith("anon_"), false);
+    assert.equal(createdPost.data.post.locationVerified, false);
+    assert.equal(createdPost.data.post.isExpired, false);
+    assert.equal(Date.parse(createdPost.data.post.expiresAt) - Date.parse(createdPost.data.post.createdAt), 3 * 60 * 60 * 1000);
+    assert.match(createdPost.data.post.shareCard.body, /상태 제보/);
+    assert.doesNotMatch(createdPost.data.post.shareCard.body, /현장 인증 제보/);
     assert.equal(createdPost.data.post.hashtagNames.includes("scriptbadscript"), true);
     assert.equal(createdPost.data.privacyNotice.includes("정확한 좌표"), true);
+    assert.deepEqual(createdPost.data.credits, []);
+
+    await db
+      .prepare("UPDATE posts SET created_at = ?, updated_at = ? WHERE id = ?")
+      .bind("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", createdPost.data.post.id)
+      .run();
+    const expiredPosts = await d1Get<SuccessPayload<FeedPost[]>>(
+      db,
+      "https://api.test/api/posts?placeId=seoul-yeouido&limit=20",
+      anonymousId,
+    );
+    const expiredPost = expiredPosts.data.find((postItem) => postItem.id === createdPost.data.post.id);
+    assert.equal(expiredPost?.isExpired, true);
+    assert.equal(expiredPost?.expiresAt, "2026-01-01T03:00:00.000Z");
 
     const hashtagsPayload = await d1Get<SuccessPayload<Array<{ name: string; postCount: number }>>>(db, "https://api.test/api/hashtags", anonymousId);
     assert.equal(hashtagsPayload.meta?.storage, "d1");
@@ -3874,6 +4886,10 @@ test("D1 posts hashtags and questions use Cloudflare schema", { skip: !sqlite3Av
       anonymousId,
     );
     assert.equal(postsAfterPostReport.data.some((postItem) => postItem.id === createdPost.data.post.id), false);
+
+    await db
+      .prepare("UPDATE feature_flags SET enabled = 1 WHERE scope_type = 'global' AND scope_key = '*' AND flag_key = 'QNA_ENABLED'")
+      .run();
 
     const createdQuestion = await d1Post<SuccessPayload<{ question: QuestionData; balance: number }>>(
       db,
@@ -4337,6 +5353,16 @@ test("D1 field reports store coarse realtime status without client coordinates",
 
   try {
     const anonymousId = "anon_d1_field_reporter";
+    const legacyPhotoUrlResponse = await rawD1Post(db, "https://api.test/api/reports", anonymousId, {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      photoUrl: "https://images.example.test/gwangalli-status.webp",
+    });
+    const legacyPhotoUrlPayload = (await legacyPhotoUrlResponse.json()) as FailurePayload;
+    assert.equal(legacyPhotoUrlResponse.status, 400);
+    assert.equal(legacyPhotoUrlPayload.error.code, "PHOTO_ATTACHMENT_REQUIRED");
+
     const response = await rawD1Post(db, "https://api.test/api/reports", anonymousId, {
       placeId: "busan-gwangalli",
       category: "tourism",
@@ -4345,7 +5371,6 @@ test("D1 field reports store coarse realtime status without client coordinates",
       parkingStatus: "limited",
       weatherFeel: "windy",
       comment: "바람이 강하고 사람이 조금 많습니다.",
-      photoUrl: "https://images.example.test/gwangalli-status.webp",
       clientLocation: {
         latitude: 35.1532,
         longitude: 129.1186,
@@ -4359,6 +5384,7 @@ test("D1 field reports store coarse realtime status without client coordinates",
     assert.equal(payload.meta?.locationPolicy, "clientLocation-used-only-for-distance-and-not-stored");
     assert.equal(payload.data.report.placeId, "busan-gwangalli");
     assert.equal(payload.data.report.verifiedRadiusM, 50);
+    assert.equal(payload.data.report.moderationStatus, "pending");
     assert.deepEqual(
       payload.data.report.observations.map((observation) => [observation.dimension, observation.valueCode]),
       [
@@ -4368,10 +5394,7 @@ test("D1 field reports store coarse realtime status without client coordinates",
         ["local_condition", "strong_wind"],
       ],
     );
-    assert.deepEqual(payload.data.credits, [
-      { type: "verified_report", amount: 1 },
-      { type: "photo_report", amount: 1 },
-    ]);
+    assert.deepEqual(payload.data.credits, []);
     assert.equal(serializedPayload.includes("35.1532"), false);
     assert.equal(serializedPayload.includes("129.1186"), false);
     assert.equal(serializedPayload.includes("images.example.test"), false);
@@ -4386,7 +5409,8 @@ test("D1 field reports store coarse realtime status without client coordinates",
           source_type AS sourceType,
           observed_at AS observedAt,
           expires_at AS expiresAt,
-          actor_type AS actorType
+          actor_type AS actorType,
+          is_publicly_visible AS isPubliclyVisible
         FROM live_signals
         WHERE evidence_id = ?
         ORDER BY dimension`,
@@ -4399,9 +5423,11 @@ test("D1 field reports store coarse realtime status without client coordinates",
         observedAt: string;
         expiresAt: string;
         actorType: string;
+        isPubliclyVisible: number;
       }>();
     assert.equal(signalRows.results?.length, 4);
     assert.equal(signalRows.results?.every((signal) => signal.sourceType === "verified_ugc" && signal.actorType === "anonymous"), true);
+    assert.equal(signalRows.results?.every((signal) => signal.isPubliclyVisible === 0), true);
     assert.deepEqual(
       Object.fromEntries(
         (signalRows.results ?? []).map((signal) => [
@@ -4456,6 +5482,11 @@ test("D1 field reports store coarse realtime status without client coordinates",
       createdAt: event.createdAt,
       expiresAt: event.expiresAt,
     });
+    const moderationState = await db
+      .prepare("SELECT status FROM field_report_moderation WHERE report_id = ?")
+      .bind(payload.data.report.id)
+      .first<{ status: string }>();
+    assert.deepEqual(moderationState, { status: "pending" });
     assert.equal(new Date(event.expiresAt).getTime() - new Date(event.createdAt).getTime(), 3 * 60 * 60 * 1000);
 
     const hourlyAggregate = await db
@@ -4472,11 +5503,95 @@ test("D1 field reports store coarse realtime status without client coordinates",
       .first<{ reportCount: number; uniqueUserCount: number }>();
     assert.deepEqual(hourlyAggregate, { reportCount: 1, uniqueUserCount: 1 });
 
+    const privateList = await d1Get<SuccessPayload<Array<{ id: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=5",
+      anonymousId,
+    );
+    assert.deepEqual(privateList.data, []);
+
+    const operatorQueueResponse = await worker.handleRequest(
+      new Request("https://api.test/api/admin/field-reports?status=pending&limit=5", {
+        headers: { "x-silsigan-admin-token": "test-operator-token" },
+      }),
+      { DB: db, ADMIN_TOKENS: testAdminTokens },
+    );
+    const operatorQueuePayload = (await operatorQueueResponse.json()) as FailurePayload;
+    assert.equal(operatorQueueResponse.status, 403);
+    assert.equal(operatorQueuePayload.error.code, "INSUFFICIENT_ADMIN_ROLE");
+
+    const pendingQueue = await d1AdminGet<SuccessPayload<Array<{
+      id: string;
+      placeName: string;
+      moderationStatus: string;
+      observedDimensions: string[];
+      isExpired: boolean;
+    }>>>(db, "https://api.test/api/admin/field-reports?status=pending&limit=5");
+    const queuedReport = pendingQueue.data.find((item) => item.id === payload.data.report.id);
+    assert.equal(queuedReport?.placeName, "광안리해수욕장");
+    assert.equal(queuedReport?.moderationStatus, "pending");
+    assert.deepEqual(new Set(queuedReport?.observedDimensions), new Set(["crowd", "queue", "parking", "local_condition"]));
+    assert.equal(queuedReport?.isExpired, false);
+    const serializedQueue = JSON.stringify(pendingQueue);
+    assert.equal(serializedQueue.includes(anonymousId), false);
+    assert.equal(serializedQueue.includes("35.1532"), false);
+    assert.equal(serializedQueue.includes("images.example.test"), false);
+
+    const pendingVote = await rawD1Post(db, `https://api.test/api/reports/${payload.data.report.id}/votes`, "anon_pending_vote", { voteType: "agree" });
+    const pendingVotePayload = (await pendingVote.json()) as FailurePayload;
+    assert.equal(pendingVote.status, 409);
+    assert.equal(pendingVotePayload.error.code, "FIELD_REPORT_NOT_PUBLIC");
+
+    const forbiddenModeration = await rawD1AdminPost(db, `https://api.test/api/admin/field-reports/${payload.data.report.id}/moderation`, {
+      decision: "approved",
+      reason: "권한 없는 승인 시도",
+    });
+    const forbiddenModerationPayload = (await forbiddenModeration.json()) as FailurePayload;
+    assert.equal(forbiddenModeration.status, 403);
+    assert.equal(forbiddenModerationPayload.error.code, "FORBIDDEN");
+
+    const approval = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${payload.data.report.id}/moderation`,
+      { decision: "approved", reason: "현장 제보 검수 통과" },
+      "test-moderator-token",
+    );
+    const approvalPayload = (await approval.json()) as SuccessPayload<{
+      reportId: string;
+      decision: string;
+      public: boolean;
+      previousStatus: string;
+    }>;
+    assert.equal(approval.status, 200);
+    assert.deepEqual(approvalPayload.data, {
+      reportId: payload.data.report.id,
+      decision: "approved",
+      public: true,
+      previousStatus: "pending",
+    });
+
+    const pendingQueueAfterApproval = await d1AdminGet<SuccessPayload<Array<{ id: string }>>>(
+      db,
+      "https://api.test/api/admin/field-reports?status=pending&limit=5",
+    );
+    assert.equal(pendingQueueAfterApproval.data.some((item) => item.id === payload.data.report.id), false);
+    const approvedQueue = await d1AdminGet<SuccessPayload<Array<{ id: string; moderationStatus: string }>>>(
+      db,
+      "https://api.test/api/admin/field-reports?status=approved&limit=5",
+    );
+    assert.equal(approvedQueue.data.find((item) => item.id === payload.data.report.id)?.moderationStatus, "approved");
+
+    const approvedSignalRows = await db
+      .prepare("SELECT is_publicly_visible AS isPubliclyVisible FROM live_signals WHERE evidence_id = ?")
+      .bind(payload.data.report.id)
+      .all<{ isPubliclyVisible: number }>();
+    assert.equal(approvedSignalRows.results?.every((signal) => signal.isPubliclyVisible === 1), true);
+
     const ranking = await d1Get<SuccessPayload<Ranking[]>>(db, "https://api.test/api/rankings/regions/busan?limit=10", anonymousId);
     const gwangalli = ranking.data.find((item) => item.placeId === "busan-gwangalli");
     assert.equal(gwangalli?.score, 104);
 
-    const list = await d1Get<SuccessPayload<Array<{ id: string; placeId: string; weatherFeel?: string }>>>(
+    const list = await d1Get<SuccessPayload<Array<{ id: string; placeId: string; weatherFeel?: string; moderationStatus?: string }>>>(
       db,
       "https://api.test/api/reports?placeId=busan-gwangalli&limit=5",
       anonymousId,
@@ -4485,6 +5600,7 @@ test("D1 field reports store coarse realtime status without client coordinates",
     assert.equal(list.meta?.storage, "d1");
     assert.equal(list.data[0]?.id, payload.data.report.id);
     assert.equal(list.data[0]?.placeId, "busan-gwangalli");
+    assert.equal(list.data[0]?.moderationStatus, "approved");
     assert.equal("weatherFeel" in (list.data[0] ?? {}), false);
     assert.equal(serializedList.includes("35.1532"), false);
     assert.equal(serializedList.includes("129.1186"), false);
@@ -4523,6 +5639,295 @@ test("D1 field reports store coarse realtime status without client coordinates",
 
     const eventCount = await db.prepare("SELECT COUNT(*) AS count FROM place_events WHERE place_id = ?").bind("busan-gwangalli").first<{ count: number }>();
     assert.equal(eventCount?.count, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 field report photos stay owner-scoped and publish only after both approvals", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const ownerId = "anon_field_report_photo_owner";
+    const photoResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-silsigan-anon-id": ownerId,
+        },
+        body: JSON.stringify({
+          uploadId: "upload_field_report_photo",
+          placeId: "busan-gwangalli",
+          byteSize: 120_000,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+        }),
+      }),
+      { DB: db, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const photoPayload = (await photoResponse.json()) as SuccessPayload<PhotoCompleteData>;
+    assert.equal(photoResponse.status, 201);
+    assert.equal(photoPayload.data.photo.status, "pending");
+
+    const photoId = photoPayload.data.photo.id;
+    const reportResponse = await rawD1Post(db, "https://api.test/api/reports", ownerId, {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      photoId,
+    });
+    const reportPayload = (await reportResponse.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(reportResponse.status, 201);
+    assert.equal("photoId" in reportPayload.data.report, false);
+
+    const relation = await db
+      .prepare("SELECT report_id AS reportId, photo_id AS photoId FROM field_report_photos WHERE report_id = ?")
+      .bind(reportPayload.data.report.id)
+      .first<{ reportId: string; photoId: string }>();
+    assert.deepEqual(relation, { reportId: reportPayload.data.report.id, photoId });
+
+    const otherOwner = await rawD1Post(db, "https://api.test/api/reports", "anon_field_report_photo_other", {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      photoId,
+    });
+    const otherOwnerPayload = (await otherOwner.json()) as FailurePayload;
+    assert.equal(otherOwner.status, 403);
+    assert.equal(otherOwnerPayload.error.code, "PHOTO_ATTACHMENT_FORBIDDEN");
+
+    const otherPlace = await rawD1Post(db, "https://api.test/api/reports", ownerId, {
+      placeId: "ulsan-taehwagang",
+      category: "tourism",
+      crowdLevel: "busy",
+      photoId,
+    });
+    const otherPlacePayload = (await otherPlace.json()) as FailurePayload;
+    assert.equal(otherPlace.status, 403);
+    assert.equal(otherPlacePayload.error.code, "PHOTO_ATTACHMENT_FORBIDDEN");
+
+    const pendingPublic = await d1Get<SuccessPayload<Array<{ id: string; photoId?: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=10",
+      ownerId,
+    );
+    assert.deepEqual(pendingPublic.data, []);
+
+    const reportApproval = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${reportPayload.data.report.id}/moderation`,
+      { decision: "approved", reason: "사진 연결 제보 검수" },
+      "test-moderator-token",
+    );
+    assert.equal(reportApproval.status, 200);
+
+    const reportApprovedPhotoPending = await d1Get<SuccessPayload<Array<{ id: string; photoId?: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=10",
+      ownerId,
+    );
+    assert.equal(reportApprovedPhotoPending.data[0]?.id, reportPayload.data.report.id);
+    assert.equal("photoId" in (reportApprovedPhotoPending.data[0] ?? {}), false);
+
+    const photoApproval = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/photos/${photoId}/moderation`,
+      { decision: "approved", reason: "파생 이미지 검수" },
+      "test-moderator-token",
+    );
+    assert.equal(photoApproval.status, 200);
+
+    const fullyApproved = await d1Get<SuccessPayload<Array<{ id: string; photoId?: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=10",
+      ownerId,
+    );
+    assert.equal(fullyApproved.data[0]?.id, reportPayload.data.report.id);
+    assert.equal(fullyApproved.data[0]?.photoId, photoId);
+    assert.equal(JSON.stringify(fullyApproved).includes("storageKey"), false);
+    assert.equal(JSON.stringify(fullyApproved).includes("anonymousUserId"), false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("disabled rewards stay hidden until the scoped feature flag is enabled", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const reportBody = {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+      clientLocation: {
+        latitude: 35.1532,
+        longitude: 129.1186,
+      },
+    };
+
+    const disabledResponse = await rawD1Post(db, "https://api.test/api/reports", "anon_rewards_disabled", reportBody);
+    const disabledPayload = (await disabledResponse.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(disabledResponse.status, 201);
+    assert.deepEqual(disabledPayload.data.credits, []);
+
+    await db
+      .prepare(
+        "UPDATE feature_flags SET enabled = 1 WHERE scope_type = 'global' AND scope_key = '*' AND flag_key = 'REWARDS_ENABLED'",
+      )
+      .run();
+
+    const enabledResponse = await rawD1Post(db, "https://api.test/api/reports", "anon_rewards_enabled", reportBody);
+    const enabledPayload = (await enabledResponse.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(enabledResponse.status, 201);
+    assert.deepEqual(enabledPayload.data.credits, [{ type: "verified_report", amount: 1 }]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("my field reports are scoped to the current anonymous session and retain lifecycle status", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const ownerId = "anon_d1_my_reports_owner";
+    const otherId = "anon_d1_my_reports_other";
+    const created = await rawD1Post(db, "https://api.test/api/reports", ownerId, {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      crowdLevel: "busy",
+    });
+    const createdPayload = (await created.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(created.status, 201);
+    assert.equal(createdPayload.data.report.moderationStatus, "pending");
+
+    const own = await d1Get<SuccessPayload<Array<{ id: string; placeId: string; status: string; verifiedRadiusM: number | null }>>>(
+      db,
+      "https://api.test/api/my-reports?limit=10",
+      ownerId,
+    );
+    assert.equal(own.meta?.ownerScope, "current-anonymous-session-only");
+    assert.equal(own.meta?.includeExpired, true);
+    assert.deepEqual(own.data.map((report) => report.id), [createdPayload.data.report.id]);
+    assert.equal(own.data[0]?.placeId, "busan-gwangalli");
+    assert.equal(own.data[0]?.status, "pending");
+    assert.equal(JSON.stringify(own).includes(ownerId), false);
+
+    const approval = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${createdPayload.data.report.id}/moderation`,
+      { decision: "approved", reason: "소유자 흐름 승인 테스트" },
+      "test-moderator-token",
+    );
+    assert.equal(approval.status, 200);
+
+    const published = await d1Get<SuccessPayload<Array<{ id: string; status: string }>>>(db, "https://api.test/api/my-reports?limit=10", ownerId);
+    assert.equal(published.data[0]?.status, "published");
+
+    const other = await d1Get<SuccessPayload<Array<{ id: string }>>>(db, "https://api.test/api/my-reports?limit=10", otherId);
+    assert.deepEqual(other.data, []);
+
+    await db
+      .prepare("UPDATE place_events SET expires_at = ? WHERE id = ?")
+      .bind("2026-01-01T00:00:00.000Z", createdPayload.data.report.id)
+      .run();
+    const expired = await d1Get<SuccessPayload<Array<{
+      id: string;
+      placeId: string;
+      category: string;
+      verifiedRadiusM: number | null;
+      createdAt: string;
+      expiresAt: string;
+      status: string;
+    }>>>(
+      db,
+      "https://api.test/api/my-reports?limit=10",
+      ownerId,
+    );
+    assert.equal(expired.data.length, 1);
+    assert.equal(expired.data[0]?.id, createdPayload.data.report.id);
+    assert.equal(expired.data[0]?.placeId, "busan-gwangalli");
+    assert.equal(expired.data[0]?.category, "tourism");
+    assert.equal(expired.data[0]?.verifiedRadiusM, null);
+    assert.equal(expired.data[0]?.createdAt, createdPayload.data.report.createdAt);
+    assert.equal(expired.data[0]?.expiresAt, "2026-01-01T00:00:00.000Z");
+    assert.equal(expired.data[0]?.status, "expired");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("rejected field reports stay private while the owner sees the rejection lifecycle", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const ownerId = "anon_rejected_report_owner";
+    const created = await rawD1Post(db, "https://api.test/api/reports", ownerId, {
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      parkingStatus: "full",
+    });
+    const createdPayload = (await created.json()) as SuccessPayload<FieldReportData>;
+    assert.equal(created.status, 201);
+
+    const rejection = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${createdPayload.data.report.id}/moderation`,
+      { decision: "rejected", reason: "민감정보 검수 반려" },
+      "test-moderator-token",
+    );
+    const rejectionPayload = (await rejection.json()) as SuccessPayload<{
+      reportId: string;
+      decision: string;
+      public: boolean;
+      previousStatus: string;
+    }>;
+    assert.equal(rejection.status, 200);
+    assert.deepEqual(rejectionPayload.data, {
+      reportId: createdPayload.data.report.id,
+      decision: "rejected",
+      public: false,
+      previousStatus: "pending",
+    });
+
+    const publicReports = await d1Get<SuccessPayload<Array<{ id: string }>>>(
+      db,
+      "https://api.test/api/reports?placeId=busan-gwangalli&limit=10",
+      ownerId,
+    );
+    assert.deepEqual(publicReports.data, []);
+
+    const ownReports = await d1Get<SuccessPayload<Array<{ id: string; status: string }>>>(db, "https://api.test/api/my-reports?limit=10", ownerId);
+    assert.deepEqual(ownReports.data, [{
+      id: createdPayload.data.report.id,
+      placeId: "busan-gwangalli",
+      category: "tourism",
+      parkingStatus: "full",
+      localConditions: [],
+      observations: [],
+      verifiedRadiusM: null,
+      createdAt: createdPayload.data.report.createdAt,
+      expiresAt: createdPayload.data.report.expiresAt,
+      moderationStatus: "rejected",
+      status: "rejected",
+    }]);
+
+    const visibleSignals = await db
+      .prepare("SELECT COUNT(*) AS count FROM live_signals WHERE evidence_id = ? AND is_publicly_visible = 1")
+      .bind(createdPayload.data.report.id)
+      .first<{ count: number }>();
+    assert.equal(visibleSignals?.count, 0);
+    const adminAction = await db
+      .prepare("SELECT action_type AS actionType, target_type AS targetType, target_id AS targetId FROM admin_actions WHERE target_id = ? ORDER BY created_at DESC LIMIT 1")
+      .bind(createdPayload.data.report.id)
+      .first<{ actionType: string; targetType: string; targetId: string }>();
+    assert.deepEqual(adminAction, {
+      actionType: "field_report_rejected",
+      targetType: "field_report",
+      targetId: createdPayload.data.report.id,
+    });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -4583,6 +5988,14 @@ test("field report votes reject self and duplicates, then invalidate stale conse
     });
     const reportPayload = (await reportResponse.json()) as SuccessPayload<FieldReportData>;
     const voteUrl = `https://api.test/api/reports/${reportPayload.data.report.id}/votes`;
+
+    const approval = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${reportPayload.data.report.id}/moderation`,
+      { decision: "approved", reason: "투표 흐름 승인 테스트" },
+      "test-moderator-token",
+    );
+    assert.equal(approval.status, 200);
 
     const selfVote = await rawD1Post(db, voteUrl, ownerId, { voteType: "agree" });
     const selfVotePayload = (await selfVote.json()) as FailurePayload;
@@ -4750,7 +6163,7 @@ test("anonymous account deletion purges owned content and rejects future writes"
           imageBase64: bytesToBase64(source),
         }),
       }),
-      { DB: db, PHOTOS: r2 },
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
     );
     const photoPayload = (await photoResponse.json()) as SuccessPayload<PhotoCompleteData>;
     assert.equal(photoResponse.status, 201);
@@ -4898,6 +6311,37 @@ test("D1 place status uses enabled current sources and preserves provider observ
     const reportPayload = (await reportResponse.json()) as SuccessPayload<FieldReportData>;
     assert.equal(reportResponse.status, 201);
 
+    const approval = await rawD1AdminPostWithToken(
+      db,
+      `https://api.test/api/admin/field-reports/${reportPayload.data.report.id}/moderation`,
+      { decision: "approved", reason: "현재 상태 계산 테스트 승인" },
+      "test-moderator-token",
+    );
+    assert.equal(approval.status, 200);
+
+    await db
+      .prepare("UPDATE data_sources SET commercial_use_status = 'allowed_with_attribution', enabled = 1, health_status = 'healthy' WHERE id = 'source-kma-weather'")
+      .run();
+    await db
+      .prepare(
+        `INSERT INTO live_signals (
+          id,
+          place_id,
+          dimension,
+          value_code,
+          source_id,
+          source_type,
+          source_name,
+          observed_at,
+          fetched_at,
+          expires_at,
+          confidence_score,
+          is_publicly_visible
+        ) VALUES ('signal-kma-without-expiry', 'busan-gwangalli', 'weather', 'clear', 'source-kma-weather', 'official_periodic', 'KMA', ?, ?, NULL, 0.9, 1)`,
+      )
+      .bind(reportPayload.data.report.createdAt, reportPayload.data.report.createdAt)
+      .run();
+
     const insufficientResponse = await worker.handleRequest(
       new Request("https://api.test/api/places/busan-gwangalli/status"),
       { DB: db, ENVIRONMENT: "staging" },
@@ -4913,14 +6357,12 @@ test("D1 place status uses enabled current sources and preserves provider observ
     assert.deepEqual(insufficient.data.missingRequiredDimensions, ["weather"]);
     assert.equal(insufficient.data.observedAt, reportPayload.data.report.createdAt);
     assert.equal(insufficient.data.currentSignals.length, 1);
+    assert.equal(insufficient.data.currentSignals.some((signal) => signal.sourceName === "KMA"), false);
     assert.equal(JSON.stringify(insufficient).includes("actorId"), false);
     assert.equal(JSON.stringify(insufficient).includes("actorKey"), false);
 
     const observedAt = reportPayload.data.report.createdAt;
     const expiresAt = new Date(new Date(observedAt).getTime() + 30 * 60 * 1_000).toISOString();
-    await db
-      .prepare("UPDATE data_sources SET commercial_use_status = 'allowed_with_attribution', enabled = 1, health_status = 'healthy' WHERE id = 'source-kma-weather'")
-      .run();
     await db
       .prepare(
         `INSERT INTO live_signals (
@@ -4975,6 +6417,31 @@ test("D1 place status uses enabled current sources and preserves provider observ
   }
 });
 
+test("public place status GET computes without writing an aggregate row", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    const before = await db
+      .prepare("SELECT COUNT(*) AS count FROM aggregated_place_status WHERE place_id = ?")
+      .bind("ulsan-taehwagang")
+      .first<{ count: number }>();
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/places/ulsan-taehwagang/status"),
+      { DB: db, ENVIRONMENT: "staging" },
+    );
+    const after = await db
+      .prepare("SELECT COUNT(*) AS count FROM aggregated_place_status WHERE place_id = ?")
+      .bind("ulsan-taehwagang")
+      .first<{ count: number }>();
+
+    assert.equal(response.status, 200);
+    assert.equal(before?.count, 0);
+    assert.equal(after?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("memory fallback field reports can be listed without raw location data", async () => {
   const anonymousId = "anon_memory_field_report";
   const created = await post<SuccessPayload<FieldReportData>>("https://api.test/api/reports", anonymousId, {
@@ -4984,7 +6451,6 @@ test("memory fallback field reports can be listed without raw location data", as
     lineStatus: "short",
     parkingStatus: "limited",
     weatherFeel: "windy",
-    photoUrl: "https://images.example.test/taehwa-status.webp",
     clientLocation: {
       latitude: 35.5486,
       longitude: 129.3005,
@@ -4997,12 +6463,48 @@ test("memory fallback field reports can be listed without raw location data", as
   const serializedList = JSON.stringify(list);
 
   assert.equal(list.meta?.storage, "memory-fallback");
-  assert.equal(list.data.some((report) => report.id === created.data.report.id), true);
-  assert.equal(list.data.find((report) => report.id === created.data.report.id)?.weatherFeel, "windy");
+  assert.equal(list.data.some((report) => report.id === created.data.report.id), false);
+
+  const approval = await rawMemoryAdminPostWithToken(
+    `https://api.test/api/admin/field-reports/${created.data.report.id}/moderation`,
+    { decision: "approved", reason: "memory fallback 승인 테스트" },
+    "test-moderator-token",
+  );
+  assert.equal(approval.status, 200);
+
+  const publishedList = await get<SuccessPayload<Array<{ id: string; placeId: string; weatherFeel?: string }>>>(
+    "https://api.test/api/reports?placeId=ulsan-taehwagang&limit=5",
+    anonymousId,
+  );
+  const publishedSerializedList = JSON.stringify(publishedList);
+  assert.equal(publishedList.data.some((report) => report.id === created.data.report.id), true);
+  assert.equal(publishedList.data.find((report) => report.id === created.data.report.id)?.weatherFeel, "windy");
   assert.equal(serializedList.includes("35.5486"), false);
   assert.equal(serializedList.includes("129.3005"), false);
   assert.equal(serializedList.includes("images.example.test"), false);
   assert.equal(serializedList.includes(anonymousId), false);
+  assert.equal(publishedSerializedList.includes("35.5486"), false);
+  assert.equal(publishedSerializedList.includes("129.3005"), false);
+  assert.equal(publishedSerializedList.includes("images.example.test"), false);
+  assert.equal(publishedSerializedList.includes(anonymousId), false);
+});
+
+test("memory fallback my field reports never use another session's public reports", async () => {
+  const ownerId = "anon_memory_my_reports_owner";
+  const otherId = "anon_memory_my_reports_other";
+  const created = await post<SuccessPayload<FieldReportData>>("https://api.test/api/reports", ownerId, {
+    placeId: "ulsan-taehwagang",
+    category: "tourism",
+    crowdLevel: "quiet",
+  });
+
+  const own = await get<SuccessPayload<Array<{ id: string; status: string }>>>("https://api.test/api/my-reports?limit=10", ownerId);
+  const other = await get<SuccessPayload<Array<{ id: string }>>>("https://api.test/api/my-reports?limit=10", otherId);
+
+  assert.deepEqual(own.data.map((report) => report.id), [created.data.report.id]);
+  assert.equal(own.data[0]?.status, "pending");
+  assert.deepEqual(other.data, []);
+  assert.equal(JSON.stringify(own).includes(ownerId), false);
 });
 
 test("D1 public live surfaces ignore expired three-hour place signals", { skip: !sqlite3Available() }, async () => {
@@ -5703,6 +7205,968 @@ test("duplicate photo clicks count once and photo complete rejects original file
   assert.equal(rejectedPayload.error.code, "PHOTO_ORIGINAL_FILENAME_FORBIDDEN");
 });
 
+test("photo policy caps every transmitted and stored image at one MiB", () => {
+  assert.equal(policies.PHOTO_MAX_BYTES, 1_048_576);
+  assert.equal(policies.PHOTO_MAX_DIMENSION, 1280);
+  assert.throws(
+    () =>
+      policies.validatePhotoComplete({
+        uploadId: "upload_one_mib_policy",
+        placeId: "busan-gwangalli",
+        regionCode: "busan",
+        byteSize: 1_048_577,
+        mimeType: "image/jpeg",
+        width: 1280,
+        height: 960,
+        clientReencoded: true,
+      }),
+    /PHOTO_SIZE_LIMIT/,
+  );
+});
+
+test("photo upload ticket publishes one MiB policy and rejects oversized bytes before an R2 staging write", async () => {
+  const anonymousId = "anon_photo_one_mib_test";
+  const r2 = new FakeR2Bucket();
+  const ticketResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload-url", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-silsigan-anon-id": anonymousId },
+      body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+  );
+  const ticket = (await ticketResponse.json()) as SuccessPayload<{ uploadId: string }>;
+
+  assert.equal(ticketResponse.status, 201);
+  assert.deepEqual(ticket.meta?.r2Policy, {
+    maxBytes: 1_048_576,
+    maxDimension: 1280,
+    originalFilenameStored: false,
+    gpsExifStripped: true,
+    processing: "worker-strips-metadata-before-r2-put",
+  });
+
+  const oversized = new Uint8Array(1_048_577);
+  oversized[0] = 0xff;
+  oversized[1] = 0xd8;
+  const uploadResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload", {
+      method: "PUT",
+      headers: {
+        "content-type": "image/jpeg",
+        "x-silsigan-anon-id": anonymousId,
+        "x-silsigan-place-id": "busan-gwangalli",
+        "x-silsigan-upload-id": ticket.data.uploadId,
+      },
+      body: oversized,
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+  );
+  const uploadPayload = (await uploadResponse.json()) as FailurePayload;
+
+  assert.equal(uploadResponse.status, 413);
+  assert.equal(uploadPayload.error.code, "PHOTO_SIZE_LIMIT");
+  assert.equal(r2.putObjects.some((object) => object.key.startsWith("photos/_uploads/")), false);
+});
+
+test("photo upload cost switch blocks metered R2 work before a ticket write", async () => {
+  const r2 = new FakeR2Bucket();
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload-url", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_cost_switch" },
+      body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "false" },
+  );
+  const payload = (await response.json()) as FailurePayload;
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.error.code, "PHOTO_UPLOADS_PAUSED");
+  assert.equal(r2.putObjects.length, 0);
+});
+
+test("photo writes require an explicit true kill-switch value before D1 or R2 work", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+
+  try {
+    for (const [index, flag] of [undefined, "false", "enabled", "TRUE", " true "].entries()) {
+      const response = await worker.handleRequest(
+        new Request("https://api.test/api/photos/upload-url", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-silsigan-anon-id": `anon_photo_default_off_${index}`,
+          },
+          body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+        }),
+        {
+          DB: db,
+          PHOTOS: r2,
+          ...(flag === undefined ? {} : { PHOTO_UPLOADS_ENABLED: flag }),
+        },
+      );
+      const payload = (await response.json()) as FailurePayload;
+
+      assert.equal(response.status, 503);
+      assert.equal(payload.error.code, "PHOTO_UPLOADS_PAUSED");
+    }
+
+    const sessionCount = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions").first<{ count: number }>();
+    const eventCount = await db.prepare("SELECT COUNT(*) AS count FROM metered_usage_events").first<{ count: number }>();
+    assert.equal(sessionCount?.count, 0);
+    assert.equal(eventCount?.count, 0);
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo writes fail closed when the Cloudflare rate-limit binding is missing", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+
+  try {
+    const anonymousId = "anon_photo_missing_native_limit";
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: signedPhotoRequestHeaders(anonymousId, "photo-missing-native-limit"),
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      persistentPhotoBindings(db, r2),
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "COST_GUARD_UNAVAILABLE");
+    assert.equal(r2.putObjects.length, 0);
+    const eventCount = await db.prepare("SELECT COUNT(*) AS count FROM metered_usage_events").first<{ count: number }>();
+    assert.equal(eventCount?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Cloudflare photo rate-limit binding rejects writes before R2 or D1 work", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding(false);
+
+  try {
+    const anonymousId = "anon_photo_native_limited";
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: signedPhotoRequestHeaders(anonymousId, "photo-native-limited-key"),
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { ...persistentPhotoBindings(db, r2), PHOTO_WRITE_RATE_LIMITER: limiter },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 429);
+    assert.equal(payload.error.code, "RATE_LIMITED");
+    assert.deepEqual(limiter.keys, ["photo-write:global"]);
+    assert.equal(r2.putObjects.length, 0);
+    const eventCount = await db.prepare("SELECT COUNT(*) AS count FROM metered_usage_events").first<{ count: number }>();
+    assert.equal(eventCount?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo writes fail closed without the approved server pixel-reencode path", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding(true);
+
+  try {
+    const anonymousId = "anon_photo_processing_unavailable";
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: signedPhotoRequestHeaders(anonymousId, "photo-processing-unavailable"),
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { ...persistentPhotoBindings(db, r2), PHOTO_WRITE_RATE_LIMITER: limiter },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "PHOTO_PROCESSING_UNAVAILABLE");
+    assert.deepEqual(limiter.keys, ["photo-write:global"]);
+    assert.equal(r2.putObjects.length, 0);
+    const eventCount = await db.prepare("SELECT COUNT(*) AS count FROM metered_usage_events").first<{ count: number }>();
+    assert.equal(eventCount?.count, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo writes require D1, R2, KV, and Durable Object readiness before metered work", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const images = new FakeImagesBinding(jpegServerReencodedSample());
+  const anonymousId = "anon_photo_binding_readiness";
+  const baseEnv = {
+    ...persistentPhotoBindings(db, r2),
+    IMAGES: images,
+    IMAGE_TRANSFORMS_ENABLED: "true",
+    PHOTO_WRITE_RATE_LIMITER: new FakeRateLimitBinding(true),
+  };
+
+  try {
+    for (const missingBinding of ["PHOTOS", "CACHE", "PLACE_ROOM"] as const) {
+      const response = await worker.handleRequest(
+        new Request("https://api.test/api/photos/upload-url", {
+          method: "POST",
+          headers: signedPhotoRequestHeaders(anonymousId, `photo-binding-${missingBinding.toLowerCase()}`),
+          body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+        }),
+        { ...baseEnv, [missingBinding]: undefined },
+      );
+      const payload = (await response.json()) as FailurePayload;
+      assert.equal(response.status, 503);
+      assert.equal(payload.error.code, "COST_GUARD_UNAVAILABLE");
+    }
+
+    await db.prepare("DROP TABLE photo_upload_idempotency_keys").run();
+    const missingSchema = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: signedPhotoRequestHeaders(anonymousId, "photo-missing-idempotency-schema"),
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      baseEnv,
+    );
+    const missingSchemaPayload = (await missingSchema.json()) as FailurePayload;
+    assert.equal(missingSchema.status, 503);
+    assert.equal(missingSchemaPayload.error.code, "COST_GUARD_UNAVAILABLE");
+
+    const sessions = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions").first<{ count: number }>();
+    const events = await db.prepare("SELECT COUNT(*) AS count FROM metered_usage_events").first<{ count: number }>();
+    assert.equal(sessions?.count, 0);
+    assert.equal(events?.count, 0);
+    assert.equal(r2.putObjects.length, 0);
+    assert.equal(images.inputs.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo writes require a valid idempotency key and signed anonymous session", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const limiter = new FakeRateLimitBinding(true);
+  const anonymousId = "anon_photo_signed_session";
+  const env = {
+    ...persistentPhotoBindings(db, r2),
+    IMAGES: new FakeImagesBinding(jpegServerReencodedSample()),
+    IMAGE_TRANSFORMS_ENABLED: "true",
+    PHOTO_WRITE_RATE_LIMITER: limiter,
+  };
+
+  try {
+    const missingKey = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          ...signedPhotoRequestHeaders(anonymousId, "placeholder-idempotency"),
+          "idempotency-key": "",
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      env,
+    );
+    const missingKeyPayload = (await missingKey.json()) as FailurePayload;
+    assert.equal(missingKey.status, 400);
+    assert.equal(missingKeyPayload.error.code, "PHOTO_IDEMPOTENCY_KEY_REQUIRED");
+
+    const invalidKey = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: signedPhotoRequestHeaders(anonymousId, "short"),
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      env,
+    );
+    const invalidKeyPayload = (await invalidKey.json()) as FailurePayload;
+    assert.equal(invalidKey.status, 400);
+    assert.equal(invalidKeyPayload.error.code, "PHOTO_IDEMPOTENCY_KEY_INVALID");
+
+    const missingSignature = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-missing-session-signature",
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      env,
+    );
+    const missingSignaturePayload = (await missingSignature.json()) as FailurePayload;
+    assert.equal(missingSignature.status, 403);
+    assert.equal(missingSignaturePayload.error.code, "PHOTO_SESSION_SIGNATURE_INVALID");
+
+    const invalidSignature = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          ...signedPhotoRequestHeaders(anonymousId, "photo-signed-session-key"),
+          "x-silsigan-anon-signature": `v1.${"0".repeat(64)}`,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      env,
+    );
+    const invalidSignaturePayload = (await invalidSignature.json()) as FailurePayload;
+    assert.equal(invalidSignature.status, 403);
+    assert.equal(invalidSignaturePayload.error.code, "PHOTO_SESSION_SIGNATURE_INVALID");
+
+    const accepted = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: signedPhotoRequestHeaders(anonymousId, "photo-signed-session-key"),
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      env,
+    );
+    assert.equal(accepted.status, 201);
+    assert.match(accepted.headers.get("x-silsigan-anon-signature") ?? "", /^v1\.[a-f0-9]{64}$/);
+    assert.deepEqual(limiter.keys, ["photo-write:global"]);
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo upload ticket retries are idempotent and reject request collisions", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_photo_idempotency_retry";
+  const idempotencyKey = "photo-ticket-retry-key-0001";
+  const requestTicket = (mimeType: "image/jpeg" | "image/webp") =>
+    worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": idempotencyKey,
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+
+  try {
+    const first = await requestTicket("image/jpeg");
+    const firstPayload = (await first.json()) as SuccessPayload<{ uploadId: string }>;
+    const retry = await requestTicket("image/jpeg");
+    const retryPayload = (await retry.json()) as SuccessPayload<{ uploadId: string }>;
+    const collision = await requestTicket("image/webp");
+    const collisionPayload = (await collision.json()) as FailurePayload;
+
+    assert.equal(first.status, 201);
+    assert.equal(retry.status, 200);
+    assert.equal(retryPayload.data.uploadId, firstPayload.data.uploadId);
+    assert.equal(retryPayload.meta?.idempotentReplay, true);
+    assert.equal(collision.status, 409);
+    assert.equal(collisionPayload.error.code, "PHOTO_IDEMPOTENCY_CONFLICT");
+
+    const sessions = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions").first<{ count: number }>();
+    const keys = await db
+      .prepare("SELECT idempotency_key_hash AS keyHash FROM photo_upload_idempotency_keys")
+      .all<{ keyHash: string }>();
+    const events = await db.prepare("SELECT COUNT(*) AS count FROM metered_usage_events").first<{ count: number }>();
+    assert.equal(sessions?.count, 1);
+    assert.equal(keys.results?.length, 1);
+    assert.match(keys.results?.[0]?.keyHash ?? "", /^sha256:[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(keys.results).includes(idempotencyKey), false);
+    assert.equal(events?.count, 1);
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo idempotency keys remain actor-scoped under identifier rotation", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const sharedKey = "photo-shared-actor-key-0001";
+
+  try {
+    for (let index = 0; index < 2; index += 1) {
+      const response = await worker.handleRequest(
+        new Request("https://api.test/api/photos/upload-url", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "cf-connecting-ip": `203.0.113.${210 + index}`,
+            "idempotency-key": sharedKey,
+            "x-silsigan-anon-id": `anon_photo_shared_key_${index}`,
+          },
+          body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+        }),
+        { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+      );
+      assert.equal(response.status, 201);
+    }
+
+    const sessions = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions").first<{ count: number }>();
+    const keys = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_idempotency_keys").first<{ count: number }>();
+    const events = await db
+      .prepare("SELECT COUNT(*) AS count FROM metered_usage_events WHERE scope = 'photo:upload-url:daily'")
+      .first<{ count: number }>();
+    assert.equal(sessions?.count, 2);
+    assert.equal(keys?.count, 2);
+    assert.equal(events?.count, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo idempotency expiry and outstanding queue fail closed", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const expiryActor = "anon_photo_idempotency_expiry";
+
+  try {
+    const first = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-expiry-key-0001",
+          "x-silsigan-anon-id": expiryActor,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const firstPayload = (await first.json()) as SuccessPayload<{ uploadId: string }>;
+    await db
+      .prepare("UPDATE photo_upload_sessions SET expires_at = ? WHERE upload_id = ?")
+      .bind("2020-01-01T00:00:00.000Z", firstPayload.data.uploadId)
+      .run();
+    const expired = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-expiry-key-0001",
+          "x-silsigan-anon-id": expiryActor,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const expiredPayload = (await expired.json()) as FailurePayload;
+    assert.equal(expired.status, 410);
+    assert.equal(expiredPayload.error.code, "PHOTO_UPLOAD_EXPIRED");
+
+    const queueActor = "anon_photo_queue_ceiling";
+    const queueTicket = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-queue-key-0001",
+          "x-silsigan-anon-id": queueActor,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const queueTicketPayload = (await queueTicket.json()) as SuccessPayload<{ uploadId: string }>;
+    const actorRow = await db
+      .prepare("SELECT anonymous_user_id AS anonymousUserId FROM photo_upload_sessions WHERE upload_id = ?")
+      .bind(queueTicketPayload.data.uploadId)
+      .first<{ anonymousUserId: string }>();
+    assert.ok(actorRow?.anonymousUserId);
+    const future = new Date(Date.now() + 600_000).toISOString();
+    for (let index = 2; index <= 3; index += 1) {
+      await db
+        .prepare(
+          `INSERT INTO photo_upload_sessions
+            (upload_id, anonymous_user_id, place_id, mime_type, storage_key, staging_key, status, expires_at)
+           VALUES (?, ?, 'busan-gwangalli', 'image/jpeg', ?, ?, 'ticketed', ?)`,
+        )
+        .bind(
+          `upload_queue_fixture_${index}`,
+          actorRow?.anonymousUserId ?? "",
+          `photos/queue_fixture_${index}.jpg`,
+          `photos/_uploads/upload_queue_fixture_${index}`,
+          future,
+        )
+        .run();
+    }
+    const queueFull = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-queue-key-0004",
+          "x-silsigan-anon-id": queueActor,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const queueFullPayload = (await queueFull.json()) as FailurePayload;
+    assert.equal(queueFull.status, 429);
+    assert.equal(queueFullPayload.error.code, "PHOTO_UPLOAD_QUEUE_FULL");
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo ticket retry storm creates one ticket and one persistent cost event", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_photo_retry_storm";
+  const request = () =>
+    worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-retry-storm-key-0001",
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+
+  try {
+    const statuses: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      statuses.push((await request()).status);
+    }
+    assert.deepEqual(statuses, [201, 200, 200, 429, 429]);
+    const sessions = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions").first<{ count: number }>();
+    const events = await db.prepare("SELECT COUNT(*) AS count FROM metered_usage_events").first<{ count: number }>();
+    assert.equal(sessions?.count, 1);
+    assert.equal(events?.count, 1);
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo reads fail closed before R2 when the Cloudflare rate-limit binding is missing", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/photo_missing_native_limit/file", {
+        headers: { "x-silsigan-anon-id": "anon_photo_read_missing_native_limit" },
+      }),
+      { DB: db, PHOTOS: r2, ENVIRONMENT: "staging" },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "COST_GUARD_UNAVAILABLE");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("photo upload cost guard resists anonymous ID rotation from one client IP", async () => {
+  const r2 = new FakeR2Bucket();
+  const clientIp = "198.51.100.72";
+
+  for (let index = 0; index < 20; index += 1) {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": clientIp,
+          "x-silsigan-anon-id": `anon_photo_rotating_${index}`,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    assert.equal(response.status, 201);
+  }
+
+  const limited = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload-url", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cf-connecting-ip": clientIp,
+        "x-silsigan-anon-id": "anon_photo_rotating_final",
+      },
+      body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+  );
+  const payload = (await limited.json()) as FailurePayload;
+
+  assert.equal(limited.status, 429);
+  assert.equal(payload.error.code, "RATE_LIMITED");
+  assert.ok(Number(limited.headers.get("retry-after")) > 0);
+  assert.equal(r2.putObjects.length, 20);
+});
+
+test("D1 photo cost events retain only short-lived hashed actor and IP fingerprints", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_photo_cost_hash_test";
+  const clientIp = "203.0.113.91";
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": clientIp,
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    assert.equal(response.status, 201);
+
+    const event = await db
+      .prepare(
+        "SELECT scope, actor_fingerprint AS actorFingerprint, ip_fingerprint AS ipFingerprint, expires_at AS expiresAt FROM metered_usage_events LIMIT 1",
+      )
+      .first<{ scope: string; actorFingerprint: string; ipFingerprint: string; expiresAt: string }>();
+
+    assert.equal(event?.scope, "photo:upload-url:daily");
+    assert.match(event?.actorFingerprint ?? "", /^sha256:[a-f0-9]{64}$/);
+    assert.match(event?.ipFingerprint ?? "", /^sha256:[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(event).includes(anonymousId), false);
+    assert.equal(JSON.stringify(event).includes(clientIp), false);
+    assert.ok(Date.parse(event?.expiresAt ?? "") > Date.now());
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo cost guard enforces a global daily ceiling across rotating actors and IPs", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+
+  try {
+    for (let index = 0; index < 2; index += 1) {
+      const response = await worker.handleRequest(
+        new Request("https://api.test/api/photos/upload-url", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "cf-connecting-ip": `203.0.113.${120 + index}`,
+            "x-silsigan-anon-id": `anon_photo_global_${index}`,
+          },
+          body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+        }),
+        { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true", PHOTO_GLOBAL_DAILY_LIMIT: "2" },
+      );
+      assert.equal(response.status, 201);
+    }
+
+    const limited = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": "203.0.113.122",
+          "x-silsigan-anon-id": "anon_photo_global_final",
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true", PHOTO_GLOBAL_DAILY_LIMIT: "2" },
+    );
+    const payload = (await limited.json()) as FailurePayload;
+
+    assert.equal(limited.status, 429);
+    assert.equal(payload.error.code, "RATE_LIMITED");
+    const eventCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM metered_usage_events WHERE scope = 'photo:upload-url:daily'")
+      .first<{ count: number }>();
+    assert.equal(eventCount?.count, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo transform guard enforces the free rolling-month ceiling before another R2 write", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const source = jpegWithGpsExifSample();
+
+  try {
+    for (let index = 0; index < 2; index += 1) {
+      const uniqueSource = new Uint8Array(source.byteLength + 1);
+      uniqueSource.set(source);
+      uniqueSource[uniqueSource.byteLength - 1] = index + 1;
+      const response = await worker.handleRequest(
+        new Request("https://api.test/api/photos/complete", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "cf-connecting-ip": `203.0.113.${140 + index}`,
+            "x-silsigan-anon-id": `anon_photo_monthly_${index}`,
+          },
+          body: JSON.stringify({
+            uploadId: `upload_monthly_${index}`,
+            placeId: "busan-gwangalli",
+            byteSize: uniqueSource.byteLength,
+            mimeType: "image/jpeg",
+            width: 1280,
+            height: 960,
+            clientReencoded: true,
+            imageBase64: bytesToBase64(uniqueSource),
+          }),
+        }),
+        { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true", PHOTO_GLOBAL_MONTHLY_LIMIT: "2" },
+      );
+      assert.equal(response.status, 201);
+    }
+
+    const blockedSource = new Uint8Array(source.byteLength + 1);
+    blockedSource.set(source);
+    blockedSource[blockedSource.byteLength - 1] = 3;
+    const limited = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": "203.0.113.142",
+          "x-silsigan-anon-id": "anon_photo_monthly_final",
+        },
+        body: JSON.stringify({
+          uploadId: "upload_monthly_final",
+          placeId: "busan-gwangalli",
+          byteSize: blockedSource.byteLength,
+          mimeType: "image/jpeg",
+          width: 1280,
+          height: 960,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(blockedSource),
+        }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true", PHOTO_GLOBAL_MONTHLY_LIMIT: "2" },
+    );
+    const payload = (await limited.json()) as FailurePayload;
+
+    assert.equal(limited.status, 429);
+    assert.equal(payload.error.code, "RATE_LIMITED");
+    assert.equal(r2.putObjects.filter((object) => !object.key.startsWith("photos/_")).length, 2);
+    const eventCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM metered_usage_events WHERE scope = 'photo:transform:rolling-31d'")
+      .first<{ count: number }>();
+    assert.equal(eventCount?.count, 2);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo storage budget rejects new tickets before the active-object ceiling is exceeded", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+
+  try {
+    const first = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_storage_first" },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true", PHOTO_GLOBAL_STORED_LIMIT: "1" },
+    );
+    assert.equal(first.status, 201);
+
+    const limited = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_storage_second" },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true", PHOTO_GLOBAL_STORED_LIMIT: "1" },
+    );
+    const payload = (await limited.json()) as FailurePayload;
+
+    assert.equal(limited.status, 429);
+    assert.equal(payload.error.code, "PHOTO_STORAGE_BUDGET_EXHAUSTED");
+    const sessionCount = await db.prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions").first<{ count: number }>();
+    assert.equal(sessionCount?.count, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo completion fails closed when monthly or stored cost ceilings are invalid", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const images = new FakeImagesBinding(jpegServerReencodedSample());
+  const limiter = new FakeRateLimitBinding(true);
+  const source = jpegWithGpsExifSample();
+
+  try {
+    const monthlyResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_invalid_monthly" },
+        body: JSON.stringify({
+          uploadId: "upload_invalid_monthly",
+          placeId: "busan-gwangalli",
+          byteSize: source.byteLength,
+          mimeType: "image/jpeg",
+          width: 1280,
+          height: 960,
+          clientReencoded: true,
+          imageBase64: bytesToBase64(source),
+        }),
+      }),
+      {
+        DB: db,
+        PHOTOS: r2,
+        IMAGES: images,
+        ENVIRONMENT: "staging",
+        PHOTO_UPLOADS_ENABLED: "true",
+        IMAGE_TRANSFORMS_ENABLED: "true",
+        COST_GUARD_HASH_SECRET: "test-cost-guard-secret-that-is-long-enough",
+        PHOTO_GLOBAL_DAILY_LIMIT: "150",
+        PHOTO_GLOBAL_MONTHLY_LIMIT: "0",
+        PHOTO_GLOBAL_STORED_LIMIT: "9000",
+        PHOTO_WRITE_RATE_LIMITER: limiter,
+      },
+    );
+    const monthlyPayload = (await monthlyResponse.json()) as FailurePayload;
+    assert.equal(monthlyResponse.status, 503);
+    assert.equal(monthlyPayload.error.code, "COST_GUARD_UNAVAILABLE");
+    assert.equal(r2.putObjects.length, 0);
+
+    const storedResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_invalid_stored" },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      {
+        DB: db,
+        PHOTOS: r2,
+        IMAGES: images,
+        ENVIRONMENT: "staging",
+        PHOTO_UPLOADS_ENABLED: "true",
+        IMAGE_TRANSFORMS_ENABLED: "true",
+        COST_GUARD_HASH_SECRET: "test-cost-guard-secret-that-is-long-enough",
+        PHOTO_GLOBAL_DAILY_LIMIT: "150",
+        PHOTO_GLOBAL_MONTHLY_LIMIT: "4500",
+        PHOTO_GLOBAL_STORED_LIMIT: "0",
+        PHOTO_WRITE_RATE_LIMITER: limiter,
+      },
+    );
+    const storedPayload = (await storedResponse.json()) as FailurePayload;
+    assert.equal(storedResponse.status, 503);
+    assert.equal(storedPayload.error.code, "COST_GUARD_UNAVAILABLE");
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo writes fail closed when the global cost ceiling is invalid", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_invalid_global_limit" },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      {
+        DB: db,
+        PHOTOS: r2,
+        ENVIRONMENT: "staging",
+        PHOTO_UPLOADS_ENABLED: "true",
+        COST_GUARD_HASH_SECRET: "test-cost-guard-secret-that-is-long-enough",
+        PHOTO_GLOBAL_DAILY_LIMIT: "0",
+      },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "COST_GUARD_UNAVAILABLE");
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo rows reject payload metadata above one MiB even when the API is bypassed", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+
+  try {
+    await db
+      .prepare("INSERT INTO anonymous_users (id, session_hash) VALUES (?, ?)")
+      .bind("anon_photo_db_limit", "sha256:photo-db-limit-session")
+      .run();
+    await assert.rejects(
+      () =>
+        db
+          .prepare(
+            `INSERT INTO photos
+              (id, place_id, anonymous_user_id, r2_key, mime_type, byte_size, width, height)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            "photo_db_limit",
+            "busan-gwangalli",
+            "anon_photo_db_limit",
+            "photos/photo_db_limit.webp",
+            "image/webp",
+            1_048_577,
+            1280,
+            960,
+          )
+          .run(),
+      /PHOTO_MAX_BYTES_EXCEEDED/,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("staging photo writes fail closed when the persistent cost-guard secret is missing", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+
+  try {
+    const response = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-silsigan-anon-id": "anon_photo_missing_cost_secret" },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, ENVIRONMENT: "staging", PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const payload = (await response.json()) as FailurePayload;
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.error.code, "COST_GUARD_UNAVAILABLE");
+    assert.equal(r2.putObjects.length, 0);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("photo complete strips GPS EXIF sample before writing to R2", async () => {
   const anonymousId = "anon_photo_exif_strip_test";
   const r2 = new FakeR2Bucket();
@@ -5729,7 +8193,7 @@ test("photo complete strips GPS EXIF sample before writing to R2", async () => {
         imageBase64: bytesToBase64(source),
       }),
     }),
-    { PHOTOS: r2 },
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
   );
   const payload = (await response.json()) as SuccessPayload<PhotoCompleteData>;
 
@@ -5812,7 +8276,7 @@ test("photo complete reencodes pixels with Cloudflare Images binding before writ
         imageBase64: bytesToBase64(source),
       }),
     }),
-    { PHOTOS: r2, IMAGES: images },
+    { PHOTOS: r2, IMAGES: images, PHOTO_UPLOADS_ENABLED: "true", IMAGE_TRANSFORMS_ENABLED: "true" },
   );
   const payload = (await response.json()) as SuccessPayload<PhotoCompleteData>;
   const sanitization = payload.meta?.photoSanitization as { pixelsReencoded?: unknown; processing?: unknown } | undefined;
@@ -5821,7 +8285,7 @@ test("photo complete reencodes pixels with Cloudflare Images binding before writ
   assert.equal(images.inputs.length, 1);
   assert.equal(containsAscii(images.inputs[0] ?? new Uint8Array(), "GPSLatitude"), false);
   assert.deepEqual(images.transforms, [{ width: 1280, height: 960, fit: "scale-down" }]);
-  assert.deepEqual(images.outputs, [{ format: "image/jpeg", quality: 82, anim: false }]);
+  assert.deepEqual(images.outputs, [{ format: "image/jpeg", quality: 78, anim: false }]);
   assert.equal(r2.putObjects.length, 1);
   assert.equal(containsAscii(r2.putObjects[0]?.bytes ?? new Uint8Array(), "SERVER_REENCODED"), true);
   assert.equal(containsAscii(r2.putObjects[0]?.bytes ?? new Uint8Array(), "GPSLatitude"), false);
@@ -5855,7 +8319,7 @@ test("D1 photo complete rejects duplicate sanitized image content before a secon
           imageBase64: bytesToBase64(source),
         }),
       }),
-      { DB: db, PHOTOS: r2 },
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
     );
     const firstPayload = (await first.json()) as SuccessPayload<PhotoCompleteData>;
     assert.equal(first.status, 201);
@@ -5890,7 +8354,7 @@ test("D1 photo complete rejects duplicate sanitized image content before a secon
     assert.equal(pendingList.data.some((photo) => photo.id === firstPayload.data.photo.id), false);
     const pendingFile = await worker.handleRequest(
       new Request(`https://api.test/api/photos/${firstPayload.data.photo.id}/file`),
-      { DB: db, PHOTOS: r2 },
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
     );
     assert.equal(pendingFile.status, 404);
 
@@ -5939,7 +8403,7 @@ test("D1 photo complete rejects duplicate sanitized image content before a secon
           imageBase64: bytesToBase64(source),
         }),
       }),
-      { DB: db, PHOTOS: r2 },
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
     );
     const duplicatePayload = (await duplicate.json()) as FailurePayload;
     assert.equal(duplicate.status, 409);
@@ -5995,7 +8459,12 @@ test("worker generic errors do not echo secrets or raw sensitive values", async 
         imageBase64: bytesToBase64(jpegWithGpsExifSample()),
       }),
     }),
-    { PHOTOS: new FakeR2Bucket(), IMAGES: new ThrowingImagesBinding(leakText) },
+    {
+      PHOTOS: new FakeR2Bucket(),
+      IMAGES: new ThrowingImagesBinding(leakText),
+      PHOTO_UPLOADS_ENABLED: "true",
+      IMAGE_TRANSFORMS_ENABLED: "true",
+    },
   );
   const payload = (await response.json()) as FailurePayload;
   const serialized = JSON.stringify(payload);
@@ -6036,6 +8505,398 @@ test("photo upload-url, list, and delete routes enforce anonymous ownership", as
 
   const photosAfterDelete = await get<SuccessPayload<Array<{ id: string }>>>("https://api.test/api/photos?placeId=busan-gwangalli", anonymousId);
   assert.equal(photosAfterDelete.data.some((photo) => photo.id === complete.data.photo.id), false);
+});
+
+test("photo binary upload CORS preflight allows PUT ticket headers", async () => {
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://silsigan.example",
+        "access-control-request-method": "PUT",
+        "access-control-request-headers": "content-type,idempotency-key,x-silsigan-anon-signature,x-silsigan-upload-id,x-silsigan-place-id",
+      },
+    }),
+    { CORS_ALLOWED_ORIGINS: "https://silsigan.example" },
+  );
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("access-control-allow-origin"), "https://silsigan.example");
+  assert.equal(response.headers.get("access-control-allow-credentials"), "true");
+  assert.match(response.headers.get("access-control-allow-methods") ?? "", /(?:^|,)PUT(?:,|$)/);
+  const allowedHeaders = response.headers.get("access-control-allow-headers") ?? "";
+  assert.match(allowedHeaders, /(?:^|,)idempotency-key(?:,|$)/);
+  assert.match(allowedHeaders, /(?:^|,)x-silsigan-anon-signature(?:,|$)/);
+  assert.match(allowedHeaders, /(?:^|,)x-silsigan-upload-id(?:,|$)/);
+  assert.match(allowedHeaders, /(?:^|,)x-silsigan-place-id(?:,|$)/);
+  assert.match(response.headers.get("access-control-expose-headers") ?? "", /(?:^|,)x-silsigan-anon-signature(?:,|$)/);
+});
+
+test("Worker CORS allows only configured exact origins and never returns wildcard credentials", async () => {
+  const env = { CORS_ALLOWED_ORIGINS: "https://silsigan.example,http://localhost:3201" };
+  const allowed = await worker.handleRequest(
+    new Request("https://api.test/api/health", { headers: { origin: "https://silsigan.example" } }),
+    env,
+  );
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.headers.get("access-control-allow-origin"), "https://silsigan.example");
+  assert.equal(allowed.headers.get("access-control-allow-credentials"), "true");
+  assert.equal(allowed.headers.get("vary"), "Origin");
+
+  const denied = await worker.handleRequest(
+    new Request("https://api.test/api/health", { headers: { origin: "https://evil.example" } }),
+    env,
+  );
+  assert.equal(denied.status, 200);
+  assert.equal(denied.headers.get("access-control-allow-origin"), null);
+  assert.equal(denied.headers.get("access-control-allow-credentials"), null);
+  assert.notEqual(denied.headers.get("access-control-allow-origin"), "*");
+
+  const noOrigin = await worker.handleRequest(new Request("https://api.test/api/health"), env);
+  assert.equal(noOrigin.headers.get("access-control-allow-origin"), null);
+  assert.equal(noOrigin.headers.get("access-control-allow-credentials"), null);
+});
+
+test("binary photo upload uses a private one-time staging object before completion", async () => {
+  const anonymousId = "anon_binary_photo_upload_test";
+  const r2 = new FakeR2Bucket();
+  const baseSource = jpegServerReencodedSample();
+  const source = concatBytes([baseSource.slice(0, -2), asciiBytes("BINARY_UPLOAD_TEST"), baseSource.slice(-2)]);
+  const ticketResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload-url", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-anon-id": anonymousId,
+      },
+      body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+  );
+  const ticketPayload = (await ticketResponse.json()) as SuccessPayload<{
+    uploadId: string;
+    method: string;
+    uploadUrl: string;
+    storageKey: string;
+    expiresAt: string;
+  }>;
+
+  assert.equal(ticketResponse.status, 201);
+  assert.equal(ticketPayload.data.method, "PUT");
+  assert.equal(ticketPayload.data.uploadUrl, "/api/photos/upload");
+
+  const crossOwnerUploadResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload", {
+      method: "PUT",
+      headers: {
+        "content-type": "image/jpeg",
+        "x-silsigan-anon-id": "anon_binary_photo_upload_attacker",
+        "x-silsigan-place-id": "busan-gwangalli",
+        "x-silsigan-upload-id": ticketPayload.data.uploadId,
+      },
+      body: source,
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+  );
+  assert.equal(crossOwnerUploadResponse.status, 403);
+
+  const uploadResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/upload", {
+      method: "PUT",
+      headers: {
+        "content-type": "image/jpeg",
+        "x-silsigan-anon-id": anonymousId,
+        "x-silsigan-place-id": "busan-gwangalli",
+        "x-silsigan-upload-id": ticketPayload.data.uploadId,
+      },
+      body: source,
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+  );
+
+  assert.equal(uploadResponse.status, 201);
+  assert.equal(r2.putObjects.some((object) => object.key.startsWith("photos/_uploads/")), true);
+  assert.equal(r2.deletedKeys.includes(`photos/_tickets/${ticketPayload.data.uploadId}`), true);
+
+  const completeResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/complete", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-anon-id": anonymousId,
+      },
+      body: JSON.stringify({
+        uploadId: ticketPayload.data.uploadId,
+        placeId: "busan-gwangalli",
+        byteSize: source.byteLength,
+        mimeType: "image/jpeg",
+        width: 1,
+        height: 1,
+        clientReencoded: true,
+      }),
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+  );
+  const completePayload = (await completeResponse.json()) as SuccessPayload<PhotoCompleteData>;
+
+  assert.equal(completeResponse.status, 201);
+  assert.equal(completePayload.data.storageKey, ticketPayload.data.storageKey);
+  assert.equal(r2.deletedKeys.includes(`photos/_uploads/${ticketPayload.data.uploadId}`), true);
+  assert.equal(r2.putObjects.some((object) => object.key === ticketPayload.data.storageKey), true);
+
+  const replayResponse = await worker.handleRequest(
+    new Request("https://api.test/api/photos/complete", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-anon-id": anonymousId,
+      },
+      body: JSON.stringify({
+        uploadId: ticketPayload.data.uploadId,
+        placeId: "busan-gwangalli",
+        byteSize: source.byteLength,
+        mimeType: "image/jpeg",
+        width: 1,
+        height: 1,
+        clientReencoded: true,
+      }),
+    }),
+    { PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+  );
+  assert.equal(replayResponse.status, 404);
+});
+
+test("D1 photo upload sessions avoid R2 ticket objects and retain a replay tombstone until expiry", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_d1_photo_session_test";
+  const source = jpegServerReencodedSample();
+
+  try {
+    const ticketResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-d1-tombstone-key",
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const ticket = (await ticketResponse.json()) as SuccessPayload<{ uploadId: string }>;
+    assert.equal(ticketResponse.status, 201);
+    assert.equal(r2.putObjects.some((object) => object.key.startsWith("photos/_tickets/")), false);
+
+    const ticketed = await db
+      .prepare("SELECT status FROM photo_upload_sessions WHERE upload_id = ?")
+      .bind(ticket.data.uploadId)
+      .first<{ status: string }>();
+    assert.equal(ticketed?.status, "ticketed");
+
+    const uploadResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload", {
+        method: "PUT",
+        headers: {
+          "content-type": "image/jpeg",
+          "x-silsigan-anon-id": anonymousId,
+          "x-silsigan-place-id": "busan-gwangalli",
+          "x-silsigan-upload-id": ticket.data.uploadId,
+        },
+        body: source,
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    assert.equal(uploadResponse.status, 201);
+
+    const uploaded = await db
+      .prepare("SELECT status FROM photo_upload_sessions WHERE upload_id = ?")
+      .bind(ticket.data.uploadId)
+      .first<{ status: string }>();
+    assert.equal(uploaded?.status, "uploaded");
+
+    const completeResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/complete", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-d1-tombstone-key",
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({
+          uploadId: ticket.data.uploadId,
+          placeId: "busan-gwangalli",
+          byteSize: source.byteLength,
+          mimeType: "image/jpeg",
+          width: 1,
+          height: 1,
+          clientReencoded: true,
+        }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    assert.equal(completeResponse.status, 201);
+
+    const closed = await db
+      .prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions WHERE upload_id = ? AND status = 'uploaded'")
+      .bind(ticket.data.uploadId)
+      .first<{ count: number }>();
+    assert.equal(closed?.count, 1);
+    assert.equal(r2.putObjects.some((object) => object.key.startsWith("photos/_uploads/")), false);
+
+    const replayTicket = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-d1-tombstone-key",
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const replayTicketPayload = (await replayTicket.json()) as FailurePayload;
+    assert.equal(replayTicket.status, 409);
+    assert.equal(replayTicketPayload.error.code, "PHOTO_UPLOAD_REPLAYED");
+    const mappingCount = await db
+      .prepare("SELECT COUNT(*) AS count FROM photo_upload_idempotency_keys WHERE upload_id = ?")
+      .bind(ticket.data.uploadId)
+      .first<{ count: number }>();
+    assert.equal(mappingCount?.count, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("D1 photo upload ticket allows only one concurrent binary claim and one R2 staging write", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_photo_concurrent_claim";
+  const source = jpegServerReencodedSample();
+
+  try {
+    const ticketResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-concurrent-claim-key",
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const ticket = (await ticketResponse.json()) as SuccessPayload<{ uploadId: string }>;
+    const upload = () =>
+      worker.handleRequest(
+        new Request("https://api.test/api/photos/upload", {
+          method: "PUT",
+          headers: {
+            "content-type": "image/jpeg",
+            "x-silsigan-anon-id": anonymousId,
+            "x-silsigan-place-id": "busan-gwangalli",
+            "x-silsigan-upload-id": ticket.data.uploadId,
+          },
+          body: source,
+        }),
+        { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+      );
+    const responses = await Promise.all([upload(), upload()]);
+    const statuses = responses.map((response) => response.status).sort((left, right) => left - right);
+    assert.deepEqual(statuses, [201, 409]);
+    const replay = responses.find((response) => response.status === 409);
+    const replayPayload = (await replay?.json()) as FailurePayload;
+    assert.equal(replayPayload.error.code, "PHOTO_UPLOAD_REPLAYED");
+    assert.equal(r2.putObjects.filter((object) => object.key.startsWith("photos/_uploads/")).length, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("photo completion rejects oversized dimensions before Images or R2 writes", async () => {
+  const r2 = new FakeR2Bucket();
+  const images = new FakeImagesBinding(jpegServerReencodedSample());
+  const response = await worker.handleRequest(
+    new Request("https://api.test/api/photos/complete", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "photo-oversized-dimension-key",
+        "x-silsigan-anon-id": "anon_photo_oversized_dimension",
+      },
+      body: JSON.stringify({
+        uploadId: "upload_oversized_dimension",
+        placeId: "busan-gwangalli",
+        byteSize: jpegServerReencodedSample().byteLength,
+        mimeType: "image/jpeg",
+        width: 1281,
+        height: 960,
+        clientReencoded: true,
+        imageBase64: bytesToBase64(jpegServerReencodedSample()),
+      }),
+    }),
+    {
+      PHOTOS: r2,
+      IMAGES: images,
+      PHOTO_UPLOADS_ENABLED: "true",
+      IMAGE_TRANSFORMS_ENABLED: "true",
+    },
+  );
+  const payload = (await response.json()) as FailurePayload;
+  assert.equal(response.status, 400);
+  assert.equal(payload.error.code, "PHOTO_DIMENSION_LIMIT");
+  assert.equal(images.inputs.length, 0);
+  assert.equal(r2.putObjects.length, 0);
+});
+
+test("scheduled cleanup removes expired D1 photo staging objects", { skip: !sqlite3Available() }, async () => {
+  const { db, tempDir } = createSeededSqliteD1();
+  const r2 = new FakeR2Bucket();
+  const anonymousId = "anon_photo_orphan_cleanup";
+
+  try {
+    const ticketResponse = await worker.handleRequest(
+      new Request("https://api.test/api/photos/upload-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "photo-orphan-cleanup-key",
+          "x-silsigan-anon-id": anonymousId,
+        },
+        body: JSON.stringify({ placeId: "busan-gwangalli", mimeType: "image/jpeg" }),
+      }),
+      { DB: db, PHOTOS: r2, PHOTO_UPLOADS_ENABLED: "true" },
+    );
+    const ticket = (await ticketResponse.json()) as SuccessPayload<{ uploadId: string }>;
+    const stagingKey = `photos/_uploads/${ticket.data.uploadId}`;
+    await r2.put(stagingKey, jpegServerReencodedSample());
+    await db
+      .prepare("UPDATE photo_upload_sessions SET status = 'uploaded', expires_at = ? WHERE upload_id = ?")
+      .bind("2020-01-01T00:00:00.000Z", ticket.data.uploadId)
+      .run();
+
+    await worker.default.scheduled(
+      { cron: "*/5 * * * *", type: "scheduled", scheduledTime: Date.now() },
+      { DB: db, PHOTOS: r2, OFFICIAL_INGESTION_SCHEDULER_ENABLED: "false" },
+    );
+
+    const remaining = await db
+      .prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions WHERE upload_id = ?")
+      .bind(ticket.data.uploadId)
+      .first<{ count: number }>();
+    assert.equal(remaining?.count, 0);
+    const remainingIdempotency = await db
+      .prepare("SELECT COUNT(*) AS count FROM photo_upload_idempotency_keys WHERE upload_id = ?")
+      .bind(ticket.data.uploadId)
+      .first<{ count: number }>();
+    assert.equal(remainingIdempotency?.count, 0);
+    assert.equal(r2.deletedKeys.includes(stagingKey), true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("comment delete and realtime path aliases are available", async () => {
@@ -6270,6 +9131,31 @@ test("comment create rate limit blocks slow daily spam per anonymous user", asyn
   }
 });
 
+test("comment create rate limit resists anonymous ID rotation from one client IP", async () => {
+  const clientIp = "203.0.113.24";
+
+  for (let index = 0; index < 20; index += 1) {
+    const response = await rawPostWithClientIp(
+      "https://api.test/api/comments",
+      `anon_rotating_rate_${index}`,
+      { placeId: "busan-gwangalli", body: `익명 ID 교체 테스트 ${index}` },
+      clientIp,
+    );
+    assert.equal(response.status, 201);
+  }
+
+  const limited = await rawPostWithClientIp(
+    "https://api.test/api/comments",
+    "anon_rotating_rate_final",
+    { placeId: "busan-gwangalli", body: "IP 기준 제한에 걸려야 합니다." },
+    clientIp,
+  );
+  const payload = (await limited.json()) as FailurePayload;
+
+  assert.equal(limited.status, 429);
+  assert.equal(payload.error.code, "RATE_LIMITED");
+});
+
 test("comment create rejects privacy script and URL spam patterns", async () => {
   const blockedBodies = [
     "연락처 010-1234-5678로 홍보합니다.",
@@ -6294,11 +9180,13 @@ test("comment create rejects privacy script and URL spam patterns", async () => 
 
 test("Cloudflare API client sends moderation reports to the Worker moderation endpoint", async () => {
   const requestedUrls: string[] = [];
+  const requestCredentials: Array<RequestCredentials | undefined> = [];
   const client = createCloudflareApiClient({
     baseUrl: "https://api.test",
     anonymousId: "anon_client_report_test",
-    fetcher: async (input) => {
+    fetcher: async (input, init) => {
       requestedUrls.push(input.toString());
+      requestCredentials.push(init?.credentials);
       return new Response(
         JSON.stringify({
           success: true,
@@ -6328,6 +9216,7 @@ test("Cloudflare API client sends moderation reports to the Worker moderation en
   });
 
   assert.deepEqual(requestedUrls, ["https://api.test/api/moderation/reports"]);
+  assert.deepEqual(requestCredentials, ["omit"]);
 });
 
 test("Cloudflare API client supports scoped ranking query params", async () => {
@@ -6495,6 +9384,22 @@ function rawPost(url: string, anonymousId: string, body: Record<string, unknown>
       },
       body: JSON.stringify(body),
     }),
+    { PHOTO_UPLOADS_ENABLED: "true" },
+  );
+}
+
+function rawPostWithClientIp(url: string, anonymousId: string, body: Record<string, unknown>, clientIp: string): Promise<Response> {
+  return worker.handleRequest(
+    new Request(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cf-connecting-ip": clientIp,
+        "x-silsigan-anon-id": anonymousId,
+      },
+      body: JSON.stringify(body),
+    }),
+    { PHOTO_UPLOADS_ENABLED: "true" },
   );
 }
 
@@ -6526,7 +9431,7 @@ async function d1Post<TPayload>(
       },
       body: JSON.stringify(body),
     }),
-    { DB: db },
+    { DB: db, PHOTO_UPLOADS_ENABLED: "true" },
   );
   assert.ok(response.status >= 200 && response.status < 300);
 
@@ -6543,7 +9448,7 @@ function rawD1Post(db: SqliteD1Database, url: string, anonymousId: string, body:
       },
       body: JSON.stringify(body),
     }),
-    { DB: db },
+    { DB: db, PHOTO_UPLOADS_ENABLED: "true" },
   );
 }
 
@@ -6614,6 +9519,20 @@ function rawD1AdminPostWithToken(db: SqliteD1Database, url: string, body: Record
   );
 }
 
+function rawMemoryAdminPostWithToken(url: string, body: Record<string, unknown>, token: string): Promise<Response> {
+  return worker.handleRequest(
+    new Request(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-silsigan-admin-token": token,
+      },
+      body: JSON.stringify(body),
+    }),
+    { ADMIN_TOKENS: testAdminTokens },
+  );
+}
+
 async function d1AdminPost<TPayload>(
   db: SqliteD1Database,
   url: string,
@@ -6679,10 +9598,20 @@ class FakeR2Bucket {
   async delete(key: string | string[]): Promise<void> {
     if (Array.isArray(key)) {
       this.deletedKeys.push(...key);
+      for (const deletedKey of key) {
+        const index = this.putObjects.findIndex((candidate) => candidate.key === deletedKey);
+        if (index >= 0) {
+          this.putObjects.splice(index, 1);
+        }
+      }
       return;
     }
 
     this.deletedKeys.push(key);
+    const index = this.putObjects.findIndex((candidate) => candidate.key === key);
+    if (index >= 0) {
+      this.putObjects.splice(index, 1);
+    }
   }
 
   async get(key: string) {
@@ -6701,7 +9630,22 @@ class FakeR2Bucket {
       httpMetadata: {
         contentType: object.contentType,
       },
+      customMetadata: object.customMetadata,
     };
+  }
+}
+
+class FakeRateLimitBinding {
+  readonly keys: string[] = [];
+  readonly success: boolean;
+
+  constructor(success = true) {
+    this.success = success;
+  }
+
+  async limit(options: { key: string }): Promise<{ success: boolean }> {
+    this.keys.push(options.key);
+    return { success: this.success };
   }
 }
 

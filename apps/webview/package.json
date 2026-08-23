@@ -8,7 +8,9 @@
     "sync": "pnpm config:validate && cap sync",
     "sync:staging": "SILSIGAN_WEBVIEW_ENV=staging pnpm sync",
     "sync:production": "SILSIGAN_WEBVIEW_ENV=production pnpm sync",
-    "check": "node --check src/bridge.mjs && node --check src/navigation.mjs"
+    "check": "node --check src/bridge.mjs && node --check src/navigation.mjs",
+    "android:check": "node scripts/validate-android-toolchain.mjs",
+    "android:build:debug": "pnpm android:check && ./android/gradlew -p android assembleDebug --no-daemon"
   },
   "dependencies": {
     "@capacitor/app": "8.0.0",

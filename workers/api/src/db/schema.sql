@@ -369,6 +369,31 @@ CREATE TABLE IF NOT EXISTS api_ingestion_runs (
   finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS official_ingestion_targets (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+  target_key TEXT NOT NULL CHECK (length(target_key) BETWEEN 1 AND 100),
+  place_id TEXT NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+  query_json TEXT NOT NULL CHECK (json_valid(query_json) AND length(query_json) <= 4000),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  next_run_at TEXT NOT NULL,
+  last_run_at TEXT,
+  last_status TEXT CHECK (last_status IS NULL OR last_status IN ('running', 'succeeded', 'partial', 'failed', 'skipped')),
+  last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) <= 80),
+  lease_token TEXT,
+  lease_expires_at TEXT,
+  created_by TEXT CHECK (created_by IS NULL OR length(created_by) <= 120),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE (source_id, target_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_official_ingestion_targets_due
+  ON official_ingestion_targets(enabled, next_run_at, lease_expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_official_ingestion_targets_source_place
+  ON official_ingestion_targets(source_id, place_id);
+
 CREATE TABLE IF NOT EXISTS dimension_settings (
   setting_key TEXT PRIMARY KEY,
   dimension TEXT CHECK (dimension IS NULL OR dimension IN (
@@ -694,6 +719,35 @@ CREATE TABLE IF NOT EXISTS report_votes (
   UNIQUE (report_id, anonymous_user_id)
 );
 
+CREATE TABLE IF NOT EXISTS field_report_moderation (
+  report_id TEXT PRIMARY KEY REFERENCES place_events(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
+  reviewer_subject TEXT,
+  decision_reason TEXT CHECK (decision_reason IS NULL OR length(decision_reason) <= 500),
+  decided_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_report_moderation_status
+  ON field_report_moderation(status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_field_report_moderation_report
+  ON field_report_moderation(report_id, status);
+
+CREATE TABLE IF NOT EXISTS field_report_photos (
+  report_id TEXT NOT NULL REFERENCES place_events(id) ON DELETE CASCADE,
+  photo_id TEXT NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (report_id, photo_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_report_photos_photo
+  ON field_report_photos(photo_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_field_report_photos_report
+  ON field_report_photos(report_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS user_blocks (
   id TEXT PRIMARY KEY,
   blocker_anonymous_user_id TEXT NOT NULL REFERENCES anonymous_users(id) ON DELETE CASCADE,
@@ -752,3 +806,63 @@ CREATE INDEX IF NOT EXISTS idx_photo_moderation_status ON photo_moderation_state
 CREATE INDEX IF NOT EXISTS idx_report_votes_report ON report_votes(report_id, vote_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker ON user_blocks(blocker_anonymous_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_account_deletion_actor ON account_deletion_requests(actor_type, anonymous_user_id, profile_id, requested_at DESC);
+
+CREATE TABLE IF NOT EXISTS metered_usage_events (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL CHECK (length(scope) BETWEEN 3 AND 80),
+  actor_fingerprint TEXT NOT NULL CHECK (actor_fingerprint GLOB 'sha256:*'),
+  ip_fingerprint TEXT NOT NULL CHECK (ip_fingerprint GLOB 'sha256:*'),
+  resource_units INTEGER NOT NULL DEFAULT 1 CHECK (resource_units BETWEEN 1 AND 100),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metered_usage_actor
+  ON metered_usage_events(scope, actor_fingerprint, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_metered_usage_ip
+  ON metered_usage_events(scope, ip_fingerprint, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_metered_usage_expiry
+  ON metered_usage_events(expires_at);
+
+CREATE TABLE IF NOT EXISTS photo_upload_sessions (
+  upload_id TEXT PRIMARY KEY,
+  anonymous_user_id TEXT NOT NULL REFERENCES anonymous_users(id) ON DELETE CASCADE,
+  place_id TEXT NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+  mime_type TEXT NOT NULL CHECK (mime_type IN ('image/jpeg', 'image/webp')),
+  storage_key TEXT NOT NULL UNIQUE,
+  staging_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('ticketed', 'uploaded')),
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_upload_sessions_expiry
+  ON photo_upload_sessions(expires_at, status);
+
+CREATE TABLE IF NOT EXISTS photo_upload_idempotency_keys (
+  anonymous_user_id TEXT NOT NULL REFERENCES anonymous_users(id) ON DELETE CASCADE,
+  idempotency_key_hash TEXT NOT NULL CHECK (idempotency_key_hash GLOB 'sha256:*'),
+  upload_id TEXT NOT NULL UNIQUE REFERENCES photo_upload_sessions(upload_id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (anonymous_user_id, idempotency_key_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_upload_idempotency_upload
+  ON photo_upload_idempotency_keys(upload_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_photos_max_byte_size_insert
+BEFORE INSERT ON photos
+WHEN NEW.byte_size > 1048576
+BEGIN
+  SELECT RAISE(ABORT, 'PHOTO_MAX_BYTES_EXCEEDED');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_photos_max_byte_size_update
+BEFORE UPDATE OF byte_size ON photos
+WHEN NEW.byte_size > 1048576
+BEGIN
+  SELECT RAISE(ABORT, 'PHOTO_MAX_BYTES_EXCEEDED');
+END;

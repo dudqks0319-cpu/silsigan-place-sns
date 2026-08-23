@@ -4,8 +4,45 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>#실시간</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", sans-serif;
+        background: #f6f7f9;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #f6f7f9;
+      }
+
+      body {
+        box-sizing: border-box;
+        min-height: 100dvh;
+        padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+          max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+        display: grid;
+        place-items: center;
+        color: #1d2433;
+      }
+
+      main {
+        width: min(100%, 340px);
+        box-sizing: border-box;
+        padding: 24px;
+        border: 1px solid #e1e5ec;
+        border-radius: 20px;
+        background: #ffffff;
+        box-shadow: 0 12px 32px rgb(25 45 80 / 8%);
+        font-size: 16px;
+        line-height: 1.55;
+        text-align: center;
+      }
+    </style>
   </head>
   <body>
-    <main>원격 앱을 불러올 수 없습니다. 네트워크 연결을 확인해 주세요.</main>
+    <main role="status" aria-live="polite">원격 앱을 불러올 수 없습니다. 네트워크 연결을 확인해 주세요.</main>
   </body>
 </html>

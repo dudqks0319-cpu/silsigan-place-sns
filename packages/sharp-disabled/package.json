@@ -1,0 +1,11 @@
+{
+  "name": "sharp",
+  "version": "0.0.0-silsigan-disabled",
+  "private": true,
+  "description": "Fail-closed replacement for Next's optional native sharp dependency in Cloudflare Worker builds.",
+  "main": "index.cjs",
+  "exports": {
+    ".": "./index.cjs"
+  },
+  "license": "UNLICENSED"
+}

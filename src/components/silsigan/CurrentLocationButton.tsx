@@ -11,10 +11,12 @@ export type UiLocation = {
 };
 
 export function CurrentLocationButton({
+  ariaLabel = "현재 위치로 지도 보기",
   onLocation,
   onPermissionChange,
   permission,
 }: {
+  ariaLabel?: string;
   onLocation: (location: UiLocation | null) => void;
   onPermissionChange: (permission: LocationPermissionState) => void;
   permission: LocationPermissionState;
@@ -47,12 +49,31 @@ export function CurrentLocationButton({
     );
   };
 
-  const denied = permission === "denied" || permission === "unsupported";
+  const requesting = permission === "requesting";
+  const granted = permission === "granted";
+  const denied = permission === "denied";
+  const unsupported = permission === "unsupported";
+  const label = requesting
+    ? "위치 확인 중"
+    : granted
+      ? "내 위치 표시 중"
+      : denied
+        ? "다시 요청"
+        : unsupported
+          ? "위치 사용 불가"
+          : "내 위치 표시";
 
   return (
-    <button className={styles.locationButton} type="button" onClick={requestLocation} aria-label="현재 위치로 지도 보기">
-      {denied ? <MapPinOff size={17} /> : <LocateFixed size={17} />}
-      {permission === "requesting" ? "위치 확인 중" : denied ? "지역 탭으로 보기" : "현재 위치"}
+    <button
+      className={styles.locationButton}
+      type="button"
+      onClick={requestLocation}
+      aria-label={granted ? "현재 위치 다시 확인" : ariaLabel}
+      aria-pressed={permission === "granted"}
+      disabled={requesting || unsupported}
+    >
+      {denied || unsupported ? <MapPinOff size={17} aria-hidden="true" /> : <LocateFixed size={17} aria-hidden="true" />}
+      {label}
     </button>
   );
 }

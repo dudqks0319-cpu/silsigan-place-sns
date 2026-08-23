@@ -3,7 +3,8 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -28,6 +29,7 @@ const requiredSmokeCheckNames = [
   "rankings.detail",
   "place.detail",
   "worker.placesSearchRequest",
+  "worker.sharedPlaceRequest",
   "worker.realtimePlaceRoom",
   "worker.realtimeRegionRoom",
   "worker.realtimeGlobalRoom",
@@ -41,8 +43,18 @@ const requiredSmokeCheckNames = [
   "reports.photoCreate",
   "reports.create",
   "fieldReports.create",
+  "fieldReports.photoUpload",
+  "fieldReports.photoAttachment",
+  "admin.loginPage",
+  "admin.loginSubmit",
+  "admin.fieldReportPrivate",
+  "admin.fieldReportQueue",
+  "admin.fieldReportApproval",
+  "admin.fieldReportPublic",
   "share.postPage",
   "share.opengraphImage",
+  "share.placePage",
+  "share.placeOgImage",
 ];
 const tinyJpegBase64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
@@ -93,21 +105,57 @@ async function main() {
     timeoutMs: numberOption(options.get("timeout-ms") ?? process.env.SILSIGAN_STAGING_BROWSER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     pagesPort: numberOption(options.get("pages-port"), 0),
     workerPort: numberOption(options.get("worker-port"), 0),
+    serverMode: options.get("server-mode") ?? process.env.SILSIGAN_STAGING_BROWSER_SERVER_MODE ?? "dev",
   };
+  if (config.serverMode !== "dev" && config.serverMode !== "start") {
+    throw new LocalSmokeError("SERVER_MODE_INVALID", `Unsupported server mode: ${config.serverMode}`);
+  }
+  const fieldReportPhotoTempDir = await mkdtemp(join(tmpdir(), "silsigan-field-report-photo-"));
+  const fieldReportPhotoPath = join(fieldReportPhotoTempDir, "synthetic-field-report.jpg");
+  await writeFile(fieldReportPhotoPath, Buffer.from(tinyJpegBase64, "base64"));
   const worker = await startMockWorker(config.workerPort);
   const nextPort = config.pagesPort || (await findFreePort());
   const pagesUrl = `http://127.0.0.1:${nextPort}`;
   let nextDev = null;
 
   try {
-    nextDev = startNextDev(nextPort, worker.url);
+    if (config.serverMode === "dev") {
+      await clearStaleNextDevLock();
+    } else {
+      await buildNextForSmoke(worker.url);
+    }
+    nextDev = startNextServer(nextPort, worker.url, config.serverMode);
     await waitForHttpOk(pagesUrl, "next.dev", config.timeoutMs);
-    const smoke = await runPagesSmoke({
-      apiBaseUrl: worker.url,
-      artifactDir: config.artifactDir,
-      pagesUrl,
-      timeoutMs: config.timeoutMs,
-    });
+    let smoke;
+    try {
+      smoke = await runPagesSmoke({
+        apiBaseUrl: worker.url,
+        artifactDir: config.artifactDir,
+        pagesUrl,
+        fieldReportPhotoFile: fieldReportPhotoPath,
+        timeoutMs: config.timeoutMs,
+      });
+      const sharedPlaceRequestCount = worker.sharedPlaceRequestCount();
+      if (sharedPlaceRequestCount < 1) {
+        throw new LocalSmokeError("SHARED_PLACE_WORKER_LOOKUP_MISSING", "장소 공유 페이지와 OG 이미지가 mock Worker canonical place API를 조회하지 않았습니다.");
+      }
+      smoke.checks.push({
+        name: "worker.sharedPlaceRequest",
+        status: "pass",
+        message: "장소 공유 페이지와 OG 이미지가 mock Worker canonical place API를 조회했습니다.",
+        count: sharedPlaceRequestCount,
+      });
+    } catch (error) {
+      const serverOutput = [nextDev.stdout(), nextDev.stderr()]
+        .filter(Boolean)
+        .join("\n")
+        .replaceAll("local-smoke-admin-token", "[redacted]")
+        .replaceAll("local-smoke-worker-token", "[redacted]");
+      if (error instanceof Error && serverOutput) {
+        error.message = `${error.message}\nnext-server-output=${serverOutput.slice(-8_000)}`;
+      }
+      throw error;
+    }
     const reportTargetTypes = [...new Set(worker.reportTargetTypes)];
     const requiredTargetTypes = ["place", "comment", "photo"];
     const missingTargetTypes = requiredTargetTypes.filter((targetType) => !reportTargetTypes.includes(targetType));
@@ -116,6 +164,12 @@ async function main() {
     }
     if (worker.fieldReportCount() < 1) {
       throw new LocalSmokeError("FIELD_REPORT_MISSING", "No field report was created through /api/reports.");
+    }
+    if (worker.fieldReportPhotoAttachmentCount() < 1) {
+      throw new LocalSmokeError("FIELD_REPORT_PHOTO_MISSING", "No field report with a server-owned photoId was created through /api/reports.");
+    }
+    if (worker.fieldReportModerationStatus() !== "approved" || worker.fieldReportPublicCount() !== 1) {
+      throw new LocalSmokeError("FIELD_REPORT_MODERATION_MISSING", "Field report was not approved and published through the admin browser flow.");
     }
     if (worker.sharedPostRequestCount() < 2) {
       throw new LocalSmokeError("SHARED_POST_WORKER_LOOKUP_MISSING", "Share page and OG image did not read posts from the mock Worker API.");
@@ -126,6 +180,7 @@ async function main() {
     const networkArtifactRedaction = await validateNetworkArtifactRedaction(smoke.artifacts?.network, {
       requiredReportTargetTypes: requiredTargetTypes,
     });
+    const consoleDiagnostics = validateConsoleMessages(smoke.consoleMessages);
     const smokeCheckIntegrity = validateSmokeCheckIntegrity(smoke.checks, {
       requiredCheckNames: requiredSmokeCheckNames,
     });
@@ -136,9 +191,15 @@ async function main() {
       apiBaseUrl: worker.url,
       reportTargetTypes,
       fieldReportCount: worker.fieldReportCount(),
+      fieldReportPhotoAttachmentCount: worker.fieldReportPhotoAttachmentCount(),
+      fieldReportPhotoId: worker.fieldReportPhotoId(),
+      fieldReportModerationStatus: worker.fieldReportModerationStatus(),
+      fieldReportPublicCount: worker.fieldReportPublicCount(),
       sharedPostRequestCount: worker.sharedPostRequestCount(),
+      sharedPlaceRequestCount: worker.sharedPlaceRequestCount(),
       hiddenPostRequestCount: worker.hiddenPostRequestCount(),
       networkArtifactRedaction,
+      consoleDiagnostics,
       smokeCheckIntegrity,
       artifacts: smoke.artifacts,
       smokeChecks: smoke.checks,
@@ -147,16 +208,20 @@ async function main() {
   } finally {
     await stopNextDev(nextDev);
     await worker.close();
+    await rm(fieldReportPhotoTempDir, { recursive: true, force: true });
   }
 }
 
-async function runPagesSmoke({ apiBaseUrl, artifactDir, pagesUrl, timeoutMs }) {
+async function runPagesSmoke({ apiBaseUrl, artifactDir, pagesUrl, fieldReportPhotoFile, timeoutMs }) {
   const { stdout, stderr, code } = await execNodeScript("scripts/cloudflare-pages-smoke.mjs", [
     `--pages-url=${pagesUrl}`,
     `--api-base-url=${apiBaseUrl}`,
     `--artifact-dir=${artifactDir}`,
+    `--field-report-photo-file=${fieldReportPhotoFile}`,
     `--timeout-ms=${timeoutMs}`,
     "--share-post-id=post-local-report-smoke",
+    "--admin-field-report",
+    "--admin-token=local-smoke-admin-token",
     "--mutating",
     "--report",
     "--require-photo",
@@ -224,21 +289,37 @@ export async function validateNetworkArtifactRedaction(networkPath, options = {}
   if (missingReportTargetTypes.length > 0) {
     throw new LocalSmokeError("NETWORK_ARTIFACT_REPORT_TARGET_TYPES_MISSING", `Pages smoke network artifact is missing report target types: ${missingReportTargetTypes.join(", ")}`);
   }
+  const notFoundEvents = events.filter((event) => event?.type === "response" && event.status === 404);
+  if (notFoundEvents.length > 0) {
+    throw new LocalSmokeError("NETWORK_ARTIFACT_NOT_FOUND", `Pages smoke network artifact contains ${notFoundEvents.length} HTTP 404 response(s).`);
+  }
 
   return {
     eventCount: events.length,
     reportTargetTypes,
     storesPostData: false,
     sensitiveHits: [],
+    notFoundCount: 0,
   };
 }
 
-function startNextDev(port, apiBaseUrl) {
-  const child = spawn("pnpm", ["dev", "--hostname", "127.0.0.1", "--port", String(port)], {
+export function validateConsoleMessages(messages) {
+  const consoleIssues = (Array.isArray(messages) ? messages : []).filter((message) => /^(?:console|log)\.(?:error|warning|warn):/i.test(String(message)));
+  if (consoleIssues.length > 0) {
+    throw new LocalSmokeError("BROWSER_CONSOLE_ISSUE", `Pages smoke captured ${consoleIssues.length} console error/warning record(s).`);
+  }
+
+  return { errorWarnCount: 0 };
+}
+
+function startNextServer(port, apiBaseUrl, serverMode) {
+  const child = spawn("pnpm", [serverMode, "--hostname", "127.0.0.1", "--port", String(port)], {
     env: {
       ...process.env,
       NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL: apiBaseUrl,
       SILSIGAN_WORKER_API_BASE_URL: apiBaseUrl,
+      SILSIGAN_ADMIN_TOKEN: "local-smoke-admin-token",
+      SILSIGAN_WORKER_ADMIN_TOKEN: "local-smoke-worker-token",
       NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "",
       npm_config_cache: process.env.npm_config_cache ?? "/tmp/codex-npm-cache",
     },
@@ -254,6 +335,60 @@ function startNextDev(port, apiBaseUrl) {
   });
 
   return { child, stderr: () => stderr, stdout: () => stdout };
+}
+
+async function clearStaleNextDevLock() {
+  const lockPath = join(process.cwd(), ".next", "dev", "lock");
+  let lock;
+  try {
+    lock = JSON.parse(await readFile(lockPath, "utf8"));
+  } catch {
+    return;
+  }
+
+  if (!Number.isInteger(lock?.pid)) {
+    return;
+  }
+
+  try {
+    process.kill(lock.pid, 0);
+  } catch (error) {
+    if (error?.code === "ESRCH") {
+      await rm(lockPath, { force: true });
+    }
+  }
+}
+
+async function buildNextForSmoke(apiBaseUrl) {
+  const child = spawn("pnpm", ["build"], {
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL: apiBaseUrl,
+      SILSIGAN_WORKER_API_BASE_URL: apiBaseUrl,
+      SILSIGAN_ADMIN_TOKEN: "local-smoke-admin-token",
+      SILSIGAN_WORKER_ADMIN_TOKEN: "local-smoke-worker-token",
+      NEXT_PUBLIC_NAVER_MAP_CLIENT_ID: "",
+      npm_config_cache: process.env.npm_config_cache ?? "/tmp/codex-npm-cache",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  const [code] = await once(child, "exit");
+  if (code !== 0) {
+    const output = [stdout, stderr]
+      .filter(Boolean)
+      .join("\n")
+      .replaceAll("local-smoke-admin-token", "[redacted]")
+      .replaceAll("local-smoke-worker-token", "[redacted]");
+    throw new LocalSmokeError("NEXT_BUILD_FAILED", output.slice(-8_000) || "next build failed before production smoke.");
+  }
 }
 
 async function stopNextDev(nextDev) {
@@ -298,11 +433,17 @@ async function startMockWorker(port) {
     comments: [],
     commentLikes: new Set(),
     fieldReports: [],
+    fieldReportPhotoAttachmentCount: 0,
+    fieldReportPhotoId: null,
+    fieldReportPhotoReady: false,
+    fieldReportModerationStatus: "pending",
+    myFieldReportsByAnon: new Map(),
     likeCount: 0,
     photoClickCount: 3,
     photoDeleted: false,
     hiddenPostRequestCount: 0,
     sharedPostRequestCount: 0,
+    sharedPlaceRequestCount: 0,
     questions: [workerQuestion()],
     reportTargetTypes: [],
   };
@@ -311,8 +452,8 @@ async function startMockWorker(port) {
     const anonId = validAnonId(request.headers["x-silsigan-anon-id"]) ? String(request.headers["x-silsigan-anon-id"]) : "anon_local_report_smoke";
     const send = (status, payload, headers = {}) => {
       response.writeHead(status, {
-        "access-control-allow-headers": "content-type,x-silsigan-anon-id,x-silsigan-admin-token",
-        "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+        "access-control-allow-headers": "content-type,x-silsigan-anon-id,x-silsigan-admin-token,x-silsigan-upload-id,x-silsigan-place-id",
+        "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
         "access-control-allow-origin": request.headers.origin ?? "*",
         "access-control-expose-headers": "x-silsigan-anon-id",
         "content-type": "application/json",
@@ -348,9 +489,22 @@ async function startMockWorker(port) {
             SEOUL_REALTIME_ENABLED: false,
             SOCIAL_FEED_ENABLED: false,
           },
+          costControls: {
+            photoUploadsEnabled: true,
+            photoMaxBytes: 1_048_576,
+            photoMaxDimension: 1280,
+            photoDailyLimit: 12,
+            photoReadMinuteLimit: 120,
+            enforcement: "worker-session-plus-ip",
+          },
           dimensionSettings: [],
         }),
       );
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/sources") {
+      send(200, success([]));
       return;
     }
 
@@ -359,6 +513,12 @@ async function startMockWorker(port) {
       const query = url.searchParams.get("q")?.trim().toLocaleLowerCase("ko-KR") ?? "";
       const matchesQuery = !query || [place.name, place.address, place.category, place.regionId].join(" ").toLocaleLowerCase("ko-KR").includes(query);
       send(200, success(matchesQuery ? [place] : []));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === `/api/places/${DEFAULT_PLACE_ID}`) {
+      state.sharedPlaceRequestCount += 1;
+      send(200, success(workerPlace()));
       return;
     }
 
@@ -402,9 +562,25 @@ async function startMockWorker(port) {
       return;
     }
 
-    if (request.method === "GET" && url.pathname === "/api/blocks") {
-      send(200, success([]));
-      return;
+    if (url.pathname === "/api/blocks") {
+      if (request.method === "GET") {
+        send(200, success([]));
+        return;
+      }
+      if (request.method === "POST") {
+        const body = await readJsonBody(request);
+        send(
+          201,
+          success({
+            id: "block-local-report-smoke",
+            targetType: String(body.targetType ?? "comment"),
+            targetId: String(body.targetId ?? "local-target"),
+            blocked: true,
+            createdAt: new Date().toISOString(),
+          }),
+        );
+        return;
+      }
     }
 
     if (request.method === "GET" && url.pathname === "/api/posts") {
@@ -452,26 +628,86 @@ async function startMockWorker(port) {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/my-reports") {
+      send(200, success(state.myFieldReportsByAnon.get(anonId) ?? []), {
+        "x-silsigan-owner-scope": "current-anonymous-session-only",
+      });
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/reports") {
-      send(200, success(state.fieldReports));
+      send(200, success(state.fieldReports.filter((report) => report.moderationStatus === "approved")));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/moderation/reports") {
+      send(200, success([]));
+      return;
+    }
+
+    if (url.pathname === "/api/admin/field-reports") {
+      if (String(request.headers["x-silsigan-admin-token"] ?? "") !== "local-smoke-worker-token") {
+        send(401, { success: false, error: { code: "ADMIN_AUTH_REQUIRED", message: "관리자 인증이 필요합니다." } });
+        return;
+      }
+      if (request.method === "GET") {
+        const status = url.searchParams.get("status") ?? "pending";
+        const reports = state.fieldReports
+          .filter((report) => status === "all" || report.moderationStatus === status)
+          .map((report) => workerFieldReportSummary(report));
+        send(200, success(reports));
+        return;
+      }
+    }
+
+    const fieldReportModerationMatch = url.pathname.match(/^\/api\/admin\/field-reports\/([^/]+)\/moderation$/);
+    if (request.method === "POST" && fieldReportModerationMatch) {
+      if (String(request.headers["x-silsigan-admin-token"] ?? "") !== "local-smoke-worker-token") {
+        send(401, { success: false, error: { code: "ADMIN_AUTH_REQUIRED", message: "관리자 인증이 필요합니다." } });
+        return;
+      }
+      const report = state.fieldReports.find((candidate) => candidate.id === decodeURIComponent(fieldReportModerationMatch[1]));
+      const body = await readJsonBody(request);
+      const decision = body.decision === "approved" || body.decision === "rejected" ? body.decision : null;
+      if (!report || !decision) {
+        send(400, { success: false, error: { code: "FIELD_REPORT_DECISION_INVALID", message: "현장 제보 처리 상태가 올바르지 않습니다." } });
+        return;
+      }
+      const previousStatus = report.moderationStatus;
+      report.moderationStatus = decision;
+      state.fieldReportModerationStatus = decision;
+      send(200, success({ reportId: report.id, decision, public: decision === "approved", previousStatus }));
       return;
     }
 
     if (request.method === "POST" && url.pathname === "/api/reports") {
       const body = await readJsonBody(request);
+      const photoId = typeof body.photoId === "string" ? body.photoId : null;
+      if (photoId && (!state.fieldReportPhotoReady || photoId !== "photo-field-report-local")) {
+        send(400, { success: false, error: { code: "PHOTO_ATTACHMENT_FORBIDDEN", message: "사진 첨부 상태가 올바르지 않습니다." } });
+        return;
+      }
       const now = new Date();
       const report = {
-        id: `field-report-local-${state.fieldReports.length + 1}`,
+        id: `field_report_local-smoke-${state.fieldReports.length + 1}`,
         placeId: String(body.placeId ?? DEFAULT_PLACE_ID),
         category: fieldReportCategory(body.category),
         crowdLevel: fieldReportValue(body.crowdLevel, ["quiet", "normal", "busy", "packed"], "busy"),
         lineStatus: fieldReportValue(body.lineStatus, ["none", "short", "medium", "long"], "short"),
         parkingStatus: fieldReportValue(body.parkingStatus, ["available", "limited", "full", "unknown"], "limited"),
         verifiedRadiusM: null,
+        hasPhoto: Boolean(photoId),
+        photoId,
+        moderationStatus: "pending",
         createdAt: now.toISOString(),
         expiresAt: new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString(),
       };
+      if (photoId) {
+        state.fieldReportPhotoAttachmentCount += 1;
+        state.fieldReportPhotoId = photoId;
+      }
       state.fieldReports.unshift(report);
+      state.myFieldReportsByAnon.set(anonId, [report, ...(state.myFieldReportsByAnon.get(anonId) ?? [])]);
       send(
         201,
         success({
@@ -540,12 +776,50 @@ async function startMockWorker(port) {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/api/photos/upload-url") {
+      const body = await readJsonBody(request);
+      if (String(body.placeId ?? "") !== DEFAULT_PLACE_ID || !["image/jpeg", "image/webp"].includes(String(body.mimeType ?? ""))) {
+        send(400, { success: false, error: { code: "PHOTO_UPLOAD_INVALID", message: "사진 업로드 계약이 올바르지 않습니다." } });
+        return;
+      }
+      send(200, success({
+        uploadId: "upload-field-report-photo",
+        method: "PUT",
+        uploadUrl: "/api/photos/upload",
+        storageKey: "private/field-report-photo",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      }));
+      return;
+    }
+
+    if (request.method === "PUT" && url.pathname === "/api/photos/upload") {
+      if (request.headers["x-silsigan-upload-id"] !== "upload-field-report-photo"
+        || request.headers["x-silsigan-place-id"] !== DEFAULT_PLACE_ID
+        || !["image/jpeg", "image/webp"].includes(String(request.headers["content-type"] ?? "").split(";", 1)[0])) {
+        send(400, { success: false, error: { code: "PHOTO_UPLOAD_INVALID", message: "사진 업로드 계약이 올바르지 않습니다." } });
+        return;
+      }
+      send(201, success({ uploadId: "upload-field-report-photo", uploaded: true }));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/photos/complete") {
+      const body = await readJsonBody(request);
+      if (String(body.uploadId ?? "") !== "upload-field-report-photo" || String(body.placeId ?? "") !== DEFAULT_PLACE_ID) {
+        send(400, { success: false, error: { code: "PHOTO_UPLOAD_INVALID", message: "사진 업로드 완료 계약이 올바르지 않습니다." } });
+        return;
+      }
+      state.fieldReportPhotoReady = true;
+      send(200, success({ photo: workerFieldReportPhoto(url.origin), storageKey: "private/field-report-photo" }));
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/photos") {
       send(200, success(state.photoDeleted ? [] : [workerPhoto(url.origin, state.photoClickCount)]));
       return;
     }
 
-    if (request.method === "GET" && url.pathname === "/api/photos/photo-local-report-smoke/file") {
+    if (request.method === "GET" && ["/api/photos/photo-local-report-smoke/file", "/api/photos/photo-field-report-local/file"].includes(url.pathname)) {
       response.writeHead(200, {
         "access-control-allow-origin": request.headers.origin ?? "*",
         "content-type": "image/jpeg",
@@ -638,8 +912,13 @@ async function startMockWorker(port) {
   return {
     close: () => new Promise((resolve) => server.close(resolve)),
     fieldReportCount: () => state.fieldReports.length,
+    fieldReportPhotoAttachmentCount: () => state.fieldReportPhotoAttachmentCount,
+    fieldReportPhotoId: () => state.fieldReportPhotoId,
+    fieldReportModerationStatus: () => state.fieldReportModerationStatus,
+    fieldReportPublicCount: () => state.fieldReports.filter((report) => report.moderationStatus === "approved").length,
     reportTargetTypes: state.reportTargetTypes,
     sharedPostRequestCount: () => state.sharedPostRequestCount,
+    sharedPlaceRequestCount: () => state.sharedPlaceRequestCount,
     hiddenPostRequestCount: () => state.hiddenPostRequestCount,
     url: `http://127.0.0.1:${address.port}`,
   };
@@ -652,6 +931,24 @@ function fieldReportCategory(value) {
 
 function fieldReportValue(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
+}
+
+function workerFieldReportSummary(report) {
+  return {
+    id: report.id,
+    placeId: report.placeId,
+    placeName: DEFAULT_PLACE_NAME,
+    category: report.category,
+    crowdLevel: report.crowdLevel,
+    lineStatus: report.lineStatus,
+    parkingStatus: report.parkingStatus,
+    verifiedRadiusM: report.verifiedRadiusM,
+    observedDimensions: ["crowd", "queue", "parking"],
+    createdAt: report.createdAt,
+    expiresAt: report.expiresAt,
+    moderationStatus: report.moderationStatus,
+    isExpired: false,
+  };
 }
 
 function workerPlace() {
@@ -670,6 +967,7 @@ function workerPlace() {
 }
 
 function workerPost() {
+  const createdAt = new Date().toISOString();
   return {
     id: "post-local-report-smoke",
     userId: "anon_local_report_smoke",
@@ -699,7 +997,8 @@ function workerPost() {
     judgement: "주의",
     safetyWarning: null,
     hiddenAt: null,
-    createdAt: new Date().toISOString(),
+    createdAt,
+    expiresAt: new Date(Date.parse(createdAt) + 3 * 60 * 60 * 1000).toISOString(),
   };
 }
 
@@ -737,6 +1036,22 @@ function workerPhoto(origin, clickCount) {
     ownedByCurrentSession: true,
     status: "ready",
     createdAt: "2026-06-22T00:00:00.000Z",
+  };
+}
+
+function workerFieldReportPhoto(origin) {
+  return {
+    id: "photo-field-report-local",
+    placeId: DEFAULT_PLACE_ID,
+    previewUrl: `${origin}/api/photos/photo-field-report-local/file`,
+    mimeType: "image/jpeg",
+    byteSize: Buffer.from(tinyJpegBase64, "base64").byteLength,
+    width: 1,
+    height: 1,
+    clickCount: 0,
+    ownedByCurrentSession: true,
+    status: "ready",
+    createdAt: new Date().toISOString(),
   };
 }
 
@@ -824,6 +1139,7 @@ Options:
   --artifact-dir=<path>
   --pages-port=<port>
   --worker-port=<port>
+  --server-mode=dev|start (default: dev; use start to verify an existing production build)
   --timeout-ms=<ms>
 `);
 }

@@ -24,7 +24,9 @@ const CANONICAL_BLOCKER_ALIASES = new Map([
   ["production.pages.url", "deployment_url.production.pages"],
   ["production.worker_api.url", "deployment_url.production.worker_api"],
   ["cloudflare.r2.enabled", "R2_NOT_ENABLED"],
-  ["cloudflare.d1.production.migration_0006", "D1_0006_NOT_APPLIED"],
+  ["cloudflare.d1.production.migration_0012", "D1_0012_NOT_APPLIED"],
+  ["cloudflare.d1.production.migration_0013", "D1_0013_NOT_APPLIED"],
+  ["cloudflare.d1.production.migration_0014", "D1_0014_NOT_APPLIED"],
   ["DEPLOYMENT_URL_REQUIRED", null],
 ]);
 
@@ -177,6 +179,7 @@ export function resolveReleaseGatePlan({ flags = new Set(), options = new Map(),
   steps.push(step("release.status.strict", ["release:status", "--", "--strict"]));
   steps.push(step("audit.critical", ["audit", "--audit-level", "critical"]));
   steps.push(step("frontend.typegen", ["cf:typegen"]));
+  steps.push(step("api.typegen", ["cf:api:typegen"]));
   steps.push(step("frontend.openNextBuild", ["cf:build"]));
   steps.push(step("frontend.wranglerDryRun.development", ["cf:web:dry-run"]));
   steps.push(step("frontend.wranglerDryRun.staging", ["cf:web:dry-run:staging"]));

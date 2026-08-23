@@ -110,6 +110,14 @@ export type CloudflareRuntimeConfig = {
   contractVersion: 2;
   dataMode: "live" | "demo";
   featureFlags: Record<FeatureFlagKey, boolean>;
+  costControls: {
+    photoUploadsEnabled: boolean;
+    photoMaxBytes: number;
+    photoMaxDimension: number;
+    photoDailyLimit: number;
+    photoReadMinuteLimit: number;
+    enforcement: "d1-persistent-plus-worker-ip" | "worker-session-plus-ip";
+  };
   dimensionSettings: Array<{
     settingKey: string;
     dimension: LiveSignalDimension | null;
@@ -204,7 +212,7 @@ export function createCloudflareApiClient(options: CloudflareApiClientOptions): 
     const response = await fetcher(new URL(path, options.baseUrl), {
       ...init,
       headers,
-      credentials: "include",
+      credentials: "omit",
     });
     const nextAnonymousId = response.headers.get("x-silsigan-anon-id");
     if (nextAnonymousId) {

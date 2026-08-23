@@ -22,6 +22,7 @@ export type NaverMapsNamespace = {
     fitBounds?: (bounds: unknown) => void;
     getBounds?: () => NaverBounds;
     setCenter?: (center: unknown) => void;
+    setZoom?: (zoom: number) => void;
   };
   Marker: new (options: {
     position: unknown;

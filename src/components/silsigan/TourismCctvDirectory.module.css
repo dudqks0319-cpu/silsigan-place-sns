@@ -1,0 +1,136 @@
+.directory {
+  margin: 20px 16px;
+  padding: 20px;
+  border: 1px solid #cfe1da;
+  border-radius: 24px;
+  background: #f7fbf9;
+  color: #173f35;
+}
+
+.headingRow,
+.entryHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.headingRow h2 {
+  margin: 4px 0 0;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.verifiedBadge,
+.countBadge,
+.entryHeader span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ddf4e9;
+  color: #12684f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.countBadge {
+  min-width: 52px;
+  justify-content: center;
+}
+
+.safetyNote,
+.emptyState {
+  margin: 16px 0 0;
+  font-size: 15px;
+  line-height: 1.65;
+  color: #49685f;
+}
+
+.emptyState {
+  padding: 20px;
+  border: 1px dashed #b8cec6;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.locationList {
+  display: grid;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.locationGroup {
+  display: grid;
+  gap: 10px;
+}
+
+.locationHeading {
+  margin: 0;
+  font-size: 16px;
+  color: #355d51;
+}
+
+.entryList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.entryCard {
+  min-width: 0;
+  border: 1px solid #d4e3de;
+  border-radius: 18px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.cctvLink {
+  display: grid;
+  gap: 8px;
+  min-height: 76px;
+  padding: 16px;
+  color: #41645a;
+  text-decoration: none;
+}
+
+.cctvLink:hover,
+.cctvLink:focus-visible {
+  background: #edf8f3;
+  outline: 3px solid #77bca7;
+  outline-offset: -3px;
+}
+
+.entryHeader strong {
+  color: #153f34;
+  font-size: 18px;
+}
+
+.linkAction {
+  color: #087e5d;
+  font-weight: 800;
+}
+
+@media (max-width: 520px) {
+  .directory {
+    margin-inline: 12px;
+    padding: 16px;
+  }
+
+  .entryList {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 380px) {
+  .headingRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .countBadge {
+    align-self: flex-start;
+  }
+}

@@ -15,8 +15,10 @@ import {
   distanceMeters,
   evaluateRegionActivation,
   getCategorySafetyWarning,
+  getPostExpiry,
   getQuestionCost,
   getReportExpiry,
+  isPostExpired,
   isReportExpired,
   rankPostsForFeed,
   recommendHashtags,
@@ -26,6 +28,7 @@ import {
 } from "./domain.ts";
 import { ApiError } from "./errors.ts";
 import type { CreatePostInput, CreateQuestionInput, CreateReportInput, FlagPostInput, FlagReportInput } from "./validators.ts";
+import { placeRegionMatchesScope } from "../../packages/contracts/src/index.ts";
 
 export type RegionActivationDashboardRow = {
   regionId: RegionId;
@@ -107,7 +110,7 @@ const posts: StoredPost[] = [
     helpfulCount: 31,
     commentCount: 8,
     hashtagNames: ["광안리주차살려줘", "광안리주차", "주차만차", "부산", "지금"],
-    minutesAgo: 12,
+      minutesAgo: 12,
   }),
   makeSeedPost({
     id: "post_seed_hwangridan_waiting",
@@ -262,7 +265,7 @@ export function listPlaces(filters: { regionId?: string; q?: string; limit?: num
 
   return mockPlaces
     .filter((place) => {
-      if (filters.regionId && place.regionId !== filters.regionId) {
+      if (!placeRegionMatchesScope(place.regionId, filters.regionId)) {
         return false;
       }
 
@@ -443,6 +446,7 @@ export function createPost(input: CreatePostInput) {
     hashtagNames,
     hiddenAt: null,
     createdAt: now.toISOString(),
+    expiresAt: getPostExpiry(now).toISOString(),
   };
 
   posts.unshift(post);
@@ -674,12 +678,12 @@ function publicPost(post: StoredPost) {
     judgement: buildShareCard(post, place).headline.replace(`${place.name} `, ""),
     safetyWarning: getCategorySafetyWarning(place.category),
     isSample: post.id.startsWith("post_seed_"),
+    isExpired: isPostExpired(post.expiresAt),
   };
 }
 
 function postToReport(post: StoredPost): StoredReport {
   const place = findPlace(post.placeId);
-  const createdAt = new Date(post.createdAt);
   const samplePhoto = samplePhotoByPlaceId[post.placeId] ?? samplePhotoByPlaceId["ulsan-taehwagang"];
 
   return {
@@ -699,21 +703,23 @@ function postToReport(post: StoredPost): StoredReport {
     observations: [],
     verifiedRadiusM: post.verifiedRadiusM,
     createdAt: post.createdAt,
-    expiresAt: getReportExpiry(createdAt).toISOString(),
+    expiresAt: post.expiresAt,
     flagCount: 0,
     hiddenAt: post.hiddenAt,
   };
 }
 
-function makeSeedPost(input: Omit<StoredPost, "userId" | "locationVerified" | "verifiedRadiusM" | "hiddenAt" | "createdAt"> & { minutesAgo: number }): StoredPost {
+function makeSeedPost(input: Omit<StoredPost, "userId" | "locationVerified" | "verifiedRadiusM" | "hiddenAt" | "createdAt" | "expiresAt"> & { minutesAgo: number }): StoredPost {
   const { minutesAgo, ...post } = input;
+  const createdAt = minutesAgoIso(minutesAgo);
 
   return {
     userId: `seed-${input.creatorName}`,
     locationVerified: true,
     verifiedRadiusM: 50,
     hiddenAt: null,
-    createdAt: minutesAgoIso(minutesAgo),
+    createdAt,
+    expiresAt: getPostExpiry(new Date(createdAt)).toISOString(),
     ...post,
   };
 }
@@ -731,7 +737,7 @@ function matchesScopedPlace(placeId: string, filters: ScopedListFilters) {
     return true;
   }
 
-  return mockPlaces.some((place) => place.id === placeId && place.regionId === filters.regionId);
+  return mockPlaces.some((place) => place.id === placeId && placeRegionMatchesScope(place.regionId, filters.regionId));
 }
 
 function normalizeListLimit(limit: number | undefined) {

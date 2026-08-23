@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { trackEvent } from "@/lib/analytics";
-import type { WorkerModerationReportSummary, WorkerModerationStatus } from "@/lib/worker-admin-api";
+import type { WorkerFieldReportSummary, WorkerModerationReportSummary, WorkerModerationStatus } from "@/lib/worker-admin-api";
+import { FieldReportQueueClient } from "./FieldReportQueueClient";
 import styles from "./page.module.css";
 
 type DemoModerationAction = "keep" | "hide" | "delete" | "restrict_author";
@@ -34,6 +35,13 @@ type ModerationPostResponse = {
     hidden: boolean;
   };
 };
+type WorkerModerationActionResponse = {
+  success: boolean;
+  data?: {
+    id: string;
+    status: WorkerModerationStatus;
+  };
+};
 
 const queueFilters = [
   { id: "all", label: "전체" },
@@ -49,20 +57,27 @@ export function ModerationQueueClient({
   initialItems,
   initialWorkerReports,
   workerQueueState,
+  initialFieldReports,
+  fieldReportQueueState,
+  showLocalDemoQueue = true,
 }: {
   initialItems: ModerationQueueItem[];
   initialWorkerReports: WorkerModerationReportSummary[];
   workerQueueState: WorkerQueueState;
+  initialFieldReports: WorkerFieldReportSummary[];
+  fieldReportQueueState: "connected" | "not_configured" | "unavailable";
+  showLocalDemoQueue?: boolean;
 }) {
   const [items, setItems] = useState(initialItems);
   const [workerReports, setWorkerReports] = useState(initialWorkerReports);
   const [workerState, setWorkerState] = useState<WorkerQueueState>(workerQueueState);
   const [activeFilter, setActiveFilter] = useState<QueueFilterId>("all");
   const [pendingPostId, setPendingPostId] = useState<string | null>(null);
+  const [pendingWorkerReportId, setPendingWorkerReportId] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState("운영 액션을 선택하면 큐 상태가 즉시 반영됩니다.");
   const filteredWorkerReports = workerReports.filter((report) => workerReportMatchesFilter(report, activeFilter));
   const filteredItems = items.filter((item) => itemMatchesFilter(item, activeFilter));
-  const visibleCount = filteredWorkerReports.length + filteredItems.length;
+  const visibleCount = filteredWorkerReports.length + (showLocalDemoQueue ? filteredItems.length : 0);
 
   const applyAction = async (postId: string, action: DemoModerationAction) => {
     const previousItems = items;
@@ -94,29 +109,45 @@ export function ModerationQueueClient({
     }
   };
 
-  const applyWorkerReportAction = (reportId: string, status: Exclude<WorkerModerationStatus, "open">) => {
+  const applyWorkerReportAction = async (reportId: string, status: Exclude<WorkerModerationStatus, "open">) => {
     const previousReports = workerReports;
+    setPendingWorkerReportId(reportId);
     setWorkerReports((current) => current.filter((report) => report.id !== reportId));
     setWorkerState("connected");
+    setActionNotice(`${workerReportActionLabel(status)} 요청 중입니다.`);
     trackEvent("moderate_worker_report", { reportId, status });
-    void fetch("/api/admin/moderation/reports", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        reportId,
-        status,
-        reason: status === "accepted" ? "admin accepted from queue" : "admin rejected from queue",
-      }),
-    }).catch(() => {
+    try {
+      const response = await fetch("/api/admin/moderation/reports", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          reportId,
+          status,
+          reason: status === "accepted" ? "admin accepted from queue" : "admin rejected from queue",
+        }),
+      });
+      const payload = (await response.json()) as WorkerModerationActionResponse;
+      const result = payload.data;
+      if (!response.ok || !payload.success || !result || result.id !== reportId || result.status !== status) {
+        throw new Error("worker moderation action failed");
+      }
+
+      setActionNotice(`${workerReportActionLabel(status)} 완료. 신고 큐 상태를 갱신했습니다.`);
+    } catch {
       setWorkerReports(previousReports);
       setWorkerState("action_failed");
-    });
+      setActionNotice("처리 요청이 실패했습니다. 신고 큐 항목을 복원했습니다.");
+    } finally {
+      setPendingWorkerReportId(null);
+    }
   };
 
   return (
     <>
+      <FieldReportQueueClient initialItems={initialFieldReports} queueState={fieldReportQueueState} />
+
       <nav className={styles.tabs} aria-label="신고 사유 필터">
         {queueFilters.map((filter) => {
           const count = countForFilter(filter.id, workerReports, items);
@@ -172,8 +203,8 @@ export function ModerationQueueClient({
                   <span>{report.id}</span>
                 </div>
                 <div className={styles.actionRow}>
-                  <button type="button" onClick={() => applyWorkerReportAction(report.id, "accepted")}>승인</button>
-                  <button type="button" onClick={() => applyWorkerReportAction(report.id, "rejected")}>거절</button>
+                  <button type="button" onClick={() => void applyWorkerReportAction(report.id, "accepted")} disabled={pendingWorkerReportId === report.id}>승인</button>
+                  <button type="button" onClick={() => void applyWorkerReportAction(report.id, "rejected")} disabled={pendingWorkerReportId === report.id}>거절</button>
                 </div>
               </div>
             </article>
@@ -188,40 +219,42 @@ export function ModerationQueueClient({
         </div>
       </section>
 
-      <div className={styles.queueList} aria-label="데모 게시물 신고 큐">
-        {filteredItems.map((item) => (
-          <article key={item.post.id} className={styles.queueItem}>
-            <div className={styles.thumb}>{item.hidden ? "숨김" : "검토"}</div>
-            <div className={styles.itemBody}>
-              <div className={styles.itemHeader}>
-                <div>
-                  <strong>{item.place.name}</strong>
-                  <span>{item.post.creatorName} · 신고 {item.flagCount}건</span>
+      {showLocalDemoQueue && (
+        <div className={styles.queueList} aria-label="데모 게시물 신고 큐">
+          {filteredItems.map((item) => (
+            <article key={item.post.id} className={styles.queueItem}>
+              <div className={styles.thumb}>{item.hidden ? "숨김" : "검토"}</div>
+              <div className={styles.itemBody}>
+                <div className={styles.itemHeader}>
+                  <div>
+                    <strong>{item.place.name}</strong>
+                    <span>{item.post.creatorName} · 신고 {item.flagCount}건</span>
+                  </div>
+                  <em>{item.recommendedAction}</em>
                 </div>
-                <em>{item.recommendedAction}</em>
+                <p>{item.post.caption ?? item.post.photoLabel}</p>
+                <div className={styles.reasonRow}>
+                  {(item.flagReasons.length ? item.flagReasons : ["신고 대기 없음"]).map((reason) => (
+                    <span key={reason}>{reasonLabel(reason)}</span>
+                  ))}
+                </div>
+                <div className={styles.actionRow}>
+                  <button type="button" onClick={() => void applyAction(item.post.id, "keep")} disabled={pendingPostId === item.post.id}>유지</button>
+                  <button type="button" onClick={() => void applyAction(item.post.id, "hide")} disabled={pendingPostId === item.post.id}>숨김</button>
+                  <button type="button" onClick={() => void applyAction(item.post.id, "delete")} disabled={pendingPostId === item.post.id}>삭제</button>
+                  <button type="button" onClick={() => void applyAction(item.post.id, "restrict_author")} disabled={pendingPostId === item.post.id}>작성자 제한</button>
+                </div>
               </div>
-              <p>{item.post.caption ?? item.post.photoLabel}</p>
-              <div className={styles.reasonRow}>
-                {(item.flagReasons.length ? item.flagReasons : ["신고 대기 없음"]).map((reason) => (
-                  <span key={reason}>{reasonLabel(reason)}</span>
-                ))}
-              </div>
-              <div className={styles.actionRow}>
-                <button type="button" onClick={() => void applyAction(item.post.id, "keep")} disabled={pendingPostId === item.post.id}>유지</button>
-                <button type="button" onClick={() => void applyAction(item.post.id, "hide")} disabled={pendingPostId === item.post.id}>숨김</button>
-                <button type="button" onClick={() => void applyAction(item.post.id, "delete")} disabled={pendingPostId === item.post.id}>삭제</button>
-                <button type="button" onClick={() => void applyAction(item.post.id, "restrict_author")} disabled={pendingPostId === item.post.id}>작성자 제한</button>
-              </div>
-            </div>
-          </article>
-        ))}
-        {filteredItems.length === 0 && (
-          <section className={styles.empty}>
-            <strong>{visibleCount === 0 ? `${queueFilterLabel(activeFilter)} 대기 항목이 없습니다.` : "데모 게시물 대기 항목이 없습니다."}</strong>
-            <p>필터를 바꾸거나 Worker 신고 큐를 확인해 주세요.</p>
-          </section>
-        )}
-      </div>
+            </article>
+          ))}
+          {filteredItems.length === 0 && (
+            <section className={styles.empty}>
+              <strong>{visibleCount === 0 ? `${queueFilterLabel(activeFilter)} 대기 항목이 없습니다.` : "데모 게시물 대기 항목이 없습니다."}</strong>
+              <p>필터를 바꾸거나 Worker 신고 큐를 확인해 주세요.</p>
+            </section>
+          )}
+        </div>
+      )}
     </>
   );
 }
@@ -309,6 +342,10 @@ function actionLabel(action: DemoModerationAction) {
   if (action === "hide") return "임시 숨김 처리";
   if (action === "delete") return "삭제 처리";
   return "작성자 제한 검토";
+}
+
+function workerReportActionLabel(status: Exclude<WorkerModerationStatus, "open">) {
+  return status === "accepted" ? "신고 승인" : "신고 거절";
 }
 
 function targetTypeLabel(targetType: WorkerModerationReportSummary["targetType"]) {

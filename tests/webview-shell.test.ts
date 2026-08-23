@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -16,11 +17,19 @@ import {
 } from "../apps/webview/src/bridge.mjs";
 import { createCapacitorConfig } from "../apps/webview/src/config.ts";
 import { classifyNavigation, openExternalNavigation } from "../apps/webview/src/navigation.mjs";
+import { parseJavaMajor, REQUIRED_ANDROID_JAVA_MAJOR, validateAndroidToolchain } from "../apps/webview/scripts/validate-android-toolchain.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-test("Capacitor WebView shell keeps the production app identity and no generated native projects", async () => {
+test("Capacitor WebView shell keeps the production app identity and generated native projects", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../apps/webview/package.json", import.meta.url), "utf8"));
+  const iosAppDelegate = await readFile(new URL("../apps/webview/ios/App/App/AppDelegate.swift", import.meta.url), "utf8");
+  const iosInfo = await readFile(new URL("../apps/webview/ios/App/App/Info.plist", import.meta.url), "utf8");
+  const androidActivity = await readFile(new URL("../apps/webview/android/app/src/main/java/kr/silsigan/mobile/MainActivity.java", import.meta.url), "utf8");
+  const androidPlugin = await readFile(new URL("../apps/webview/android/app/src/main/java/kr/silsigan/mobile/SilsiganShellPlugin.java", import.meta.url), "utf8");
+  const androidManifest = await readFile(new URL("../apps/webview/android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
+  const androidFilePaths = await readFile(new URL("../apps/webview/android/app/src/main/res/xml/file_paths.xml", import.meta.url), "utf8");
+  const storyboard = await readFile(new URL("../apps/webview/ios/App/App/Base.lproj/Main.storyboard", import.meta.url), "utf8");
   const config = createCapacitorConfig({
     SILSIGAN_WEBVIEW_ENV: "production",
     SILSIGAN_PRODUCTION_PAGES_URL: "https://silsigan.example.com",
@@ -28,10 +37,85 @@ test("Capacitor WebView shell keeps the production app identity and no generated
 
   assert.equal(config.appId, "kr.silsigan.mobile");
   assert.equal(config.appName, "#실시간");
+  if (!config.server) throw new Error("production config must include a server URL");
   assert.equal(config.server.cleartext, false);
   assert.equal(packageJson.dependencies["@capacitor/core"], "8.4.0");
-  assert.equal(existsSync(`${repoRoot}/apps/webview/ios`), false);
-  assert.equal(existsSync(`${repoRoot}/apps/webview/android`), false);
+  assert.equal(existsSync(`${repoRoot}/apps/webview/ios`), true);
+  assert.equal(existsSync(`${repoRoot}/apps/webview/android`), true);
+  assert.match(iosAppDelegate, /SilsiganShellPlugin/);
+  assert.match(iosAppDelegate, /registerPluginInstance/);
+  assert.match(iosInfo, /NSCameraUsageDescription/);
+  assert.match(iosInfo, /NSLocationWhenInUseUsageDescription/);
+  assert.match(iosInfo, /NSPhotoLibraryUsageDescription/);
+  assert.match(storyboard, /customClass="SilsiganBridgeViewController"/);
+  assert.match(androidActivity, /registerPlugin\(SilsiganShellPlugin\.class\)/);
+  assert.match(androidPlugin, /@CapacitorPlugin\(name = "SilsiganShell"\)/);
+  assert.match(androidPlugin, /ACTION_APPLICATION_DETAILS_SETTINGS/);
+  for (const permission of ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA", "POST_NOTIFICATIONS"]) {
+    assert.match(androidManifest, new RegExp(`android\\.permission\\.${permission}`));
+  }
+  assert.match(androidFilePaths, /<external-files-path name="my_external_files" path="\." \/>/);
+  assert.equal(androidFilePaths.includes("<external-path"), false);
+});
+
+test("native project generation omits deployment URLs without weakening runtime validation", () => {
+  const config = createCapacitorConfig({ SILSIGAN_WEBVIEW_GENERATE: "1" });
+
+  assert.equal(config.appId, "kr.silsigan.mobile");
+  assert.equal(config.webDir, "web");
+  assert.equal("server" in config, false);
+});
+
+test("WebView config validator supports generation mode without weakening runtime mode", () => {
+  const validator = fileURLToPath(new URL("../apps/webview/scripts/validate-config.ts", import.meta.url));
+  const baseEnv = { ...process.env };
+  delete baseEnv.SILSIGAN_WEBVIEW_ENV;
+  delete baseEnv.SILSIGAN_WEBVIEW_FIRST_PARTY_ORIGINS;
+  delete baseEnv.SILSIGAN_STAGING_PAGES_URL;
+  delete baseEnv.SILSIGAN_PRODUCTION_PAGES_URL;
+
+  const generated = spawnSync(process.execPath, ["--experimental-strip-types", validator], {
+    cwd: repoRoot,
+    env: { ...baseEnv, SILSIGAN_WEBVIEW_GENERATE: "1" },
+    encoding: "utf8",
+  });
+  assert.equal(generated.status, 0, generated.stderr);
+  assert.match(generated.stdout, /webview generation config valid: kr\.silsigan\.mobile/);
+
+  const runtime = spawnSync(process.execPath, ["--experimental-strip-types", validator], {
+    cwd: repoRoot,
+    env: {
+      ...baseEnv,
+      SILSIGAN_WEBVIEW_ENV: "staging",
+      SILSIGAN_STAGING_PAGES_URL: "https://staging.silsigan.example.com",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(runtime.status, 0, runtime.stderr);
+  assert.match(runtime.stdout, /webview config valid: staging https:\/\/staging\.silsigan\.example\.com\//);
+});
+
+test("Android toolchain gate requires the Java version used by Capacitor 8 modules", () => {
+  assert.equal(parseJavaMajor('openjdk version "21.0.8" 2025-07-15'), 21);
+  assert.equal(parseJavaMajor('openjdk version "1.8.0_442"'), 8);
+  assert.equal(parseJavaMajor("not a Java version"), null);
+  assert.equal(REQUIRED_ANDROID_JAVA_MAJOR, 21);
+  assert.deepEqual(validateAndroidToolchain({ javaExecutable: "/jdk-21/bin/java", javaMajor: 21 }), {
+    javaExecutable: "/jdk-21/bin/java",
+    javaMajor: 21,
+  });
+  assert.throws(
+    () => validateAndroidToolchain({ javaExecutable: "/jdk-25/bin/java", javaMajor: 25 }),
+    /Capacitor 8 Android modules require JDK 21; detected JDK 25/,
+  );
+});
+
+test("native offline fallback respects safe areas and announces its error state", async () => {
+  const fallback = await readFile(new URL("../apps/webview/web/index.html", import.meta.url), "utf8");
+  assert.match(fallback, /viewport-fit=cover/);
+  assert.match(fallback, /safe-area-inset-top/);
+  assert.match(fallback, /role="status"/);
+  assert.match(fallback, /네트워크 연결을 확인해 주세요/);
 });
 
 test("WebView config fails closed without a selected non-local HTTPS deployment", () => {
@@ -54,7 +138,9 @@ test("WebView config requires an exact first-party origin set containing its dep
     SILSIGAN_WEBVIEW_FIRST_PARTY_ORIGINS: "https://staging.silsigan.example.com,https://auth.silsigan.example.com",
   });
 
-  assert.deepEqual(config.plugins.SilsiganShell.firstPartyOrigins, [
+  const shellConfig = config.plugins?.SilsiganShell;
+  if (!shellConfig) throw new Error("runtime config must include SilsiganShell settings");
+  assert.deepEqual(shellConfig.firstPartyOrigins, [
     "https://staging.silsigan.example.com",
     "https://auth.silsigan.example.com",
   ]);

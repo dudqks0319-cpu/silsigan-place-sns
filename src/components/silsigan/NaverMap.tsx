@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { clusterMapPlaces } from "@/lib/map-clusters";
 import { loadNaverMaps, type NaverBounds } from "@/lib/naver-map-loader";
 
 export type MapBounds = {
@@ -20,7 +21,7 @@ type MapPlace = {
   status: string;
   signal: string;
   summary: string;
-  crowdLevel: "quiet" | "normal" | "busy" | "packed";
+  crowdLevel: "quiet" | "normal" | "busy" | "packed" | "unknown";
   line: string;
   parking: string;
 };
@@ -37,6 +38,7 @@ type NaverMapProps<TPlace extends MapPlace> = {
   showTraffic?: boolean;
   onBoundsChange?: (bounds: MapBounds) => void;
   onMapInteraction?: () => void;
+  onSelectCluster?: (places: TPlace[]) => void;
   onSelectPlace: (place: TPlace) => void;
 };
 
@@ -57,12 +59,14 @@ export function NaverMap<TPlace extends MapPlace>({
   showTraffic = false,
   onBoundsChange,
   onMapInteraction,
+  onSelectCluster,
   onSelectPlace,
 }: NaverMapProps<TPlace>) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<unknown>(null);
   const onBoundsChangeRef = useRef(onBoundsChange);
   const onMapInteractionRef = useRef(onMapInteraction);
+  const onSelectClusterRef = useRef(onSelectCluster);
   const onSelectPlaceRef = useRef(onSelectPlace);
   const currentLocationRef = useRef(currentLocation);
   const visiblePlacesRef = useRef<TPlace[]>([]);
@@ -84,6 +88,10 @@ export function NaverMap<TPlace extends MapPlace>({
   useEffect(() => {
     onMapInteractionRef.current = onMapInteraction;
   }, [onMapInteraction]);
+
+  useEffect(() => {
+    onSelectClusterRef.current = onSelectCluster;
+  }, [onSelectCluster]);
 
   useEffect(() => {
     onSelectPlaceRef.current = onSelectPlace;
@@ -174,6 +182,7 @@ export function NaverMap<TPlace extends MapPlace>({
     const { maps } = window.naver;
     const mapElement = mapRef.current;
     const placesForMap = visiblePlacesRef.current;
+    const clustersForMap = clusterMapPlaces(placesForMap);
     const currentLocationForMap = currentLocationRef.current;
     let renderCheckTimer = 0;
     let mapElementClickAttached = false;
@@ -184,6 +193,17 @@ export function NaverMap<TPlace extends MapPlace>({
     const markerListeners: Array<{ remove?: () => void } | void> = [];
     const selectPlaceFromMarkerEvent = (event: MouseEvent) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
+      const clusterButton = target?.closest<HTMLElement>("[data-silsigan-cluster-id]");
+      const clusterId = clusterButton?.dataset.silsiganClusterId;
+      const cluster = clusterId ? clustersForMap.find((candidate) => candidate.id === clusterId) : null;
+
+      if (cluster) {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelectClusterRef.current?.(cluster.places);
+        return;
+      }
+
       const markerButton = target?.closest<HTMLElement>("[data-silsigan-place-id]");
       const placeId = markerButton?.dataset.silsiganPlaceId;
       const place = placeId ? visiblePlacesRef.current.find((candidate) => candidate.id === placeId) : null;
@@ -228,7 +248,11 @@ export function NaverMap<TPlace extends MapPlace>({
       });
       mapInstanceRef.current = map;
 
-      if (placesForMap.length > 1 && map.fitBounds) {
+      if (currentLocationForMap) {
+        const currentLatLng = new maps.LatLng(currentLocationForMap.latitude, currentLocationForMap.longitude);
+        map.setCenter?.(currentLatLng);
+        map.setZoom?.(14);
+      } else if (placesForMap.length > 1 && map.fitBounds) {
         const bounds = boundsForPlaces(maps, placesForMap);
         map.fitBounds(bounds);
       }
@@ -281,9 +305,29 @@ export function NaverMap<TPlace extends MapPlace>({
       };
       renderCheckTimer = window.setTimeout(verifyMapRender, naverMapRenderCheckIntervalMs);
 
-      markers = placesForMap.map((place) => {
+      markers = clustersForMap.map((cluster) => {
+        if (cluster.places.length > 1) {
+          const clusterLabel = `${cluster.places.length}곳`;
+          const marker = new maps.Marker({
+            position: new maps.LatLng(cluster.latitude, cluster.longitude),
+            map,
+            title: `가까운 장소 ${clusterLabel}`,
+            zIndex: 500,
+            icon: {
+              content: `<button class="silsigan-map-marker silsigan-map-marker--cluster" type="button" data-silsigan-cluster-id="${escapeHtml(cluster.id)}" aria-label="가까운 장소 ${escapeHtml(clusterLabel)} 목록 열기"><span>${escapeHtml(clusterLabel)}</span></button>`,
+              size: new maps.Size(72, 44),
+              anchor: new maps.Point(36, 22),
+            },
+          });
+          markerListeners.push(maps.Event.addListener(marker, "click", () => {
+            onSelectClusterRef.current?.(cluster.places);
+          }));
+
+          return marker;
+        }
+
+        const place = cluster.places[0];
         const markerLabel = markerLabelForPlace(place);
-        const markerOffset = markerVisualOffsetForPlace(place, placesForMap);
         const marker = new maps.Marker({
           position: new maps.LatLng(place.latitude, place.longitude),
           map,
@@ -292,7 +336,7 @@ export function NaverMap<TPlace extends MapPlace>({
           icon: {
             content: `<button class="silsigan-map-marker silsigan-map-marker--${markerToneForPlace(place)}" type="button" data-silsigan-place-id="${escapeHtml(place.id)}" aria-label="${escapeHtml(place.name)} ${escapeHtml(place.signal)} ${escapeHtml(markerLabel)}"><span>${escapeHtml(place.name)}</span></button>`,
             size: new maps.Size(96, 44),
-            anchor: new maps.Point(48 - markerOffset.x, 22 - markerOffset.y),
+            anchor: new maps.Point(48, 22),
           },
         });
         markerListeners.push(maps.Event.addListener(marker, "click", () => {
@@ -306,12 +350,12 @@ export function NaverMap<TPlace extends MapPlace>({
         ? new maps.Marker({
             position: new maps.LatLng(currentLocationForMap.latitude, currentLocationForMap.longitude),
             map,
-            title: "현재 위치",
+            title: "내 위치",
             zIndex: 1000,
             icon: {
-              content: `<span class="naver-user-marker" aria-label="현재 위치"></span>`,
-              size: new maps.Size(28, 28),
-              anchor: new maps.Point(14, 14),
+              content: `<span class="naver-user-marker" role="img" aria-label="내 위치"><span class="naver-user-marker__dot" aria-hidden="true"></span><span class="naver-user-marker__label" aria-hidden="true">내 위치</span></span>`,
+              size: new maps.Size(88, 40),
+              anchor: new maps.Point(16, 20),
             },
           })
         : null;
@@ -332,9 +376,10 @@ export function NaverMap<TPlace extends MapPlace>({
     visiblePlacesKey,
   ]);
 
-  const hasNoVisiblePlaces = visiblePlaces.length === 0 && (ready || Boolean(failureReason));
+  const hasNoVisiblePlaces = visiblePlaces.length === 0 && !currentLocation && (ready || Boolean(failureReason));
+  const hasMapSubject = visiblePlaces.length > 0 || Boolean(currentLocation);
 
-  if (visiblePlaces.length === 0 || failureReason || !ready) {
+  if (!hasMapSubject || failureReason || !ready) {
     return (
       <FallbackMap
         currentLocation={currentLocation}
@@ -343,6 +388,7 @@ export function NaverMap<TPlace extends MapPlace>({
         loading={!failureReason}
         places={visiblePlaces}
         onMapInteraction={onMapInteraction}
+        onSelectCluster={onSelectCluster}
         onSelectPlace={onSelectPlace}
         onRetry={() => {
           setReady(Boolean(window.naver?.maps));
@@ -371,6 +417,7 @@ export function NaverMap<TPlace extends MapPlace>({
           overlay
           places={visiblePlaces}
           onMapInteraction={onMapInteraction}
+          onSelectCluster={onSelectCluster}
           onSelectPlace={onSelectPlace}
           onRetry={() => setFailureReason(null)}
         />
@@ -386,6 +433,7 @@ function FallbackMap<TPlace extends MapPlace>({
   loading,
   overlay = false,
   onMapInteraction,
+  onSelectCluster,
   onSelectPlace,
   onRetry,
   places,
@@ -396,6 +444,7 @@ function FallbackMap<TPlace extends MapPlace>({
   loading: boolean;
   overlay?: boolean;
   onMapInteraction?: () => void;
+  onSelectCluster?: (places: TPlace[]) => void;
   onSelectPlace: (place: TPlace) => void;
   onRetry: () => void;
   places: TPlace[];
@@ -432,13 +481,32 @@ function FallbackMap<TPlace extends MapPlace>({
         <span className="naver-map__label naver-map__label--seoul">서울</span>
         <span className="naver-map__label naver-map__label--gyeongju">경주</span>
         <span className="naver-map__label naver-map__label--busan">부산</span>
-        {places.map((place, index) => {
-          const position = fallbackPositionForPlace(place, index);
+        {clusterMapPlaces(places).map((cluster, index) => {
+          const position = fallbackPositionForCluster(cluster, index);
+
+          if (cluster.places.length > 1) {
+            const clusterLabel = `${cluster.places.length}곳`;
+
+            return (
+              <button
+                key={cluster.id}
+                className="naver-map__fallback-marker naver-map__fallback-marker--cluster"
+                style={{ left: `${position.x}%`, top: `${position.y}%` }}
+                type="button"
+                onClick={() => onSelectCluster?.(cluster.places)}
+                aria-label={`가까운 장소 ${clusterLabel} 목록 열기`}
+              >
+                <span aria-hidden="true">{clusterLabel}</span>
+              </button>
+            );
+          }
+
+          const place = cluster.places[0];
           const tone = markerToneForPlace(place);
 
           return (
             <button
-              key={place.id}
+              key={cluster.id}
               className={`naver-map__fallback-marker naver-map__fallback-marker--${tone}`}
               style={{ left: `${position.x}%`, top: `${position.y}%` }}
               type="button"
@@ -456,8 +524,11 @@ function FallbackMap<TPlace extends MapPlace>({
               left: `${fallbackPositionForLocation(currentLocation).x}%`,
               top: `${fallbackPositionForLocation(currentLocation).y}%`,
             }}
-            aria-label="현재 위치"
-          />
+            role="img"
+            aria-label="내 위치"
+          >
+            내 위치
+          </span>
         )}
       </div>
     </div>
@@ -643,11 +714,32 @@ function markerLabelForPlace(place: MapPlace) {
 }
 
 function markerToneForPlace(place: MapPlace) {
-  if (place.signal === "가도 좋음") return "good";
-  if (place.signal === "대기 보통") return "normal";
-  if (place.signal === "혼잡 주의") return "busy";
+  if (place.signal === "가도 좋음" || place.signal === "방문 무난") return "good";
+  if (place.signal === "대기 보통" || place.signal === "확인 필요" || place.signal === "출발 전 확인") return "normal";
+  if (place.signal === "혼잡 주의" || place.signal === "혼잡 가능") return "busy";
   if (place.signal === "정보 부족" || place.signal === "체험용 샘플") return "unknown";
   return "avoid";
+}
+
+function fallbackPositionForCluster<TPlace extends MapPlace>(
+  cluster: { places: TPlace[]; latitude: number; longitude: number },
+  index: number,
+) {
+  if (cluster.places.length === 1) {
+    return fallbackPositionForPlace(cluster.places[0], index);
+  }
+
+  const customPositions = cluster.places.filter(
+    (place): place is TPlace & { x: number; y: number } => typeof place.x === "number" && typeof place.y === "number",
+  );
+  if (customPositions.length === cluster.places.length) {
+    return {
+      x: clampPercent(customPositions.reduce((sum, place) => sum + place.x, 0) / customPositions.length),
+      y: clampPercent(customPositions.reduce((sum, place) => sum + place.y, 0) / customPositions.length),
+    };
+  }
+
+  return fallbackPositionForLocation(cluster);
 }
 
 function fallbackPositionForPlace(place: MapPlace, index: number) {
@@ -681,29 +773,6 @@ function fallbackPositionForLocation(location: ClientLocation) {
 
 function clampPercent(value: number) {
   return Math.min(92, Math.max(8, value));
-}
-
-function markerVisualOffsetForPlace(place: MapPlace, places: MapPlace[]) {
-  const cluster = places.filter((candidate) => arePlacesVisuallyClose(place, candidate));
-
-  if (cluster.length < 2) {
-    return { x: 0, y: 0 };
-  }
-
-  const offsets = [
-    { x: -72, y: -34 },
-    { x: 72, y: 34 },
-    { x: -68, y: 38 },
-    { x: 68, y: -38 },
-    { x: 0, y: 56 },
-  ];
-  const clusterIndex = cluster.findIndex((candidate) => candidate.id === place.id);
-
-  return offsets[Math.max(0, clusterIndex) % offsets.length];
-}
-
-function arePlacesVisuallyClose(place: MapPlace, candidate: MapPlace) {
-  return Math.abs(place.latitude - candidate.latitude) <= 0.8 && Math.abs(place.longitude - candidate.longitude) <= 0.8;
 }
 
 function escapeHtml(value: string) {

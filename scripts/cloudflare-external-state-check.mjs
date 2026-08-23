@@ -18,6 +18,17 @@ const D1_RELEASE_EVIDENCE_QUERY = [
   "SELECT 'v2_settings=' || COUNT(*) FROM dimension_settings",
   "SELECT 'source_registry=' || COUNT(*) FROM data_sources",
   "SELECT 'trust_safety_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_moderation_states', 'report_votes', 'user_blocks', 'consents', 'terms_acceptances', 'account_deletion_requests', 'identity_link_events')",
+  "SELECT 'field_report_moderation_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'field_report_moderation'",
+  "SELECT 'field_report_photos_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'field_report_photos'",
+  "SELECT 'field_report_photos_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_field_report_photos_photo', 'idx_field_report_photos_report')",
+  "SELECT 'photo_idempotency_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_upload_idempotency_keys'",
+  "SELECT 'photo_idempotency_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_photo_upload_idempotency_upload'",
+  "SELECT 'ingestion_target_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'official_ingestion_targets'",
+  "SELECT 'ingestion_target_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_official_ingestion_targets_due', 'idx_official_ingestion_targets_source_place')",
+  "SELECT 'cost_guard_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('metered_usage_events', 'photo_upload_sessions')",
+  "SELECT 'cost_guard_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_metered_usage_actor', 'idx_metered_usage_ip', 'idx_metered_usage_expiry', 'idx_photo_upload_sessions_expiry')",
+  "SELECT 'photo_size_triggers=' || COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND name IN ('trg_photos_max_byte_size_insert', 'trg_photos_max_byte_size_update')",
+  "SELECT 'korea_sido_regions=' || COUNT(*) FROM regions WHERE parent_region_id IS NULL AND id IN ('seoul', 'busan', 'daegu', 'incheon', 'gwangju', 'daejeon', 'ulsan', 'sejong', 'gyeonggi', 'gangwon', 'chungbuk', 'chungnam', 'jeonbuk', 'jeonnam', 'gyeongbuk', 'gyeongnam', 'jeju')",
   "SELECT 'posts=' || COUNT(*) FROM posts",
   "SELECT 'questions=' || COUNT(*) FROM questions",
 ].join("; ");
@@ -197,20 +208,40 @@ export function classifyWorkerDeploymentResult(result, deployment) {
 
 export function classifyD1MigrationResult(result, envName) {
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  const name = `cloudflare.d1.${envName}.migration_0006`;
+  const baseName = `cloudflare.d1.${envName}.migration_0012`;
+  const photoIdempotencyName = `cloudflare.d1.${envName}.migration_0013`;
+  const currentName = `cloudflare.d1.${envName}.migration_0014`;
 
   if (result.exitCode !== 0) {
-    if (/no such table:\s*(posts|questions|data_sources|dimension_settings|feature_flags|live_signals|aggregated_place_status|photo_moderation_states|report_votes|user_blocks|consents|terms_acceptances|account_deletion_requests|identity_link_events)|SQLITE_ERROR/i.test(output)) {
+    if (/no such table:\s*photo_upload_idempotency_keys/i.test(output)) {
       return {
-        name,
+        name: photoIdempotencyName,
         status: "fail",
-        code: "D1_0006_NOT_APPLIED",
-        message: `Remote ${envName} D1 is missing the V2 data-truth or trust-safety migrations.`,
+        code: "D1_0013_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the photo upload idempotency migration.`,
+      };
+    }
+
+    if (/no such table:\s*official_ingestion_targets/i.test(output)) {
+      return {
+        name: currentName,
+        status: "fail",
+        code: "D1_0014_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the isolated official-ingestion migration.`,
+      };
+    }
+
+    if (/no such table:\s*(posts|questions|data_sources|dimension_settings|feature_flags|live_signals|aggregated_place_status|photo_moderation_states|report_votes|user_blocks|consents|terms_acceptances|account_deletion_requests|identity_link_events|field_report_moderation|field_report_photos|metered_usage_events|photo_upload_sessions)|SQLITE_ERROR/i.test(output)) {
+      return {
+        name: baseName,
+        status: "fail",
+        code: "D1_0012_NOT_APPLIED",
+        message: `Remote ${envName} D1 is missing the V2 data-truth, trust-safety, field-report, cost-abuse guard, nationwide-region, or photo-size ceiling migrations.`,
       };
     }
 
     return {
-      name,
+      name: currentName,
       status: "fail",
       code: "D1_REMOTE_CHECK_FAILED",
       message: `Could not read remote ${envName} D1 migration state with Wrangler.`,
@@ -229,14 +260,47 @@ export function classifyD1MigrationResult(result, envName) {
   if ((counters.v2_settings ?? 0) < 12) missingSchema.push("V2 dimension settings");
   if ((counters.source_registry ?? 0) < 8) missingSchema.push("V2 source registry");
   if ((counters.trust_safety_tables ?? 0) < 7) missingSchema.push("V2 trust-safety tables");
+  if ((counters.field_report_moderation_table ?? 0) < 1) missingSchema.push("field report moderation table");
+  if ((counters.field_report_photos_table ?? 0) < 1) missingSchema.push("field report photo linkage table");
+  if ((counters.field_report_photos_indexes ?? 0) < 2) missingSchema.push("field report photo linkage indexes");
+  if ((counters.cost_guard_tables ?? 0) < 2) missingSchema.push("cost-abuse guard tables");
+  if ((counters.cost_guard_indexes ?? 0) < 4) missingSchema.push("cost-abuse guard indexes");
+  if ((counters.photo_size_triggers ?? 0) < 2) missingSchema.push("1 MiB photo-size ceiling triggers");
+  if ((counters.korea_sido_regions ?? 0) < 17) missingSchema.push("17 Korea first-level regions");
 
   if (missingSchema.length > 0) {
     return {
-      name,
+      name: baseName,
       status: "fail",
-      code: "D1_0006_NOT_APPLIED",
+      code: "D1_0012_NOT_APPLIED",
       message: `Remote ${envName} D1 is missing ${missingSchema.join(", ")} from the V2 migration chain.`,
       missingSchema,
+    };
+  }
+
+  const missingPhotoIdempotency = [];
+  if ((counters.photo_idempotency_table ?? 0) < 1) missingPhotoIdempotency.push("photo upload idempotency table");
+  if ((counters.photo_idempotency_indexes ?? 0) < 1) missingPhotoIdempotency.push("photo upload idempotency index");
+  if (missingPhotoIdempotency.length > 0) {
+    return {
+      name: photoIdempotencyName,
+      status: "fail",
+      code: "D1_0013_NOT_APPLIED",
+      message: `Remote ${envName} D1 is missing ${missingPhotoIdempotency.join(", ")} from migration 0013.`,
+      missingSchema: missingPhotoIdempotency,
+    };
+  }
+
+  const missingOfficialIngestion = [];
+  if ((counters.ingestion_target_table ?? 0) < 1) missingOfficialIngestion.push("official ingestion target table");
+  if ((counters.ingestion_target_indexes ?? 0) < 2) missingOfficialIngestion.push("official ingestion target indexes");
+  if (missingOfficialIngestion.length > 0) {
+    return {
+      name: currentName,
+      status: "fail",
+      code: "D1_0014_NOT_APPLIED",
+      message: `Remote ${envName} D1 is missing ${missingOfficialIngestion.join(", ")} from migration 0014.`,
+      missingSchema: missingOfficialIngestion,
     };
   }
 
@@ -256,7 +320,7 @@ export function classifyD1MigrationResult(result, envName) {
   }
 
   return {
-    name,
+    name: currentName,
     status: "pass",
     message: `Remote ${envName} D1 has V2 data-truth schema and core seed evidence.`,
     counts: {
@@ -435,7 +499,7 @@ async function main() {
       }
 
       if (cloudflareAuthBlocked) {
-        checks.push(classifyAuthBlockedRemoteCheck(`cloudflare.d1.${database.envName}.migration_0006`, `Remote ${database.envName} D1 migration evidence check`));
+        checks.push(classifyAuthBlockedRemoteCheck(`cloudflare.d1.${database.envName}.migration_0014`, `Remote ${database.envName} D1 migration evidence check`));
         continue;
       }
 
@@ -689,7 +753,7 @@ function readWorkerNamesFromConfig(config, configPath, kind, targetEnvs) {
 
 function parseD1Counters(output) {
   const counters = {};
-  const matcher = /\b(posts_table|questions_table|post_indexes|question_indexes|v2_tables|v2_flags|v2_settings|source_registry|trust_safety_tables|posts|questions)=(\d+)\b/g;
+  const matcher = /\b(posts_table|questions_table|post_indexes|question_indexes|v2_tables|v2_flags|v2_settings|source_registry|trust_safety_tables|field_report_moderation_table|field_report_photos_table|field_report_photos_indexes|photo_idempotency_table|photo_idempotency_indexes|ingestion_target_table|ingestion_target_indexes|cost_guard_tables|cost_guard_indexes|photo_size_triggers|korea_sido_regions|posts|questions)=(\d+)\b/g;
   let match = matcher.exec(output);
   while (match) {
     counters[match[1]] = Number(match[2]);

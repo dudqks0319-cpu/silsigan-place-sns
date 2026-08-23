@@ -1,4 +1,7 @@
+import type { KoreaPlaceRegionId } from "../../packages/contracts/src/index.ts";
+
 export const REPORT_TTL_HOURS = 3;
+export const POST_TTL_HOURS = REPORT_TTL_HOURS;
 const defaultPublicSiteUrl = "https://silsigan.pages.dev";
 
 export const reportCategories = [
@@ -53,21 +56,7 @@ export type RegionLaunchStage = (typeof regionLaunchStages)[number];
 export const placeLaunchStages = ["seed", "beta", "active"] as const;
 export type PlaceLaunchStage = (typeof placeLaunchStages)[number];
 
-export type RegionId =
-  | "busan"
-  | "ulsan"
-  | "gyeongju"
-  | "daegu"
-  | "changwon"
-  | "gimhae"
-  | "yangsan"
-  | "pohang"
-  | "seoul"
-  | "jeju"
-  | "gangneung"
-  | "jeonju"
-  | "yeosu"
-  | "sokcho";
+export type RegionId = KoreaPlaceRegionId;
 
 export type Region = {
   id: RegionId;
@@ -139,7 +128,7 @@ export type Place = {
 
 export type UserReputation = {
   userId: string;
-  trustScore: number;
+  trustScore: number | null;
   verifiedReportCount: number;
   helpfulReceivedCount: number;
   falseReportCount: number;
@@ -234,6 +223,7 @@ export type StoredPost = {
   hashtagNames: string[];
   hiddenAt: string | null;
   createdAt: string;
+  expiresAt: string;
 };
 
 export type ShareCard = {
@@ -260,8 +250,17 @@ export function getReportExpiry(createdAt: Date = new Date()): Date {
   return new Date(createdAt.getTime() + REPORT_TTL_HOURS * 60 * 60 * 1000);
 }
 
+export function getPostExpiry(createdAt: Date = new Date()): Date {
+  return new Date(createdAt.getTime() + POST_TTL_HOURS * 60 * 60 * 1000);
+}
+
 export function isReportExpired(expiresAt: Date, now: Date = new Date()): boolean {
   return expiresAt.getTime() <= now.getTime();
+}
+
+export function isPostExpired(expiresAt: string, now: Date = new Date()): boolean {
+  const expiryMs = Date.parse(expiresAt);
+  return !Number.isFinite(expiryMs) || expiryMs <= now.getTime();
 }
 
 export function getQuestionCost(questionType: QuestionType): 1 | 2 {
@@ -452,7 +451,7 @@ export function uniqueHashtags(names: string[]): string[] {
   return result;
 }
 
-export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" | "parkingStatus" | "lineStatus" | "weatherFeel" | "photoCount" | "createdAt" | "hashtagNames">, place: Pick<Place, "id" | "name">): ShareCard {
+export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" | "parkingStatus" | "lineStatus" | "weatherFeel" | "photoCount" | "createdAt" | "hashtagNames" | "locationVerified">, place: Pick<Place, "id" | "name">): ShareCard {
   const judgement = judgementFromStatus(post.crowdLevel, post.parkingStatus);
   const variant = shareCardVariant(post, judgement);
   const statusText = [
@@ -463,7 +462,7 @@ export function buildShareCard(post: Pick<StoredPost, "caption" | "crowdLevel" |
 
   return {
     headline: `${place.name} ${judgement}`,
-    body: `${statusText}\n${minutesAgoLabel(post.createdAt)} 현장 인증 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
+    body: `${statusText}\n${minutesAgoLabel(post.createdAt)} ${post.locationVerified ? "현장 인증" : "상태"} 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
     url: `${defaultPublicSiteUrl}/place/${place.id}`,
     hashtags: post.hashtagNames.slice(0, 5),
     variant,
@@ -481,10 +480,15 @@ function shareCardVariant(
   return "good";
 }
 
-export function rankPostsForFeed<TPost extends Pick<StoredPost, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount" | "hiddenAt">>(postsToRank: TPost[]): TPost[] {
+export function rankPostsForFeed<TPost extends Pick<StoredPost, "createdAt" | "expiresAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount" | "hiddenAt">>(postsToRank: TPost[]): TPost[] {
+  const now = new Date();
+
   return [...postsToRank]
     .filter((post) => !post.hiddenAt)
-    .sort((left, right) => scorePost(right) - scorePost(left));
+    .sort((left, right) => {
+      const currentDelta = Number(isPostExpired(left.expiresAt, now)) - Number(isPostExpired(right.expiresAt, now));
+      return currentDelta || scorePost(right) - scorePost(left);
+    });
 }
 
 export function distanceMeters(
@@ -504,6 +508,19 @@ export function distanceMeters(
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return earthRadiusM * c;
+}
+
+export function formatDistanceMeters(distanceM: number): string {
+  if (!Number.isFinite(distanceM) || distanceM < 0) {
+    return "거리 정보 없음";
+  }
+
+  if (distanceM < 1_000) {
+    const roundedMeters = Math.max(0, Math.round(distanceM / 10) * 10);
+    return roundedMeters >= 1_000 ? "1.0km" : `${roundedMeters}m`;
+  }
+
+  return `${(distanceM / 1_000).toFixed(1)}km`;
 }
 
 export function verifiedRadiusFromDistance(distanceM: number): 50 | 150 | 300 | null {
@@ -544,6 +561,18 @@ function regionHashtag(region: Place["region"]): string {
     ulsan: "울산",
     gyeongju: "경주",
     daegu: "대구",
+    incheon: "인천",
+    gwangju: "광주",
+    daejeon: "대전",
+    sejong: "세종",
+    gyeonggi: "경기",
+    gangwon: "강원",
+    chungbuk: "충북",
+    chungnam: "충남",
+    jeonbuk: "전북",
+    jeonnam: "전남",
+    gyeongbuk: "경북",
+    gyeongnam: "경남",
     changwon: "창원",
     gimhae: "김해",
     yangsan: "양산",

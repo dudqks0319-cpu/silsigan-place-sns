@@ -11,6 +11,26 @@ const DEFAULT_PLACE_NAME = "광안리해수욕장";
 const DEFAULT_REGION_ID = "busan";
 const DEFAULT_TIMEOUT_MS = 20_000;
 const anonymousIdKey = "silsigan.anonymousId.v1";
+const REGION_LABEL_BY_ID = {
+  nationwide: "전국",
+  seoul: "서울",
+  busan: "부산",
+  daegu: "대구",
+  incheon: "인천",
+  gwangju: "광주",
+  daejeon: "대전",
+  ulsan: "울산",
+  sejong: "세종",
+  gyeonggi: "경기",
+  gangwon: "강원",
+  chungbuk: "충북",
+  chungnam: "충남",
+  jeonbuk: "전북",
+  jeonnam: "전남",
+  gyeongbuk: "경북",
+  gyeongnam: "경남",
+  jeju: "제주",
+};
 
 class SmokeError extends Error {
   constructor(code, message) {
@@ -134,6 +154,7 @@ async function main() {
 
   const checks = [];
   const artifacts = {};
+  const browserDiagnostics = { networkEvents: [], consoleMessages: [] };
   const config = resolveConfig(flags, options, process.env);
   let cleanup = async () => {};
 
@@ -160,11 +181,15 @@ async function main() {
       placeName: config.placeName,
       regionId: config.regionId,
       sharePostId: config.sharePostId,
+      fieldReportPhotoFile: config.fieldReportPhotoFile,
+      adminFieldReport: config.adminFieldReport,
+      adminToken: config.adminToken,
       mutating: config.mutating,
       report: config.report,
       requirePhoto: config.requirePhoto,
       timeoutMs: config.timeoutMs,
       checks,
+      diagnostics: browserDiagnostics,
     });
 
     const artifactTimestamp = Date.now();
@@ -180,6 +205,12 @@ async function main() {
     await writeFile(screenshotPath, Buffer.from(result.screenshotBase64, "base64"));
     artifacts.screenshot = screenshotPath;
 
+    if (result.adminScreenshotBase64) {
+      const adminScreenshotPath = join(config.artifactDir, `pages-smoke-admin-${artifactTimestamp}.png`);
+      await writeFile(adminScreenshotPath, Buffer.from(result.adminScreenshotBase64, "base64"));
+      artifacts.adminScreenshot = adminScreenshotPath;
+    }
+
     const networkPath = join(config.artifactDir, `pages-smoke-network-${artifactTimestamp}.json`);
     await writeFile(networkPath, JSON.stringify(result.networkEvents, null, 2), "utf8");
     artifacts.network = networkPath;
@@ -189,6 +220,16 @@ async function main() {
     artifacts.console = consolePath;
   } catch (error) {
     record(checks, "harness", "fail", publicErrorMessage(error));
+    if (browserDiagnostics.networkEvents.length > 0 || browserDiagnostics.consoleMessages.length > 0) {
+      const artifactTimestamp = Date.now();
+      const networkPath = join(config.artifactDir, `pages-smoke-network-failure-${artifactTimestamp}.json`);
+      await writeFile(networkPath, JSON.stringify(browserDiagnostics.networkEvents, null, 2), "utf8");
+      artifacts.network = networkPath;
+
+      const consolePath = join(config.artifactDir, `pages-smoke-console-failure-${artifactTimestamp}.log`);
+      await writeFile(consolePath, browserDiagnostics.consoleMessages.join("\n"), "utf8");
+      artifacts.console = consolePath;
+    }
   } finally {
     try {
       await cleanup();
@@ -224,6 +265,9 @@ function resolveConfig(flags, options, env) {
     placeName: options.get("place-name") ?? env.SILSIGAN_STAGING_BROWSER_PLACE_NAME ?? DEFAULT_PLACE_NAME,
     regionId: options.get("region-id") ?? env.SILSIGAN_STAGING_BROWSER_REGION_ID ?? DEFAULT_REGION_ID,
     sharePostId: options.get("share-post-id") ?? env.SILSIGAN_STAGING_BROWSER_SHARE_POST_ID ?? "",
+    fieldReportPhotoFile: options.get("field-report-photo-file") ?? env.SILSIGAN_STAGING_BROWSER_FIELD_REPORT_PHOTO_FILE ?? null,
+    adminFieldReport: flags.has("admin-field-report") || env.SILSIGAN_STAGING_BROWSER_ADMIN_FIELD_REPORT === "1",
+    adminToken: options.get("admin-token") ?? env.SILSIGAN_STAGING_BROWSER_ADMIN_TOKEN ?? null,
     timeoutMs: numberOption(options.get("timeout-ms") ?? env.SILSIGAN_STAGING_BROWSER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     mutating: flags.has("mutating") || env.SILSIGAN_STAGING_BROWSER_MUTATION === "1",
     report: flags.has("report") || env.SILSIGAN_STAGING_BROWSER_REPORT === "1",
@@ -232,8 +276,9 @@ function resolveConfig(flags, options, env) {
 }
 
 async function runBrowserSmoke(client, config) {
-  const networkEvents = [];
-  const consoleMessages = [];
+  const networkEvents = config.diagnostics?.networkEvents ?? [];
+  const consoleMessages = config.diagnostics?.consoleMessages ?? [];
+  let adminScreenshotBase64 = null;
 
   client.on("Network.requestWillBeSent", (event) => {
     const requestEvent = {
@@ -241,6 +286,15 @@ async function runBrowserSmoke(client, config) {
       method: event.request?.method,
       url: event.request?.url,
     };
+    if (event.request?.method === "POST" && event.request?.url) {
+      try {
+        const requestUrl = new URL(event.request.url);
+        if (requestUrl.pathname === "/api/admin/login") {
+          requestEvent.adminLoginBodyPresent = typeof event.request.postData === "string" && event.request.postData.includes("token=");
+        }
+      } catch {
+      }
+    }
     const reportTargetType = moderationReportTargetType(event.request?.url, event.request?.method, event.request?.postData);
     if (reportTargetType) {
       requestEvent.reportTargetType = reportTargetType;
@@ -268,6 +322,7 @@ async function runBrowserSmoke(client, config) {
   await client.send("Runtime.enable");
   await client.send("Log.enable");
   await client.send("Page.enable");
+  await client.send("DOM.enable");
   await client.send("Emulation.setDeviceMetricsOverride", {
     width: 390,
     height: 844,
@@ -284,11 +339,19 @@ async function runBrowserSmoke(client, config) {
     await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/places"), "app.hydrated", config.timeoutMs);
   } else {
     await waitForEvaluate(client, "document.readyState === 'complete'", "app.hydrated", config.timeoutMs);
-    await delay(250);
   }
-  await clickTextButton(client, "바로 둘러보기").catch(() => {});
-  await waitForEvaluate(client, `!document.querySelector('[aria-label="#실시간 첫 방문 안내"]')`, "onboarding.initialDismiss", config.timeoutMs);
-  record(config.checks, "onboarding.dismiss", "pass", "첫 방문 안내를 닫고 V2 홈에서 지도로 이동할 준비를 마쳤습니다.");
+  // The persisted first-visit effect is scheduled after hydration. Let that state
+  // settle before deciding whether the onboarding sheet exists; otherwise the
+  // sheet can appear only after we navigate back home and cover the bottom nav.
+  await delay(250);
+  await dismissOnboardingIfPresent(client, config.timeoutMs);
+  await waitForEvaluate(
+    client,
+    `!document.querySelector('[aria-label="#실시간 첫 방문 안내"], [class*="onboardingOverlay"]')`,
+    "onboarding.initialDismiss",
+    config.timeoutMs,
+  );
+  record(config.checks, "onboarding.dismiss", "pass", "첫 방문 상태가 안정화된 뒤 안내를 닫고 V2 홈에서 지도로 이동할 준비를 마쳤습니다.");
   const homeScreenshot = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await clickBottomNavButton(client, "지도");
   await waitForEvaluate(client, `document.querySelector('h1')?.textContent?.trim() === '지도'`, "bottomNav.mapInitial", config.timeoutMs);
@@ -305,34 +368,79 @@ async function runBrowserSmoke(client, config) {
   await runMapControlChecks(client, config);
 
   if (config.apiBaseUrl) {
+    const regionLabel = regionLabelForId(config.regionId);
+    if (!regionLabel) {
+      throw new SmokeError("REGION_NOT_SUPPORTED", `${config.regionId} 지역은 브라우저 스모크에서 지원하지 않습니다.`);
+    }
+    await clickHitTestedTextButton(client, regionLabel, { withinSelector: '[aria-label="지역 랭킹 선택"]' });
+    await waitFor(
+      () => hasApiRequestWithSearchParam(networkEvents, config.apiBaseUrl, "/api/places", "GET", "regionId", config.regionId),
+      "worker.placesRegionScope",
+      config.timeoutMs,
+    );
+    record(config.checks, "worker.placesRegionScope", "pass", "지정한 지역 탭이 Worker 장소 목록 regionId 요청에 반영됐습니다.", {
+      regionId: config.regionId,
+    });
     await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/places"), "worker.placesRequest", config.timeoutMs);
     record(config.checks, "worker.placesRequest", "pass", "프론트 장소 목록이 Worker API base로 요청됐습니다.", { path: "/api/places" });
     const placeSearchQuery = config.placeName.slice(0, 3);
-    await fillSearchInput(client, "사진 올라온 장소 검색", placeSearchQuery);
+    await fillSearchInput(client, ["사진 올라온 장소 검색", "지도 장소 검색"], placeSearchQuery, { timeoutMs: config.timeoutMs });
     await waitFor(
       () => hasApiRequestWithSearchParam(networkEvents, config.apiBaseUrl, "/api/places", "GET", "q", placeSearchQuery),
       "worker.placesSearchRequest",
       config.timeoutMs,
     );
     record(config.checks, "worker.placesSearchRequest", "pass", "지도 검색어가 Worker 장소 목록 q 파라미터로 전달됐습니다.", { q: placeSearchQuery });
-    await waitFor(
-      () => hasApiRequestWithSearchParam(networkEvents, config.apiBaseUrl, "/api/photos", "GET", "placeId", config.placeId),
-      "worker.photosPlaceScope",
-      config.timeoutMs,
-    );
+    try {
+      await waitFor(
+        () => hasApiRequestWithSearchParam(networkEvents, config.apiBaseUrl, "/api/photos", "GET", "placeId", config.placeId),
+        "worker.photosPlaceScope",
+        config.timeoutMs,
+      );
+    } catch (error) {
+      const photoRequests = networkEvents
+        .filter((event) => event.type === "request" && event.method === "GET" && typeof event.url === "string")
+        .map((event) => {
+          try {
+            const url = new URL(event.url);
+            return url.pathname === "/api/photos" ? `${url.pathname}?${url.searchParams.toString()}` : null;
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      throw new SmokeError("WORKER_PHOTO_SCOPE_MISSING", `${error.message} photoRequests=${JSON.stringify(photoRequests)}`);
+    }
     record(config.checks, "worker.photosPlaceScope", "pass", "프론트 사진 목록이 Worker API base로 장소별 요청됐습니다.", { placeId: config.placeId });
   }
 
-  await assertRankingPanelsVisible(client, config);
-  record(config.checks, "rankings.visible", "pass", "지도 화면 안 TOP 10 랭킹 패널이 렌더링됐습니다.");
-  await clickRankingPlace(client, config.placeName);
-  await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "rankings.detail", config.timeoutMs);
-  record(config.checks, "rankings.detail", "pass", "랭킹 항목 클릭으로 장소 상세 시트를 브라우저에서 열었습니다.", { placeName: config.placeName });
-  await clickAriaButton(client, "상세 닫기");
-  await waitForEvaluate(client, `!document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)})`, "rankings.detailClose", config.timeoutMs);
+  const rankingState = await assertRankingPanelsVisible(client, config);
+  record(config.checks, "rankings.visible", "pass", "지도 화면 안 TOP 10 랭킹 패널이 실제 후보 또는 명시적 정보 부족 상태로 렌더링됐습니다.", {
+    state: rankingState.populated ? "populated" : "empty-current-evidence",
+  });
+  if (rankingState.populated) {
+    await clickRankingPlace(client, config.placeName);
+    await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "rankings.detail", config.timeoutMs);
+    record(config.checks, "rankings.detail", "pass", "랭킹 항목 클릭으로 장소 상세 시트를 브라우저에서 열었습니다.", { placeName: config.placeName });
+    await clickAriaButton(client, "상세 닫기");
+    await waitForEvaluate(client, `!document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)})`, "rankings.detailClose", config.timeoutMs);
+  } else {
+    record(config.checks, "rankings.detail", "skip", "현재 유효한 랭킹 후보가 없어 랭킹 항목 상세 클릭을 건너뜁니다.");
+  }
 
   await clickMapMarker(client, config.placeName, config.timeoutMs);
-  await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "place.detail", config.timeoutMs);
+  try {
+    await waitForEvaluate(client, `Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)}))`, "place.detail", config.timeoutMs);
+  } catch (error) {
+    const detailDiagnostic = await evaluate(client, `({
+      url: location.href,
+      detailOpen: Boolean(document.querySelector(${JSON.stringify(`[aria-label="${config.placeName} 상세 정보"]`)})),
+      map: (() => { const element = document.querySelector('[aria-label="클릭 가능한 전국 실시간 장소 지도"], [aria-label="네이버 지도 기반 전국 실시간 장소 지도"]'); if (!(element instanceof HTMLElement)) return null; const rect = element.getBoundingClientRect(); return { label: element.getAttribute('aria-label'), top: Math.round(rect.top), bottom: Math.round(rect.bottom), width: Math.round(rect.width), height: Math.round(rect.height) }; })(),
+      markers: [...document.querySelectorAll('[aria-label="클릭 가능한 전국 실시간 장소 지도"] button, [aria-label="네이버 지도 기반 전국 실시간 장소 지도"] button')].slice(0, 12).map((button) => ({ label: button.getAttribute('aria-label'), visible: (() => { const rect = button.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; })() })),
+    })`);
+    const markerDiagnostic = await describeMapMarkerHitTest(client, config.placeName);
+    throw new SmokeError("PLACE_DETAIL_NOT_OPEN", `${error.message} diagnostic=${JSON.stringify({ detail: detailDiagnostic, marker: markerDiagnostic })}`);
+  }
   record(config.checks, "place.detail", "pass", "지도 마커 클릭으로 장소 상세 시트를 브라우저에서 열었습니다.", { placeName: config.placeName });
 
   if (config.apiBaseUrl) {
@@ -365,7 +473,7 @@ async function runBrowserSmoke(client, config) {
   }
 
   if (config.mutating && config.apiBaseUrl) {
-    await runMutatingBrowserChecks(client, config, networkEvents);
+    adminScreenshotBase64 = await runMutatingBrowserChecks(client, config, networkEvents);
   } else {
     record(config.checks, "browser.mutation", "skip", "--mutating 또는 SILSIGAN_STAGING_BROWSER_MUTATION=1 이 없어 쓰기 UI smoke를 건너뜁니다.");
   }
@@ -377,15 +485,22 @@ async function runBrowserSmoke(client, config) {
     record(config.checks, "share.opengraphImage", "skip", "--share-post-id 또는 SILSIGAN_STAGING_BROWSER_SHARE_POST_ID가 없어 OG 이미지 smoke를 건너뜁니다.");
   }
 
+  await runSharePlaceChecks(client, config, networkEvents);
+
   const screenshot = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
 
   return {
     homeScreenshotBase64: homeScreenshot.data,
     mapScreenshotBase64: mapScreenshot.data,
     screenshotBase64: screenshot.data,
+    adminScreenshotBase64,
     networkEvents,
     consoleMessages,
   };
+}
+
+export function regionLabelForId(regionId) {
+  return REGION_LABEL_BY_ID[regionId] ?? null;
 }
 
 async function runSharePostChecks(client, config, networkEvents) {
@@ -431,8 +546,53 @@ async function runSharePostChecks(client, config, networkEvents) {
   });
 }
 
+async function runSharePlaceChecks(client, config, networkEvents) {
+  const shareUrl = new URL(`/share/place/${encodeURIComponent(config.placeId)}`, config.pagesUrl);
+  await client.send("Page.navigate", { url: shareUrl.toString() });
+  await waitFor(() => hasPageResponse(networkEvents, shareUrl), "share.placePage.response", config.timeoutMs);
+  await waitForEvaluate(
+    client,
+    `
+      (() => {
+        const card = document.querySelector('[aria-label="#실시간 장소 공유 카드"]');
+        const action = card?.querySelector('a[href*="?place="]');
+        return card instanceof HTMLElement &&
+          card.innerText.includes(${JSON.stringify(config.placeName)}) &&
+          card.innerText.includes('현재 상태는 앱에서 출처와 관측 시각을 확인한 뒤 판단할 수 있습니다.') &&
+          action instanceof HTMLAnchorElement;
+      })()
+    `,
+    "share.placePage",
+    config.timeoutMs,
+  );
+  record(config.checks, "share.placePage", "pass", "장소 공유 페이지가 현재 상태를 과장하지 않는 중립 안내로 렌더링됐습니다.", { placeId: config.placeId });
+
+  const imageResult = await evaluate(
+    client,
+    `
+      (async () => {
+        const response = await fetch(${JSON.stringify(`${shareUrl.pathname}/opengraph-image`)}, { cache: 'no-store' });
+        const blob = await response.blob();
+        return {
+          ok: response.ok,
+          contentType: response.headers.get('content-type'),
+          byteSize: blob.size,
+        };
+      })()
+    `,
+  );
+  if (imageResult?.ok !== true || imageResult.contentType !== "image/png" || !(imageResult.byteSize > 0)) {
+    throw new SmokeError("PLACE_SHARE_OG_IMAGE_FAILED", `장소 공유 OG 이미지 응답이 올바르지 않습니다. detail=${JSON.stringify(imageResult)}`);
+  }
+  record(config.checks, "share.placeOgImage", "pass", "장소 공유 OG 이미지가 image/png로 렌더링됐습니다.", {
+    placeId: config.placeId,
+    byteSize: imageResult.byteSize,
+  });
+}
+
 async function runMutatingBrowserChecks(client, config, networkEvents) {
   const anonymousId = await readBrowserAnonymousId(client);
+  let adminScreenshotBase64 = null;
 
   await clickAriaButton(client, "좋아요");
   await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, `/api/places/${encodeURIComponent(config.placeId)}/like`, "POST"), "places.like", config.timeoutMs);
@@ -492,6 +652,9 @@ async function runMutatingBrowserChecks(client, config, networkEvents) {
 
     record(config.checks, "reports.create", "pass", "장소/댓글/사진 신고 UI의 Worker API POST 경로를 확인했습니다.");
     await createFieldReportFromBrowser(client, config, networkEvents);
+    if (config.adminFieldReport) {
+      adminScreenshotBase64 = await runAdminFieldReportChecks(client, config, networkEvents);
+    }
   } else {
     record(config.checks, "reports.create", "skip", "--report 없이 실제 신고 생성은 실행하지 않습니다.");
   }
@@ -499,6 +662,7 @@ async function runMutatingBrowserChecks(client, config, networkEvents) {
   await cleanupLike(config.apiBaseUrl, config.placeId, anonymousId);
   await cleanupComment(config.apiBaseUrl, config.placeId, commentBody, anonymousId);
   record(config.checks, "browser.cleanup", "pass", "브라우저 smoke 좋아요/댓글을 같은 익명 세션으로 정리했습니다.");
+  return adminScreenshotBase64;
 }
 
 async function assertMapSurfaceVisible(client, timeoutMs) {
@@ -525,22 +689,49 @@ async function assertMapSurfaceVisible(client, timeoutMs) {
 }
 
 async function assertRankingPanelsVisible(client, config) {
-  await waitForEvaluate(
+  try {
+    await waitForEvaluate(
+      client,
+      `
+        (() => {
+          const grid = document.querySelector('[aria-label="실시간 장소 랭킹"]');
+          if (!(grid instanceof HTMLElement)) return false;
+          const text = grid.innerText;
+          const buttons = [...grid.querySelectorAll('button')];
+          const populated = buttons.some((button) => button.textContent?.includes(${JSON.stringify(config.placeName)}));
+          const explicitEmpty = buttons.length === 0 && text.includes('아직 순위를 만들 현장 정보가 없어요');
+          return text.includes('지도 화면 안 TOP 10') &&
+            !text.includes('전국 TOP 10') &&
+            (populated || explicitEmpty);
+        })()
+      `,
+      "rankings.visible",
+      config.timeoutMs,
+    );
+  } catch (error) {
+    const detail = await evaluate(
+      client,
+      `
+        (() => {
+          const grid = document.querySelector('[aria-label="실시간 장소 랭킹"]');
+          return grid instanceof HTMLElement
+            ? { text: grid.innerText.slice(0, 800), buttons: [...grid.querySelectorAll('button')].map((button) => button.textContent?.trim()).filter(Boolean) }
+            : { text: null, buttons: [] };
+        })()
+      `,
+    );
+    throw new SmokeError("RANKINGS_NOT_VISIBLE", `${error.message} detail=${JSON.stringify(detail)}`);
+  }
+
+  return evaluate(
     client,
     `
       (() => {
         const grid = document.querySelector('[aria-label="실시간 장소 랭킹"]');
-        if (!(grid instanceof HTMLElement)) return false;
-        const text = grid.innerText;
-        const buttons = [...grid.querySelectorAll('button')];
-        return text.includes('지도 화면 안 TOP 10') &&
-          !text.includes('전국 TOP 10') &&
-          buttons.length >= 1 &&
-          buttons.some((button) => button.textContent?.includes(${JSON.stringify(config.placeName)}));
+        const buttons = grid instanceof HTMLElement ? [...grid.querySelectorAll('button')] : [];
+        return { populated: buttons.some((button) => button.textContent?.includes(${JSON.stringify(config.placeName)})) };
       })()
     `,
-    "rankings.visible",
-    config.timeoutMs,
   );
 }
 
@@ -653,9 +844,14 @@ async function dismissOnboardingIfPresent(client, timeoutMs) {
     client,
     `
       (() => {
-        const overlay = document.querySelector('[aria-label="#실시간 첫 방문 안내"]');
+        const overlay = document.querySelector('[aria-label="#실시간 첫 방문 안내"], [class*="onboardingOverlay"]');
         if (!(overlay instanceof HTMLElement)) return false;
-        const button = [...overlay.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === '바로 둘러보기');
+        const buttons = [...overlay.querySelectorAll('button')].filter((candidate) => !candidate.disabled);
+        const button =
+          buttons.find((candidate) => candidate.textContent?.trim() === '바로 둘러보기') ??
+          buttons.find((candidate) => candidate.getAttribute('aria-label')?.includes('닫기')) ??
+          buttons.find((candidate) => /둘러보기|닫기|시작|확인/.test(candidate.textContent?.trim() ?? '')) ??
+          buttons[0];
         if (!(button instanceof HTMLButtonElement)) return false;
         button.click();
         return true;
@@ -664,7 +860,12 @@ async function dismissOnboardingIfPresent(client, timeoutMs) {
   );
 
   if (dismissed) {
-    await waitForEvaluate(client, `!document.querySelector('[aria-label="#실시간 첫 방문 안내"]')`, "onboarding.dismiss", timeoutMs);
+    await waitForEvaluate(
+      client,
+      `!document.querySelector('[aria-label="#실시간 첫 방문 안내"], [class*="onboardingOverlay"]')`,
+      "onboarding.dismiss",
+      timeoutMs,
+    );
   }
 
   return Boolean(dismissed);
@@ -838,23 +1039,6 @@ async function clickRankingPlace(client, placeName) {
   }
 }
 
-async function clickTextButton(client, text) {
-  const result = await evaluate(
-    client,
-    `
-      (() => {
-        const button = [...document.querySelectorAll('button')].find((candidate) => candidate.textContent?.includes(${JSON.stringify(text)}));
-        if (!(button instanceof HTMLButtonElement)) return false;
-        button.click();
-        return true;
-      })()
-    `,
-  );
-  if (result !== true) {
-    throw new SmokeError("BUTTON_NOT_FOUND", `${text} 버튼을 찾지 못했습니다.`);
-  }
-}
-
 async function clickBottomNavButton(client, text) {
   const result = await evaluate(
     client,
@@ -873,15 +1057,67 @@ async function clickBottomNavButton(client, text) {
   }
 }
 
-async function clickHitTestedTextButton(client, text, options = {}) {
-  const result = await clickHitTestedButton(client, {
-    text,
-    exact: Boolean(options.exact),
-    withinSelector: options.withinSelector ?? null,
-  });
-  if (result !== true) {
-    throw new SmokeError("BUTTON_NOT_CLICKABLE", `${text} 버튼을 실제 클릭 가능한 위치에서 누를 수 없습니다.`);
+export async function clickHitTestedTextButton(client, text, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 2_000;
+  try {
+    await waitFor(
+      () =>
+        clickHitTestedButton(client, {
+          text,
+          exact: Boolean(options.exact),
+          withinSelector: options.withinSelector ?? null,
+        }),
+      `button.${text}.clickable`,
+      timeoutMs,
+    );
+  } catch {
+    const detail = await describeTextButtonHitTest(client, text, {
+      exact: Boolean(options.exact),
+      withinSelector: options.withinSelector ?? null,
+    });
+    throw new SmokeError("BUTTON_NOT_CLICKABLE", `${text} 버튼을 실제 클릭 가능한 위치에서 누를 수 없습니다. detail=${JSON.stringify(detail)}`);
   }
+}
+
+async function describeTextButtonHitTest(client, text, { exact = false, withinSelector = null } = {}) {
+  return evaluate(
+    client,
+    `
+      (() => {
+        const root = ${withinSelector ? `document.querySelector(${JSON.stringify(withinSelector)})` : "document"};
+        if (!root) return { viewport: { width: window.innerWidth, height: window.innerHeight }, buttons: [] };
+        const buttons = [...root.querySelectorAll('button')].filter((button) => {
+          const buttonText = button.textContent?.trim() ?? '';
+          return ${JSON.stringify(exact)} ? buttonText === ${JSON.stringify(text)} : buttonText.includes(${JSON.stringify(text)});
+        });
+        return {
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          activeHeading: document.querySelector('h1')?.textContent?.trim() ?? null,
+          onboardingVisible: Boolean(document.querySelector('[aria-label="#실시간 첫 방문 안내"], [class*="onboardingOverlay"]')),
+          buttons: buttons.map((button) => {
+            const rect = button.getBoundingClientRect();
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            const target = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight
+              ? document.elementFromPoint(x, y)
+              : null;
+            return {
+              text: button.textContent?.trim() ?? '',
+              disabled: button.disabled,
+              rect: { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width, height: rect.height },
+              hitTag: target instanceof HTMLElement ? target.tagName : null,
+              hitText: target instanceof HTMLElement ? target.textContent?.trim()?.slice(0, 120) ?? null : null,
+              hitClass: target instanceof HTMLElement ? String(target.className).slice(0, 120) : null,
+              hitAriaLabel: target instanceof HTMLElement ? target.getAttribute('aria-label') : null,
+              hitConnected: target instanceof Node ? target.isConnected : false,
+              documentContainsHit: target instanceof Node ? document.contains(target) : false,
+              buttonContainsHit: target instanceof Node ? button.contains(target) : false,
+            };
+          }),
+        };
+      })()
+    `,
+  );
 }
 
 async function clickHitTestedButton(client, { text = "", exact = false, ariaIncludes = "", withinSelector = null }) {
@@ -966,12 +1202,12 @@ async function fillTextarea(client, label, value) {
   }
 }
 
-async function fillSearchInput(client, label, value) {
+async function fillInputBySelector(client, selector, value) {
   const result = await evaluate(
     client,
     `
       (() => {
-        const input = document.querySelector(${JSON.stringify(`input[aria-label="${label}"]`)});
+        const input = document.querySelector(${JSON.stringify(selector)});
         if (!(input instanceof HTMLInputElement)) return false;
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
         setter?.call(input, ${JSON.stringify(value)});
@@ -981,7 +1217,37 @@ async function fillSearchInput(client, label, value) {
     `,
   );
   if (result !== true) {
-    throw new SmokeError("INPUT_NOT_FOUND", `${label} 입력창을 찾지 못했습니다.`);
+    throw new SmokeError("INPUT_NOT_FOUND", `${selector} 입력창을 찾지 못했습니다.`);
+  }
+}
+
+export async function fillSearchInput(client, label, value, options = {}) {
+  const labels = Array.isArray(label) ? label : [label];
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 2_000;
+  try {
+    await waitFor(
+      () =>
+        evaluate(
+          client,
+          `
+            (() => {
+              const labels = ${JSON.stringify(labels)};
+              const input = [...document.querySelectorAll('input')].find((candidate) =>
+                labels.includes(candidate.getAttribute('aria-label') ?? '')
+              );
+              if (!(input instanceof HTMLInputElement)) return false;
+              const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+              setter?.call(input, ${JSON.stringify(value)});
+              input.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${JSON.stringify(value)}, inputType: 'insertText' }));
+              return true;
+            })()
+          `,
+        ),
+      `input.${labels.join("|")}.ready`,
+      timeoutMs,
+    );
+  } catch {
+    throw new SmokeError("INPUT_NOT_FOUND", `${labels.join(" 또는 ")} 입력창을 찾지 못했습니다.`);
   }
 }
 
@@ -1092,11 +1358,114 @@ async function createFieldReportFromBrowser(client, config, networkEvents) {
   }
 
   await waitForEvaluate(client, `document.body.innerText.includes('올리기')`, "fieldReports.form", config.timeoutMs);
+  if (config.fieldReportPhotoFile) {
+    await setFileInputFiles(client, 'section[aria-label="사진 선택"] input[type="file"]', [config.fieldReportPhotoFile]);
+    await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/photos/upload-url", "POST"), "fieldReports.photoUploadTicket", config.timeoutMs);
+    await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/photos/upload", "PUT"), "fieldReports.photoUploadBinary", config.timeoutMs);
+    await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/photos/complete", "POST"), "fieldReports.photoUploadComplete", config.timeoutMs);
+    await waitForEvaluate(client, "document.body.innerText.includes('사진 업로드 완료')", "fieldReports.photoUploadReady", config.timeoutMs);
+    record(config.checks, "fieldReports.photoUpload", "pass", "현장 제보 화면에서 synthetic 사진이 Worker 업로드 경로로 처리됐습니다.");
+  }
   await clickHitTestedTextButton(client, "혼잡", { exact: true });
   await fillTextareaById(client, "reportText", `browser field report ${new Date().toISOString()}`);
-  await clickHitTestedTextButton(client, "사진 없이 상태만 올리기", { exact: true });
+  await clickHitTestedTextButton(client, config.fieldReportPhotoFile ? "지금컷 올리기" : "사진 없이 상태만 올리기", { exact: true });
   await waitFor(() => hasApiRequest(networkEvents, config.apiBaseUrl, "/api/reports", "POST"), "fieldReports.create", config.timeoutMs);
   record(config.checks, "fieldReports.create", "pass", "상태 제보 작성 UI가 Worker /api/reports로 POST 됐습니다.");
+  if (config.fieldReportPhotoFile) {
+    record(config.checks, "fieldReports.photoAttachment", "pass", "현장 제보 POST가 사진 첨부 모드로 제출됐습니다.");
+  }
+}
+
+async function runAdminFieldReportChecks(client, config, networkEvents) {
+  if (!config.adminToken) {
+    throw new SmokeError("ADMIN_TOKEN_REQUIRED", "관리자 현장 제보 smoke에는 --admin-token 또는 SILSIGAN_STAGING_BROWSER_ADMIN_TOKEN이 필요합니다.");
+  }
+
+  const publicReportsUrl = new URL(`/api/reports?placeId=${encodeURIComponent(config.placeId)}`, config.apiBaseUrl).toString();
+  const pendingPublicState = await readBrowserFieldReportState(client, publicReportsUrl);
+  if (pendingPublicState.ok !== true || pendingPublicState.count !== 0) {
+    throw new SmokeError("FIELD_REPORT_PUBLIC_BEFORE_APPROVAL", `승인 전 현장 제보가 공개되었습니다. detail=${JSON.stringify(pendingPublicState)}`);
+  }
+  record(config.checks, "admin.fieldReportPrivate", "pass", "승인 전 현장 제보가 공개 목록과 현재 판단에서 제외됐습니다.");
+
+  const loginUrl = new URL("/admin/login", config.pagesUrl);
+  await client.send("Page.navigate", { url: loginUrl.toString() });
+  await waitFor(() => hasPageResponse(networkEvents, loginUrl), "admin.loginPage.response", config.timeoutMs);
+  await waitForEvaluate(client, "Boolean(document.querySelector('form[action=\"/api/admin/login\"] input[name=\"token\"]'))", "admin.loginPage", config.timeoutMs);
+  record(config.checks, "admin.loginPage", "pass", "관리자 로그인 화면을 브라우저에서 열었습니다.");
+
+  await fillInputBySelector(client, 'form[action="/api/admin/login"] input[name="token"]', config.adminToken);
+  const adminInputLength = await evaluate(client, "document.querySelector('form[action=\"/api/admin/login\"] input[name=\"token\"]')?.value?.length ?? 0");
+  if (adminInputLength !== config.adminToken.length) {
+    throw new SmokeError("ADMIN_TOKEN_INPUT_FAILED", `관리자 토큰 입력 길이가 예상과 다릅니다. length=${adminInputLength}`);
+  }
+  await clickHitTestedTextButton(client, "운영 큐 열기", { exact: true, withinSelector: 'form[action="/api/admin/login"]' });
+  await waitFor(() => hasApiRequest(networkEvents, config.pagesUrl.origin, "/api/admin/login", "POST"), "admin.loginSubmit", config.timeoutMs);
+  record(config.checks, "admin.loginSubmit", "pass", "관리자 토큰 제출이 Next 인증 route로 POST 됐습니다.");
+  try {
+    await waitForEvaluate(client, "Boolean(document.querySelector('[aria-labelledby=\"field-report-queue-heading\"]'))", "admin.fieldReportQueue", config.timeoutMs);
+  } catch (error) {
+    const snapshot = await evaluate(client, "({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 800) ?? '', forms: document.forms.length, tokenValueLength: document.querySelector('form[action=\"/api/admin/login\"] input[name=\"token\"]')?.value?.length ?? 0 })");
+    const loginRequests = networkEvents.filter((event) => event.type === "request" && typeof event.url === "string" && new URL(event.url).pathname === "/api/admin/login").map((event) => ({ method: event.method, adminLoginBodyPresent: event.adminLoginBodyPresent }));
+    const loginResponses = networkEvents.filter((event) => event.type === "response" && typeof event.url === "string" && new URL(event.url).pathname === "/api/admin/login").map((event) => event.status);
+    throw new SmokeError("ADMIN_FIELD_REPORT_QUEUE_MISSING", `${error.message} snapshot=${JSON.stringify(snapshot)} loginRequests=${JSON.stringify(loginRequests)} loginResponses=${JSON.stringify(loginResponses)}`);
+  }
+  await waitForEvaluate(client, `document.body.innerText.includes(${JSON.stringify(config.placeName)}) && document.body.innerText.includes('검수 대기')`, "admin.fieldReportQueue.data", config.timeoutMs);
+  await waitForEvaluate(
+    client,
+    `document.querySelector('[aria-labelledby="field-report-queue-heading"]')?.getAttribute('data-silsigan-hydrated') === 'true'`,
+    "admin.fieldReportQueue.interactive",
+    config.timeoutMs,
+  );
+  record(config.checks, "admin.fieldReportQueue", "pass", "관리자 현장 제보 검수 큐에 pending 제보가 표시됐습니다.");
+
+  await clickHitTestedTextButton(client, "승인", { exact: true, withinSelector: 'section[aria-labelledby="field-report-queue-heading"]' });
+  try {
+    await waitFor(() => hasApiRequest(networkEvents, config.pagesUrl.origin, "/api/admin/field-reports", "POST"), "admin.fieldReportApproval.request", config.timeoutMs);
+  } catch (error) {
+    const snapshot = await evaluate(client, "({ url: location.href, text: document.body?.innerText?.slice(0, 1200) ?? '', buttons: [...document.querySelectorAll('[aria-labelledby=\\\"field-report-queue-heading\\\"] button')].map((button) => ({ text: button.textContent?.trim(), disabled: button.disabled })) })");
+    const recentRequests = networkEvents.filter((event) => event.type === "request").slice(-12).map((event) => ({ method: event.method, url: event.url }));
+    throw new SmokeError("ADMIN_FIELD_REPORT_APPROVAL_REQUEST_MISSING", `${error.message} snapshot=${JSON.stringify(snapshot)} recentRequests=${JSON.stringify(recentRequests)}`);
+  }
+  await waitForEvaluate(client, "document.body.innerText.includes('현재 장소 판단에 반영됩니다')", "admin.fieldReportApproval", config.timeoutMs);
+  record(config.checks, "admin.fieldReportApproval", "pass", "관리자 승인 후 현장 제보가 공개 상태 반영 안내를 표시했습니다.");
+
+  const publicState = await readBrowserFieldReportState(client, publicReportsUrl);
+  if (publicState.ok !== true || publicState.count !== 1) {
+    throw new SmokeError("FIELD_REPORT_PUBLIC_AFTER_APPROVAL", `승인 후 현장 제보가 공개 목록에 나타나지 않았습니다. detail=${JSON.stringify(publicState)}`);
+  }
+  record(config.checks, "admin.fieldReportPublic", "pass", "관리자 승인 후 현장 제보가 공개 API 목록에 나타났습니다.");
+
+  const screenshot = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  return screenshot.data;
+}
+
+async function readBrowserFieldReportState(client, url) {
+  return evaluate(
+    client,
+    `(async () => {
+      const response = await fetch(${JSON.stringify(url)}, { cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      const reports = Array.isArray(payload?.data) ? payload.data : [];
+      return { ok: response.ok, status: response.status, count: reports.length };
+    })()`,
+  );
+}
+
+async function setFileInputFiles(client, selector, files) {
+  const documentResult = await client.send("DOM.getDocument", { depth: -1, pierce: true });
+  const nodeResult = await client.send("DOM.querySelector", {
+    nodeId: documentResult.root.nodeId,
+    selector,
+  });
+  if (!nodeResult.nodeId) {
+    throw new SmokeError("FILE_INPUT_NOT_FOUND", `${selector} 파일 입력을 찾지 못했습니다.`);
+  }
+
+  await client.send("DOM.setFileInputFiles", {
+    nodeId: nodeResult.nodeId,
+    files,
+  });
 }
 
 async function fillTextareaById(client, id, value) {
@@ -1464,6 +1833,7 @@ Environment:
   SILSIGAN_STAGING_BROWSER_MUTATION=1
   SILSIGAN_STAGING_BROWSER_REPORT=1   # requires mutation; creates place/comment/photo reports
   SILSIGAN_STAGING_BROWSER_SHARE_POST_ID=post_id_for_share_smoke
+  SILSIGAN_STAGING_BROWSER_FIELD_REPORT_PHOTO_FILE=/tmp/silsigan-field-report.jpg
   SILSIGAN_CHROME_PATH=/path/to/chrome
 `);
 }

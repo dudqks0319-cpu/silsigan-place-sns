@@ -2,13 +2,26 @@
 
 import { Camera, Flag, Image as ImageIcon, Trash2 } from "lucide-react";
 import { type CSSProperties, useId, useRef, useState } from "react";
+import {
+  PHOTO_MAX_DIMENSION,
+  PHOTO_SOURCE_MAX_BYTES,
+  PHOTO_SOURCE_MAX_PIXELS,
+  PHOTO_UPLOAD_MAX_BYTES,
+} from "../../../packages/contracts/src/index.ts";
 import styles from "./SilsiganRedesign.module.css";
 import { EmptyState } from "./EmptyState";
 
-const PHOTO_MAX_BYTES = 3 * 1024 * 1024;
-const PHOTO_MAX_DIMENSION = 1280;
+const photoCompressionAttempts = [
+  { maxDimension: PHOTO_MAX_DIMENSION, quality: 0.82 },
+  { maxDimension: PHOTO_MAX_DIMENSION, quality: 0.72 },
+  { maxDimension: 1152, quality: 0.68 },
+  { maxDimension: 1024, quality: 0.62 },
+  { maxDimension: 896, quality: 0.56 },
+  { maxDimension: 768, quality: 0.5 },
+] as const;
 
 type PhotoMimeType = "image/jpeg" | "image/webp";
+type PhotoInputMimeType = PhotoMimeType | "image/heic" | "image/heif";
 
 export type PlacePhoto = {
   id: string;
@@ -20,7 +33,7 @@ export type PlacePhoto = {
 };
 
 export type PreparedPhotoUpload = {
-  base64: string;
+  blob: Blob;
   byteSize: number;
   height: number;
   mimeType: PhotoMimeType;
@@ -32,6 +45,7 @@ export function PhotoUploader({
   onPhotoClick,
   onReportPhoto,
   onUpload,
+  uploadEnabled = true,
   photos,
   safetyNotice,
 }: {
@@ -39,19 +53,24 @@ export function PhotoUploader({
   onPhotoClick?: (photo: PlacePhoto) => Promise<void>;
   onReportPhoto?: (photo: PlacePhoto) => void;
   onUpload: (photo: PreparedPhotoUpload) => Promise<void>;
+  uploadEnabled?: boolean;
   photos: PlacePhoto[];
   safetyNotice?: string | null;
 }) {
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<"idle" | "processing" | "uploading" | "done" | "error">("idle");
-  const [message, setMessage] = useState("JPEG 또는 WebP 1장, 최대 3MB. iPhone HEIC는 사진 앱에서 JPEG로 저장한 뒤 올려주세요.");
+  const [message, setMessage] = useState(
+    uploadEnabled
+      ? "JPEG, WebP 또는 iPhone HEIC/HEIF 1장. HEIC는 업로드 전에 JPEG로 변환됩니다. 전송 전에 1MB 이하로 안전하게 줄여 저장합니다."
+      : "사진 저장 서버가 아직 연결되지 않았어요. 연결 후에도 전송 전에 1MB 이하로 줄여 저장하며, 지금은 현장 상태만 먼저 남겨주세요.",
+  );
   const [clickingPhotoId, setClickingPhotoId] = useState<string | null>(null);
   const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
   const busy = status === "processing" || status === "uploading";
 
   const selectPhoto = () => {
-    if (!busy) {
+    if (!busy && uploadEnabled) {
       inputRef.current?.click();
     }
   };
@@ -60,7 +79,7 @@ export function PhotoUploader({
     const file = event.target.files?.[0] ?? null;
     event.target.value = "";
 
-    if (!file) {
+    if (!file || !uploadEnabled) {
       return;
     }
 
@@ -127,12 +146,19 @@ export function PhotoUploader({
         id={inputId}
         className={styles.hiddenFileInput}
         type="file"
-        accept="image/jpeg,image/webp"
+        accept="image/jpeg,image/webp,image/heic,image/heif,.heic,.heif"
+        disabled={!uploadEnabled}
         onChange={handleFileChange}
       />
-      <button className={styles.photoUploadButton} type="button" onClick={selectPhoto} disabled={busy} aria-describedby={`${inputId}-status`}>
+      <button
+        className={styles.photoUploadButton}
+        type="button"
+        onClick={selectPhoto}
+        disabled={busy || !uploadEnabled}
+        aria-describedby={`${inputId}-status`}
+      >
         <Camera size={18} />
-        {busy ? "처리 중" : "사진 올리기"}
+        {busy ? "처리 중" : uploadEnabled ? "사진 올리기" : "사진 서버 준비 중"}
       </button>
       <p id={`${inputId}-status`} className={`${styles.photoUploadStatus} ${status === "error" ? styles.photoUploadError : ""}`}>
         {message}
@@ -204,35 +230,70 @@ export function PhotoUploader({
 }
 
 async function preparePhotoForUpload(file: File): Promise<PreparedPhotoUpload> {
-  const sourceMimeType = photoMimeType(file.type);
-  if (file.size > PHOTO_MAX_BYTES) {
-    throw new Error("사진은 3MB 이하만 올릴 수 있습니다.");
+  const sourceMimeType = photoInputMimeType(file);
+  const outputMimeType = photoOutputMimeType(sourceMimeType);
+  if (file.size > PHOTO_SOURCE_MAX_BYTES) {
+    throw new Error("원본 사진은 12MB 이하만 선택할 수 있습니다.");
   }
 
-  const image = await loadImage(file);
-  const { width, height } = fitInside(image.naturalWidth, image.naturalHeight, PHOTO_MAX_DIMENSION);
+  const image = await loadImage(file).catch(() => {
+    if (sourceMimeType === "image/heic" || sourceMimeType === "image/heif") {
+      throw new Error("이 브라우저에서 HEIC/HEIF를 변환하지 못했습니다. 사진 앱에서 JPEG로 저장한 뒤 다시 시도해 주세요.");
+    }
+
+    throw new Error("사진 파일을 읽을 수 없습니다.");
+  });
+  if (image.naturalWidth * image.naturalHeight > PHOTO_SOURCE_MAX_PIXELS) {
+    throw new Error("사진 해상도가 너무 큽니다. 4,800만 화소 이하 사진을 선택해 주세요.");
+  }
+
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) {
     throw new Error("이 브라우저에서는 사진을 처리할 수 없습니다.");
   }
 
-  context.drawImage(image, 0, 0, width, height);
-  const blob = await canvasToBlob(canvas, sourceMimeType);
-  const mimeType = photoMimeType(blob.type || sourceMimeType);
-  if (blob.size > PHOTO_MAX_BYTES) {
-    throw new Error("다시 저장한 사진도 3MB를 넘습니다.");
+  for (const attempt of photoCompressionAttempts) {
+    const { width, height } = fitInside(image.naturalWidth, image.naturalHeight, attempt.maxDimension);
+    canvas.width = width;
+    canvas.height = height;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    const blob = await canvasToBlob(canvas, outputMimeType, attempt.quality);
+    const mimeType = photoMimeType(blob.type || outputMimeType);
+    if (blob.size <= PHOTO_UPLOAD_MAX_BYTES) {
+      return {
+        blob,
+        byteSize: blob.size,
+        height,
+        mimeType,
+        width,
+      };
+    }
   }
 
-  return {
-    base64: await blobToBase64(blob),
-    byteSize: blob.size,
-    height,
-    mimeType,
-    width,
-  };
+  throw new Error("사진을 1MB 이하로 줄이지 못했습니다. 더 작은 사진을 선택해 주세요.");
+}
+
+function photoInputMimeType(file: File): PhotoInputMimeType {
+  const value = file.type.toLowerCase();
+  if (value === "image/jpeg" || value === "image/webp" || value === "image/heic" || value === "image/heif") {
+    return value;
+  }
+
+  const extension = file.name.toLowerCase().split(".").pop();
+  if (extension === "heic") {
+    return "image/heic";
+  }
+  if (extension === "heif") {
+    return "image/heif";
+  }
+
+  throw new Error("JPEG, WebP 또는 HEIC/HEIF 사진만 올릴 수 있습니다.");
+}
+
+function photoOutputMimeType(value: PhotoInputMimeType): PhotoMimeType {
+  return value === "image/heic" || value === "image/heif" ? "image/jpeg" : value;
 }
 
 function photoMimeType(value: string): PhotoMimeType {
@@ -272,7 +333,7 @@ function fitInside(sourceWidth: number, sourceHeight: number, maxDimension: numb
   };
 }
 
-function canvasToBlob(canvas: HTMLCanvasElement, mimeType: PhotoMimeType): Promise<Blob> {
+function canvasToBlob(canvas: HTMLCanvasElement, mimeType: PhotoMimeType, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
@@ -284,20 +345,8 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: PhotoMimeType): Promi
         resolve(blob);
       },
       mimeType,
-      0.86,
+      quality,
     );
-  });
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const value = typeof reader.result === "string" ? reader.result : "";
-      resolve(value.includes(",") ? value.slice(value.indexOf(",") + 1) : value);
-    };
-    reader.onerror = () => reject(new Error("사진 파일을 인코딩하지 못했습니다."));
-    reader.readAsDataURL(blob);
   });
 }
 

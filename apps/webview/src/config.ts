@@ -4,6 +4,17 @@ export const WEBVIEW_APP_NAME = "#실시간";
 type Environment = Readonly<Record<string, string | undefined>>;
 
 export function createCapacitorConfig(env: Environment) {
+  if (env["SILSIGAN_WEBVIEW_GENERATE"] === "1") {
+    return {
+      appId: WEBVIEW_APP_ID,
+      appName: WEBVIEW_APP_NAME,
+      webDir: "web",
+      android: {
+        allowMixedContent: false,
+      },
+    } as const;
+  }
+
   const deployment = requireDeployment(env);
   const firstPartyOrigins = requireFirstPartyOrigins(env, deployment.url.origin);
 

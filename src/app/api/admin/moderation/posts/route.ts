@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   try {
     assertLocalDemoApiAvailable();
     assertAdminRequest(request);
-    assertRateLimit({ key: rateLimitKey(request, "admin-moderate-post"), limit: 30, windowMs: 60_000 });
+    assertRateLimit({ key: await rateLimitKey(request, "admin-moderate-post"), limit: 30, windowMs: 60_000 });
     const input = moderatePostSchema.parse(await request.json());
 
     return ok(await store.moderatePost({ postId: input.postId, action: input.action }));

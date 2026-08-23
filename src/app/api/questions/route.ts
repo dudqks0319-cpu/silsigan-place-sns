@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     assertLocalDemoApiAvailable();
-    assertRateLimit({ key: rateLimitKey(request, "create-question"), limit: 10, windowMs: 60_000 });
+    assertRateLimit({ key: await rateLimitKey(request, "create-question"), limit: 10, windowMs: 60_000 });
     const input = createQuestionSchema.parse(await request.json());
 
     return ok(createQuestion(input));

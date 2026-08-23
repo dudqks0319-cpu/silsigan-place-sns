@@ -1,9 +1,18 @@
 import type { CrowdLevel, LineStatus, ParkingStatus, ShareCard, StoredPost } from "./domain.ts";
+import { getSilsiganApiFetcher } from "./cloudflare-service-fetch.ts";
 import { store } from "./store.ts";
 
 export type SharedPost = Pick<
   StoredPost,
-  "id" | "hiddenAt" | "locationVerified" | "photoLabel" | "crowdLevel" | "parkingStatus" | "lineStatus"
+  | "id"
+  | "hiddenAt"
+  | "locationVerified"
+  | "photoLabel"
+  | "crowdLevel"
+  | "parkingStatus"
+  | "lineStatus"
+  | "createdAt"
+  | "expiresAt"
 > & {
   shareCard: ShareCard;
 };
@@ -15,13 +24,41 @@ type SharedPostLookupOptions = {
 };
 
 export async function findSharedPost(postId: string, options: SharedPostLookupOptions = {}): Promise<SharedPost | null> {
-  const workerBaseUrl = sharedPostWorkerBaseUrl(options.env);
+  const runtimeEnv = options.env ?? defaultSharedPostLookupEnv();
+  const workerBaseUrl = sharedPostWorkerBaseUrl(runtimeEnv);
 
   if (workerBaseUrl) {
-    return findWorkerSharedPost(postId, workerBaseUrl, options.fetcher ?? fetch);
+    return findWorkerSharedPost(postId, workerBaseUrl, options.fetcher ?? getSilsiganApiFetcher());
+  }
+
+  if (runtimeEnv.NODE_ENV === "production") {
+    return null;
   }
 
   return findDemoSharedPost(postId);
+}
+
+function defaultSharedPostLookupEnv(): SharedPostLookupEnv {
+  return {
+    NODE_ENV: process.env.NODE_ENV,
+    NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL: process.env.NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL,
+  };
+}
+
+export function formatSharedPostObservedAt(value: string): string {
+  const observedAt = new Date(value);
+  if (!Number.isFinite(observedAt.getTime())) {
+    return "제보 시각 확인 필요";
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(observedAt);
 }
 
 async function findWorkerSharedPost(postId: string, baseUrl: string, fetcher: typeof fetch): Promise<SharedPost | null> {
@@ -71,6 +108,8 @@ function isSharedPost(value: unknown): value is SharedPost {
     (typeof value.hiddenAt === "string" || value.hiddenAt === null) &&
     typeof value.locationVerified === "boolean" &&
     typeof value.photoLabel === "string" &&
+    isTimestamp(value.createdAt) &&
+    isTimestamp(value.expiresAt) &&
     isCrowdLevel(value.crowdLevel) &&
     isParkingStatus(value.parkingStatus) &&
     isLineStatus(value.lineStatus) &&
@@ -81,6 +120,10 @@ function isSharedPost(value: unknown): value is SharedPost {
     value.shareCard.hashtags.every((tag) => typeof tag === "string") &&
     isShareCardVariant(value.shareCard.variant)
   );
+}
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
 function isCrowdLevel(value: unknown): value is CrowdLevel {

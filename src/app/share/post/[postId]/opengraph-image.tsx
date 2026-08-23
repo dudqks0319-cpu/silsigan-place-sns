@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 import { notFound } from "next/navigation";
-import { findSharedPost } from "@/lib/shared-post";
+import { isPostExpired } from "@/lib/domain";
+import { findSharedPost, formatSharedPostObservedAt } from "@/lib/shared-post";
 
 export const size = {
   width: 1200,
@@ -31,6 +32,9 @@ export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
     notFound();
   }
 
+  const isExpired = isPostExpired(post.expiresAt);
+  const provenanceLabel = post.locationVerified ? "현장 인증" : "상태 제보";
+
   return new ImageResponse(
     (
       <div
@@ -49,7 +53,7 @@ export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", color: "#16a34a", fontSize: 34, fontWeight: 900 }}>#실시간</div>
           <div style={{ display: "flex", padding: "14px 22px", borderRadius: 999, background: "#dcfce7", color: "#15803d", fontSize: 28, fontWeight: 800 }}>
-            {post.locationVerified ? "현장 인증" : "상태 제보"}
+            {isExpired ? `지난 제보 · ${provenanceLabel}` : provenanceLabel}
           </div>
         </div>
         <div
@@ -67,13 +71,17 @@ export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
         >
           <div style={{ display: "flex", fontSize: 28, fontWeight: 800, opacity: 0.88 }}>{post.photoLabel}</div>
           <div style={{ display: "flex", marginTop: 28, fontSize: 72, lineHeight: 1.05, fontWeight: 900 }}>{post.shareCard.headline}</div>
-          <div style={{ display: "flex", marginTop: 24, fontSize: 32, lineHeight: 1.35, fontWeight: 800, whiteSpace: "pre-wrap" }}>{post.shareCard.body}</div>
+          <div style={{ display: "flex", marginTop: 24, fontSize: 32, lineHeight: 1.35, fontWeight: 800, whiteSpace: "pre-wrap" }}>{`${isExpired ? "지난 제보 · " : ""}${post.shareCard.body}`}</div>
         </div>
         <div style={{ display: "flex", gap: 16, marginTop: 28, fontSize: 26, color: "#15803d", fontWeight: 800 }}>
           {post.shareCard.hashtags.slice(0, 4).map((tag) => (
             <div key={tag} style={{ display: "flex", padding: "12px 18px", borderRadius: 999, background: "#ecfdf3" }}>#{tag}</div>
           ))}
         </div>
+        <div style={{ display: "flex", marginTop: 18, fontSize: 24, color: "#64748b", fontWeight: 700 }}>
+          제보 시각 {formatSharedPostObservedAt(post.createdAt)}
+        </div>
+        {isExpired && <div style={{ display: "flex", marginTop: 10, fontSize: 22, color: "#6e6e73", fontWeight: 700 }}>현재 방문 판단에는 사용하지 않는 만료 제보</div>}
       </div>
     ),
     size,

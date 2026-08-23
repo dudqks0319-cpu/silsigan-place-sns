@@ -8,8 +8,21 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "vars": {
-    "ENVIRONMENT": "development"
+    "ENVIRONMENT": "development",
+    "CORS_ALLOWED_ORIGINS": "http://localhost:3000,http://localhost:3201,http://127.0.0.1:3000,http://127.0.0.1:3201",
+    "PUBLIC_SITE_URL": "http://localhost:3000",
+    "OFFICIAL_INGESTION_SCHEDULER_ENABLED": "false",
+    "KMA_GLOBAL_DAILY_CALL_LIMIT": "1000",
+    "KMA_BURST_MINUTE_CALL_LIMIT": "10",
+    "PHOTO_UPLOADS_ENABLED": "false",
+    "IMAGE_TRANSFORMS_ENABLED": "false",
+    "PHOTO_GLOBAL_DAILY_LIMIT": "150",
+    "PHOTO_GLOBAL_MONTHLY_LIMIT": "4500",
+    "PHOTO_GLOBAL_STORED_LIMIT": "9000"
   },
   "d1_databases": [
     {
@@ -25,9 +38,18 @@
       "bucket_name": "silsigan-photos"
     }
   ],
-  "images": {
-    "binding": "IMAGES"
-  },
+  "ratelimits": [
+    {
+      "name": "PHOTO_WRITE_RATE_LIMITER",
+      "namespace_id": "9317101",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "PHOTO_READ_RATE_LIMITER",
+      "namespace_id": "9317102",
+      "simple": { "limit": 200, "period": 60 }
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "CACHE",
@@ -59,8 +81,27 @@
   "env": {
     "staging": {
       "name": "silsigan-api-staging",
+      "triggers": {
+        "crons": ["*/5 * * * *"]
+      },
+      "secrets": {
+        "required": ["ADMIN_TOKENS", "KMA_SERVICE_KEY"]
+      },
       "vars": {
-        "ENVIRONMENT": "staging"
+        "ENVIRONMENT": "staging",
+        "CORS_ALLOWED_ORIGINS": "https://silsigan-web-staging.dudqks0319.workers.dev",
+        "PUBLIC_SITE_URL": "https://silsigan-web-staging.dudqks0319.workers.dev",
+        "OFFICIAL_INGESTION_SCHEDULER_ENABLED": "false",
+        "KMA_GLOBAL_DAILY_CALL_LIMIT": "1000",
+        "KMA_BURST_MINUTE_CALL_LIMIT": "10",
+        "PHOTO_UPLOADS_ENABLED": "false",
+        "IMAGE_TRANSFORMS_ENABLED": "true",
+        "PHOTO_GLOBAL_DAILY_LIMIT": "150",
+        "PHOTO_GLOBAL_MONTHLY_LIMIT": "4500",
+        "PHOTO_GLOBAL_STORED_LIMIT": "9000"
+      },
+      "images": {
+        "binding": "IMAGES"
       },
       "d1_databases": [
         {
@@ -76,9 +117,18 @@
           "bucket_name": "silsigan-photos-staging"
         }
       ],
-      "images": {
-        "binding": "IMAGES"
-      },
+      "ratelimits": [
+        {
+          "name": "PHOTO_WRITE_RATE_LIMITER",
+          "namespace_id": "9317201",
+          "simple": { "limit": 60, "period": 60 }
+        },
+        {
+          "name": "PHOTO_READ_RATE_LIMITER",
+          "namespace_id": "9317202",
+          "simple": { "limit": 200, "period": 60 }
+        }
+      ],
       "kv_namespaces": [
         {
           "binding": "CACHE",
@@ -105,7 +155,17 @@
     "production": {
       "name": "silsigan-api-production",
       "vars": {
-        "ENVIRONMENT": "production"
+        "ENVIRONMENT": "production",
+        "CORS_ALLOWED_ORIGINS": "",
+        "PUBLIC_SITE_URL": "",
+        "OFFICIAL_INGESTION_SCHEDULER_ENABLED": "false",
+        "KMA_GLOBAL_DAILY_CALL_LIMIT": "8000",
+        "KMA_BURST_MINUTE_CALL_LIMIT": "10",
+        "PHOTO_UPLOADS_ENABLED": "false",
+        "IMAGE_TRANSFORMS_ENABLED": "false",
+        "PHOTO_GLOBAL_DAILY_LIMIT": "150",
+        "PHOTO_GLOBAL_MONTHLY_LIMIT": "4500",
+        "PHOTO_GLOBAL_STORED_LIMIT": "9000"
       },
       "d1_databases": [
         {
@@ -121,9 +181,18 @@
           "bucket_name": "silsigan-photos-production"
         }
       ],
-      "images": {
-        "binding": "IMAGES"
-      },
+      "ratelimits": [
+        {
+          "name": "PHOTO_WRITE_RATE_LIMITER",
+          "namespace_id": "9317301",
+          "simple": { "limit": 60, "period": 60 }
+        },
+        {
+          "name": "PHOTO_READ_RATE_LIMITER",
+          "namespace_id": "9317302",
+          "simple": { "limit": 200, "period": 60 }
+        }
+      ],
       "kv_namespaces": [
         {
           "binding": "CACHE",

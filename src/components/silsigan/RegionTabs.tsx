@@ -1,14 +1,13 @@
 "use client";
 
 import styles from "./SilsiganRedesign.module.css";
+import { KOREA_SIDO_REGIONS, type KoreaRegionScopeId } from "../../../packages/contracts/src/index.ts";
 
-export type RegionTabId = "nationwide" | "seoul" | "busan" | "jeju";
+export type RegionTabId = KoreaRegionScopeId;
 
 const regionTabs: Array<{ id: RegionTabId; label: string; caption: string }> = [
-  { id: "nationwide", label: "전국", caption: "전체 랭킹" },
-  { id: "seoul", label: "서울", caption: "수도권 준비" },
-  { id: "busan", label: "부산", caption: "해안/축제" },
-  { id: "jeju", label: "제주", caption: "여행지" },
+  { id: "nationwide", label: "전국", caption: "전국 기본" },
+  ...KOREA_SIDO_REGIONS.map((region) => ({ id: region.id, label: region.name, caption: "지역 보기" })),
 ];
 
 export function RegionTabs({ activeRegion, onChange }: { activeRegion: RegionTabId; onChange: (region: RegionTabId) => void }) {

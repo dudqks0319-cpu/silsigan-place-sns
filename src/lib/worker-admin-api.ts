@@ -12,6 +12,31 @@ export type WorkerModerationReportSummary = {
   createdAt: string;
 };
 
+export type WorkerFieldReportModerationStatus = "pending" | "approved" | "rejected";
+
+export type WorkerFieldReportDecisionResult = {
+  reportId: string;
+  decision: Exclude<WorkerFieldReportModerationStatus, "pending">;
+  public: boolean;
+  previousStatus: WorkerFieldReportModerationStatus;
+};
+
+export type WorkerFieldReportSummary = {
+  id: string;
+  placeId: string;
+  placeName: string;
+  category: "tourism" | "festival" | "restaurant_cafe" | "hospital" | "public_office" | "parking";
+  crowdLevel: "quiet" | "normal" | "busy" | "packed" | null;
+  lineStatus: "none" | "short" | "medium" | "long" | null;
+  parkingStatus: "available" | "limited" | "full" | "unknown" | null;
+  verifiedRadiusM: 50 | 150 | 300 | null;
+  observedDimensions: Array<"crowd" | "queue" | "parking" | "local_condition">;
+  createdAt: string;
+  expiresAt: string;
+  moderationStatus: WorkerFieldReportModerationStatus;
+  isExpired: boolean;
+};
+
 export type WorkerPlaceCoordinateStatusSummary = {
   placeId: string;
   coordinateStatus: WorkerCoordinateStatus;
@@ -23,6 +48,31 @@ export type WorkerUserRestrictionSummary = {
   anonymousUserId: string;
   restricted: boolean;
   blockedUntil: string | null;
+};
+
+export type WorkerSourceHealthStatus = "healthy" | "degraded" | "down";
+
+export type WorkerSourceHealthSummary = {
+  id: string;
+  sourceId: string;
+  sourceKey: string;
+  status: WorkerSourceHealthStatus;
+  message: string | null;
+  responseTimeMs: number | null;
+  checkedAt: string;
+};
+
+export type WorkerDataSourceSummary = {
+  sourceKey: string;
+  sourceName: string;
+  providerName: string;
+  sourceType: "official_live" | "official_periodic" | "official_static" | "venue_operator" | "verified_ugc" | "ugc" | "consensus" | "model_estimate";
+  commercialUseStatus: "pending" | "allowed" | "allowed_with_attribution" | "agreement_required" | "prohibited" | "unknown";
+  enabled: boolean;
+  healthStatus: "unknown" | WorkerSourceHealthStatus;
+  activationStatus: "active" | "awaiting_rights" | "unhealthy" | "inactive";
+  lastTermsCheckedAt: string | null;
+  lastHealthCheckedAt: string | null;
 };
 
 type WorkerApiSuccess<TData> = {
@@ -82,6 +132,68 @@ export async function moderateWorkerReport(
   );
 
   return toModerationReportSummary(response);
+}
+
+export async function listWorkerFieldReports(
+  input: { status?: WorkerFieldReportModerationStatus | "all"; limit?: number } = {},
+  options: WorkerAdminRequestOptions = {},
+) {
+  const status = input.status ?? "pending";
+  const limit = clampAdminLimit(input.limit, 50);
+  const url = workerAdminUrl(`/api/admin/field-reports?status=${encodeURIComponent(status)}&limit=${limit}`, options.env);
+  const response = await requestWorkerAdmin<unknown[]>(url, { method: "GET" }, options);
+
+  return response.map(toFieldReportSummary);
+}
+
+export async function listWorkerSourceHealth(
+  input: { limit?: number } = {},
+  options: WorkerAdminRequestOptions = {},
+) {
+  const limit = clampAdminLimit(input.limit, 50);
+  const url = workerAdminUrl(`/api/admin/sources/health?limit=${limit}`, options.env);
+  const response = await requestWorkerAdmin<unknown[]>(url, { method: "GET" }, options);
+
+  if (!Array.isArray(response)) {
+    throw new ApiError(502, "WORKER_SOURCE_HEALTH_SHAPE_INVALID", "Worker 데이터 출처 상태 응답 형식이 올바르지 않습니다.");
+  }
+
+  return response.map(toSourceHealthSummary);
+}
+
+export async function listWorkerDataSources(options: WorkerAdminRequestOptions = {}) {
+  const url = workerAdminUrl("/api/sources", options.env);
+  const response = await requestWorkerAdmin<unknown>(url, { method: "GET" }, options);
+
+  if (!Array.isArray(response)) {
+    throw new ApiError(502, "WORKER_SOURCE_REGISTRY_SHAPE_INVALID", "Worker 데이터 출처 목록 응답 형식이 올바르지 않습니다.");
+  }
+
+  return response.map(toDataSourceSummary);
+}
+
+export async function moderateWorkerFieldReport(
+  input: { reportId: string; decision: Exclude<WorkerFieldReportModerationStatus, "pending">; reason?: string },
+  options: WorkerAdminRequestOptions = {},
+) {
+  if (!/^field_report_[a-zA-Z0-9-]{8,100}$/.test(input.reportId)) {
+    throw new ApiError(400, "FIELD_REPORT_ID_INVALID", "현장 제보 ID가 올바르지 않습니다.");
+  }
+
+  const url = workerAdminUrl(`/api/admin/field-reports/${encodeURIComponent(input.reportId)}/moderation`, options.env);
+  const response = await requestWorkerAdmin<unknown>(
+    url,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        decision: input.decision,
+        reason: input.reason ?? "admin field report moderation",
+      }),
+    },
+    options,
+  );
+
+  return toFieldReportDecisionResult(response);
 }
 
 export async function updateWorkerPlaceCoordinateStatus(
@@ -260,6 +372,86 @@ function toModerationReportSummary(value: unknown): WorkerModerationReportSummar
   };
 }
 
+function toFieldReportSummary(value: unknown): WorkerFieldReportSummary {
+  if (!isRecord(value)) {
+    throw new ApiError(502, "WORKER_FIELD_REPORT_SHAPE_INVALID", "Worker 현장 제보 응답 형식이 올바르지 않습니다.");
+  }
+
+  return {
+    id: stringField(value.id, "id", "WORKER_FIELD_REPORT_SHAPE_INVALID"),
+    placeId: stringField(value.placeId, "placeId", "WORKER_FIELD_REPORT_SHAPE_INVALID"),
+    placeName: stringField(value.placeName, "placeName", "WORKER_FIELD_REPORT_SHAPE_INVALID"),
+    category: stringEnum(value.category, ["tourism", "festival", "restaurant_cafe", "hospital", "public_office", "parking"] as const, "category", "WORKER_FIELD_REPORT_SHAPE_INVALID"),
+    crowdLevel: nullableStringEnum(value.crowdLevel, ["quiet", "normal", "busy", "packed"] as const, "crowdLevel"),
+    lineStatus: nullableStringEnum(value.lineStatus, ["none", "short", "medium", "long"] as const, "lineStatus"),
+    parkingStatus: nullableStringEnum(value.parkingStatus, ["available", "limited", "full", "unknown"] as const, "parkingStatus"),
+    verifiedRadiusM: nullableNumberEnum(value.verifiedRadiusM, [50, 150, 300] as const, "verifiedRadiusM"),
+    observedDimensions: stringArrayEnum(value.observedDimensions, ["crowd", "queue", "parking", "local_condition"] as const, "observedDimensions"),
+    createdAt: stringField(value.createdAt, "createdAt", "WORKER_FIELD_REPORT_SHAPE_INVALID"),
+    expiresAt: stringField(value.expiresAt, "expiresAt", "WORKER_FIELD_REPORT_SHAPE_INVALID"),
+    moderationStatus: stringEnum(value.moderationStatus, ["pending", "approved", "rejected"] as const, "moderationStatus", "WORKER_FIELD_REPORT_SHAPE_INVALID"),
+    isExpired: booleanField(value.isExpired, "isExpired", "WORKER_FIELD_REPORT_SHAPE_INVALID"),
+  };
+}
+
+function toFieldReportDecisionResult(value: unknown): WorkerFieldReportDecisionResult {
+  if (!isRecord(value)) {
+    throw new ApiError(502, "WORKER_FIELD_REPORT_DECISION_SHAPE_INVALID", "Worker 현장 제보 처리 응답 형식이 올바르지 않습니다.");
+  }
+
+  return {
+    reportId: stringField(value.reportId, "reportId", "WORKER_FIELD_REPORT_DECISION_SHAPE_INVALID"),
+    decision: stringEnum(value.decision, ["approved", "rejected"] as const, "decision", "WORKER_FIELD_REPORT_DECISION_SHAPE_INVALID"),
+    public: booleanField(value.public, "public", "WORKER_FIELD_REPORT_DECISION_SHAPE_INVALID"),
+    previousStatus: stringEnum(value.previousStatus, ["pending", "approved", "rejected"] as const, "previousStatus", "WORKER_FIELD_REPORT_DECISION_SHAPE_INVALID"),
+  };
+}
+
+function toSourceHealthSummary(value: unknown): WorkerSourceHealthSummary {
+  if (!isRecord(value)) {
+    throw new ApiError(502, "WORKER_SOURCE_HEALTH_SHAPE_INVALID", "Worker 데이터 출처 상태 응답 형식이 올바르지 않습니다.");
+  }
+
+  return {
+    id: stringField(value.id, "id", "WORKER_SOURCE_HEALTH_SHAPE_INVALID"),
+    sourceId: stringField(value.sourceId, "sourceId", "WORKER_SOURCE_HEALTH_SHAPE_INVALID"),
+    sourceKey: stringField(value.sourceKey, "sourceKey", "WORKER_SOURCE_HEALTH_SHAPE_INVALID"),
+    status: stringEnum(value.status, ["healthy", "degraded", "down"] as const, "status", "WORKER_SOURCE_HEALTH_SHAPE_INVALID"),
+    message: nullableStringField(value.message, "message", "WORKER_SOURCE_HEALTH_SHAPE_INVALID"),
+    responseTimeMs: nullableNonNegativeNumberField(value.responseTimeMs, "responseTimeMs", "WORKER_SOURCE_HEALTH_SHAPE_INVALID"),
+    checkedAt: stringField(value.checkedAt, "checkedAt", "WORKER_SOURCE_HEALTH_SHAPE_INVALID"),
+  };
+}
+
+function toDataSourceSummary(value: unknown): WorkerDataSourceSummary {
+  if (!isRecord(value)) {
+    throw new ApiError(502, "WORKER_SOURCE_REGISTRY_SHAPE_INVALID", "Worker 데이터 출처 목록 응답 형식이 올바르지 않습니다.");
+  }
+
+  return {
+    sourceKey: stringField(value.sourceKey, "sourceKey", "WORKER_SOURCE_REGISTRY_SHAPE_INVALID"),
+    sourceName: stringField(value.sourceName, "sourceName", "WORKER_SOURCE_REGISTRY_SHAPE_INVALID"),
+    providerName: stringField(value.providerName, "providerName", "WORKER_SOURCE_REGISTRY_SHAPE_INVALID"),
+    sourceType: stringEnum(
+      value.sourceType,
+      ["official_live", "official_periodic", "official_static", "venue_operator", "verified_ugc", "ugc", "consensus", "model_estimate"] as const,
+      "sourceType",
+      "WORKER_SOURCE_REGISTRY_SHAPE_INVALID",
+    ),
+    commercialUseStatus: stringEnum(
+      value.commercialUseStatus,
+      ["pending", "allowed", "allowed_with_attribution", "agreement_required", "prohibited", "unknown"] as const,
+      "commercialUseStatus",
+      "WORKER_SOURCE_REGISTRY_SHAPE_INVALID",
+    ),
+    enabled: booleanField(value.enabled, "enabled", "WORKER_SOURCE_REGISTRY_SHAPE_INVALID"),
+    healthStatus: stringEnum(value.healthStatus, ["unknown", "healthy", "degraded", "down"] as const, "healthStatus", "WORKER_SOURCE_REGISTRY_SHAPE_INVALID"),
+    activationStatus: stringEnum(value.activationStatus, ["active", "awaiting_rights", "unhealthy", "inactive"] as const, "activationStatus", "WORKER_SOURCE_REGISTRY_SHAPE_INVALID"),
+    lastTermsCheckedAt: nullableStringField(value.lastTermsCheckedAt, "lastTermsCheckedAt", "WORKER_SOURCE_REGISTRY_SHAPE_INVALID"),
+    lastHealthCheckedAt: nullableStringField(value.lastHealthCheckedAt, "lastHealthCheckedAt", "WORKER_SOURCE_REGISTRY_SHAPE_INVALID"),
+  };
+}
+
 function toCoordinateStatusSummary(value: unknown): WorkerPlaceCoordinateStatusSummary {
   if (!isRecord(value)) {
     throw new ApiError(502, "WORKER_COORDINATE_STATUS_SHAPE_INVALID", "Worker 좌표 상태 응답 형식이 올바르지 않습니다.");
@@ -313,6 +505,15 @@ function nullableNumberField(value: unknown, field: string, code: string) {
   throw new ApiError(502, code, `Worker 응답 ${field} 필드가 올바르지 않습니다.`);
 }
 
+function nullableNonNegativeNumberField(value: unknown, field: string, code: string) {
+  const numberValue = nullableNumberField(value, field, code);
+  if (numberValue === null || numberValue >= 0) {
+    return numberValue;
+  }
+
+  throw new ApiError(502, code, `Worker 응답 ${field} 필드가 올바르지 않습니다.`);
+}
+
 function booleanField(value: unknown, field: string, code: string) {
   if (typeof value === "boolean") {
     return value;
@@ -324,6 +525,34 @@ function booleanField(value: unknown, field: string, code: string) {
 function stringEnum<const TValue extends string>(value: unknown, allowed: readonly TValue[], field: string, code = "WORKER_REPORT_SHAPE_INVALID"): TValue {
   if (typeof value === "string" && allowed.includes(value as TValue)) {
     return value as TValue;
+  }
+
+  throw new ApiError(502, code, `Worker 응답 ${field} 필드가 올바르지 않습니다.`);
+}
+
+function nullableStringEnum<const TValue extends string>(value: unknown, allowed: readonly TValue[], field: string, code = "WORKER_REPORT_SHAPE_INVALID"): TValue | null {
+  if (value === null) {
+    return null;
+  }
+
+  return stringEnum(value, allowed, field, code);
+}
+
+function nullableNumberEnum<const TValue extends number>(value: unknown, allowed: readonly TValue[], field: string, code = "WORKER_REPORT_SHAPE_INVALID"): TValue | null {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "number" && allowed.includes(value as TValue)) {
+    return value as TValue;
+  }
+
+  throw new ApiError(502, code, `Worker 응답 ${field} 필드가 올바르지 않습니다.`);
+}
+
+function stringArrayEnum<const TValue extends string>(value: unknown, allowed: readonly TValue[], field: string, code = "WORKER_REPORT_SHAPE_INVALID"): TValue[] {
+  if (Array.isArray(value) && value.every((item) => typeof item === "string" && allowed.includes(item as TValue))) {
+    return value as TValue[];
   }
 
   throw new ApiError(502, code, `Worker 응답 ${field} 필드가 올바르지 않습니다.`);

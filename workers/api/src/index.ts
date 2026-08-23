@@ -6,6 +6,7 @@ import {
   type RankingRecord,
   type RateLimitState,
   PHOTO_MAX_BYTES,
+  PHOTO_MAX_DIMENSION,
   MAX_REGION_RANKING_LIMIT,
   applySlidingWindowRateLimit,
   clampLimit,
@@ -37,6 +38,8 @@ import {
   type DecisionProfile,
   type LiveSignal,
   type LiveSignalDimension,
+  placeRegionIdsForScope,
+  placeRegionMatchesScope,
 } from "../../../packages/contracts/src/index.ts";
 import { PublicDataGateway, PublicDataGatewayError } from "./public-data/gateway.ts";
 import { createKmaWeatherAdapter } from "./public-data/kma-weather-adapter.ts";
@@ -44,6 +47,15 @@ import { createTourApiAdapter } from "./public-data/tour-api-adapter.ts";
 import { createNationalParkingAdapter } from "./public-data/national-parking-adapter.ts";
 import { createNationalTrafficAdapter } from "./public-data/national-traffic-adapter.ts";
 import { createNationalCctvAdapter } from "./public-data/national-cctv-adapter.ts";
+import {
+  buildIngestionRequestBody,
+  isOfficialSourceKey,
+  nextIngestionAt,
+  parseIngestionTargetQuery,
+  validateIngestionTargetQuery,
+  type IngestionTargetQuery,
+  type OfficialSourceKey,
+} from "./public-data/ingestion-targets.ts";
 
 declare const WebSocketPair: {
   new (): WebSocketPairResult;
@@ -56,6 +68,12 @@ type WebSocketPairResult = {
 
 type ExecutionContext = {
   waitUntil: (promise: Promise<unknown>) => void;
+};
+
+type ScheduledController = {
+  cron: string;
+  type: "scheduled";
+  scheduledTime: number;
 };
 
 type WorkerResponseInit = ResponseInit & {
@@ -107,6 +125,7 @@ type R2ObjectBody = {
   httpMetadata?: {
     contentType?: string;
   };
+  customMetadata?: Record<string, string>;
 };
 
 type ImagesBinding = {
@@ -140,6 +159,10 @@ type KVNamespace = {
   delete: (key: string) => Promise<void>;
 };
 
+type RateLimitBinding = {
+  limit: (options: { key: string }) => Promise<{ success: boolean }>;
+};
+
 type Env = {
   DB?: D1Database;
   PHOTOS?: R2Bucket;
@@ -148,16 +171,29 @@ type Env = {
   PLACE_ROOM?: DurableObjectNamespace;
   REGION_ROOM?: DurableObjectNamespace;
   GLOBAL_ROOM?: DurableObjectNamespace;
+  PHOTO_WRITE_RATE_LIMITER?: RateLimitBinding;
+  PHOTO_READ_RATE_LIMITER?: RateLimitBinding;
   ADMIN_TOKEN?: string;
   ADMIN_TOKENS?: string;
   MODERATION_ALERT_WEBHOOK_URL?: string;
   MODERATION_ALERT_WEBHOOK_TOKEN?: string;
   KMA_SERVICE_KEY?: string;
+  KMA_GLOBAL_DAILY_CALL_LIMIT?: string;
+  KMA_BURST_MINUTE_CALL_LIMIT?: string;
   TOUR_API_SERVICE_KEY?: string;
   NATIONAL_PARKING_SERVICE_KEY?: string;
   NATIONAL_PARKING_ENDPOINT_URL?: string;
   ITS_SERVICE_KEY?: string;
   MEMBER_LINK_HMAC_SECRET?: string;
+  CORS_ALLOWED_ORIGINS?: string;
+  PUBLIC_SITE_URL?: string;
+  OFFICIAL_INGESTION_SCHEDULER_ENABLED?: string;
+  PHOTO_UPLOADS_ENABLED?: string;
+  IMAGE_TRANSFORMS_ENABLED?: string;
+  PHOTO_GLOBAL_DAILY_LIMIT?: string;
+  PHOTO_GLOBAL_MONTHLY_LIMIT?: string;
+  PHOTO_GLOBAL_STORED_LIMIT?: string;
+  COST_GUARD_HASH_SECRET?: string;
   ENVIRONMENT?: string;
 };
 
@@ -220,8 +256,39 @@ type D1SourceHealthLogRow = {
 
 type D1OperationalSourceRow = Pick<
   D1DataSourceRow,
-  "id" | "sourceKey" | "sourceName" | "sourceType" | "commercialUseStatus" | "enabled" | "healthStatus" | "defaultTtlSeconds"
+  | "id"
+  | "sourceKey"
+  | "sourceName"
+  | "sourceType"
+  | "commercialUseStatus"
+  | "enabled"
+  | "enabledRegionsJson"
+  | "healthStatus"
+  | "defaultTtlSeconds"
+  | "refreshIntervalSeconds"
 >;
+
+type D1IngestionTargetRow = {
+  id: string;
+  sourceId: string;
+  sourceKey: OfficialSourceKey;
+  sourceName: string;
+  sourceType: LiveSignal["sourceType"];
+  commercialUseStatus: D1DataSourceRow["commercialUseStatus"];
+  sourceEnabled: number;
+  enabledRegionsJson: string;
+  healthStatus: D1DataSourceRow["healthStatus"];
+  defaultTtlSeconds: number | null;
+  refreshIntervalSeconds: number | null;
+  targetKey: string;
+  placeId: string;
+  regionId: string;
+  queryJson: string;
+  enabled: number;
+  nextRunAt: string;
+  leaseToken: string | null;
+  leaseExpiresAt: string | null;
+};
 
 type D1DecisionProfileDimensionRow = {
   profileId: string;
@@ -340,6 +407,17 @@ type D1PhotoRow = {
   createdAt: string;
 };
 
+type D1PhotoUploadSessionRow = {
+  uploadId: string;
+  placeId: string;
+  anonymousUserId: string;
+  mimeType: PhotoRecord["mimeType"];
+  storageKey: string;
+  stagingKey: string;
+  status: "ticketed" | "uploaded";
+  expiresAt: string;
+};
+
 type D1ReportRow = {
   id: string;
   targetType: ReportRecord["targetType"];
@@ -357,6 +435,7 @@ type D1FieldReportEventRow = {
   anonymousUserId: string;
   verifiedRadiusM: FieldReportRecord["verifiedRadiusM"];
   expiresAt: string | null;
+  moderationStatus: FieldReportModerationStatus;
 };
 
 type D1CountRow = {
@@ -371,10 +450,14 @@ type AdminActionType =
   | `report_${ReportRecord["status"]}`
   | "photo_approved"
   | "photo_rejected"
+  | "field_report_approved"
+  | "field_report_rejected"
   | "place_coordinate_status"
   | "user_restrict"
   | "user_unrestrict"
-  | "source_policy_updated";
+  | "source_policy_updated"
+  | "ingestion_target_upserted"
+  | "ingestion_target_deleted";
 type AdminRole = "operator" | "moderator" | "admin";
 
 type AdminCredential = {
@@ -439,6 +522,7 @@ type ModerationAlertPayload = {
 type AnonymousSession = {
   id: string;
   isNew: boolean;
+  signature: string | null;
 };
 
 type CommentRecord = {
@@ -515,6 +599,8 @@ type FieldReportObservation = {
   expiresAt: string;
 };
 
+type FieldReportModerationStatus = "pending" | "approved" | "rejected";
+
 type FieldReportRecord = {
   id: string;
   placeId: string;
@@ -530,6 +616,8 @@ type FieldReportRecord = {
   createdAt: string;
   expiresAt: string;
   hasPhoto: boolean;
+  photoId?: string | null;
+  moderationStatus: FieldReportModerationStatus;
 };
 
 type PostRecord = {
@@ -552,6 +640,7 @@ type PostRecord = {
   hashtagNames: string[];
   hiddenAt: string | null;
   createdAt: string;
+  expiresAt: string;
 };
 
 type D1PostRow = {
@@ -636,11 +725,51 @@ type D1FieldReportRow = {
   lineStatus: LineStatus | null;
   parkingStatus: ParkingStatus | null;
   verifiedRadiusM: FieldReportRecord["verifiedRadiusM"];
+  photoId: string | null;
   createdAt: string;
   expiresAt: string;
+  moderationStatus: FieldReportModerationStatus;
 };
 
-type PublicFieldReportRecord = Omit<FieldReportRecord, "anonymousUserId" | "hasPhoto">;
+type D1ModerationFieldReportRow = D1FieldReportRow & {
+  anonymousUserId: string;
+};
+
+type AdminFieldReportStatus = FieldReportModerationStatus | "all";
+
+type D1AdminFieldReportRow = D1FieldReportRow & {
+  placeName: string;
+  observedDimensions: string | null;
+};
+
+type AdminFieldReportSummary = {
+  id: string;
+  placeId: string;
+  placeName: string;
+  category: FieldReportRecord["category"];
+  crowdLevel: CrowdLevel | null;
+  lineStatus: LineStatus | null;
+  parkingStatus: ParkingStatus | null;
+  verifiedRadiusM: FieldReportRecord["verifiedRadiusM"];
+  observedDimensions: Array<"crowd" | "queue" | "parking" | "local_condition">;
+  createdAt: string;
+  expiresAt: string;
+  moderationStatus: FieldReportModerationStatus;
+  isExpired: boolean;
+};
+
+type FieldReportLifecycleStatus = FieldReportModerationStatus | "published" | "expired";
+
+type D1MyFieldReportRow = D1FieldReportRow & {
+  status: FieldReportLifecycleStatus;
+};
+
+type PublicFieldReportRecord = Omit<FieldReportRecord, "anonymousUserId" | "hasPhoto" | "photoId"> & {
+  photoId?: string;
+};
+type PublicMyFieldReportRecord = PublicFieldReportRecord & {
+  status: FieldReportLifecycleStatus;
+};
 
 type PlaceEventSource = "worker_api" | "field_report" | "detail" | "map_marker" | "ranking" | "search_result";
 type PlaceClickSource = Exclude<PlaceEventSource, "field_report">;
@@ -714,6 +843,8 @@ const seedPlaces: PlaceRecord[] = [
     coordinateStatus: "verified",
   },
 ];
+
+const REPORT_TTL_MS = 3 * 60 * 60 * 1000;
 
 const posts: PostRecord[] = [
   seedPost({
@@ -816,6 +947,7 @@ const reports: ReportRecord[] = [];
 const fieldReports: FieldReportRecord[] = [];
 const liveSignals: LiveSignal[] = [];
 const rateBuckets = new Map<string, RateLimitState>();
+const rateBucketsByIp = new Map<string, RateLimitState>();
 const likeStateByAnon = new Map<string, LikePolicyState>();
 const placeLikeCounts = new Map<string, number>();
 const placeClickCounts = new Map<string, number>();
@@ -824,10 +956,28 @@ const roomEvents = new Map<string, RoomBroadcast[]>();
 const photoContentHashes = new Map<string, string>();
 const commentCreateMinuteLimit = 5;
 const commentCreateDailyLimit = 100;
+const ipRateLimitMultiplier = 4;
+const photoWriteBurstLimit = 3;
+const photoWriteDailyLimit = 12;
+const photoOutstandingSessionLimit = 3;
+const defaultPhotoGlobalDailyLimit = 150;
+const maxPhotoGlobalDailyLimit = 150;
+const defaultPhotoGlobalMonthlyLimit = 4_500;
+const maxPhotoGlobalMonthlyLimit = 4_500;
+const defaultPhotoGlobalStoredLimit = 9_000;
+const maxPhotoGlobalStoredLimit = 9_000;
+const defaultKmaGlobalDailyCallLimit = 8_000;
+const maxKmaGlobalDailyCallLimit = 8_000;
+const defaultKmaBurstMinuteCallLimit = 10;
+const maxKmaBurstMinuteCallLimit = 20;
+const photoFileReadMinuteLimit = 120;
+const photoFileReadDailyLimit = 2_000;
 const commentBodyMaxLength = 280;
 const commentBodyMinLength = 2;
 const oneMinuteMs = 60_000;
+const photoUploadTtlSeconds = 10 * 60;
 const oneDayMs = 24 * 60 * 60_000;
+const rollingMonthMs = 31 * oneDayMs;
 const reportChangedVoteThreshold = 3;
 const identityLinkMaxClockSkewMs = 5 * 60_000;
 const adminRoles = ["operator", "moderator", "admin"] as const;
@@ -836,7 +986,6 @@ const adminRoleRank: Record<AdminRole, number> = {
   moderator: 2,
   admin: 3,
 };
-const REPORT_TTL_MS = 3 * 60 * 60 * 1000;
 const RANKING_CACHE_TTL_SECONDS = 60;
 const RANKING_CACHE_VERSION_KEY = "rankings:version";
 const DEFAULT_RANKING_CACHE_VERSION = "initial";
@@ -851,23 +1000,33 @@ const fieldReportParkingObservations = ["available", "limited", "almost_full", "
 const fieldReportWeatherFeels = ["good", "rainy", "windy", "hot", "cold"] as const;
 const fieldReportLocalConditions = ["rain", "snow", "strong_wind", "slippery", "entry_restricted", "event", "temporary_closed"] as const;
 const questionTypes = ["crowd", "line", "parking", "weather", "photo_request", "other"] as const;
-const publicSiteUrl = "https://silsigan.pages.dev";
+const defaultPublicSiteUrl = "https://silsigan.pages.dev";
 
 const workerApi = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     return handleRequest(request, env, ctx);
+  },
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    await cleanupExpiredPhotoUploadSessions(env);
+    await cleanupExpiredMeteredUsageEvents(env);
+    await runScheduledOfficialIngestion(controller, env);
   },
 };
 
 export default workerApi;
 
 export async function handleRequest(request: Request, env: Env = {}, ctx: ExecutionContext = testExecutionContext): Promise<Response> {
+  const response = await handleRequestWithoutCors(request, env, ctx);
+  return withCors(response, request, env);
+}
+
+async function handleRequestWithoutCors(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   try {
     const url = new URL(request.url);
     const path = normalizePath(url.pathname);
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders() });
+      return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
 
     if (request.method === "GET" && path === "/api/health") {
@@ -897,6 +1056,33 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
       return await recordSourceHealth(decodeURIComponent(sourceHealthMatch[1]), request, env);
     }
 
+    const sourceIngestionTargetsMatch = path.match(/^\/api\/admin\/sources\/([^/]+)\/ingestion-targets$/);
+    if (sourceIngestionTargetsMatch && request.method === "GET") {
+      await requireAdmin(request, env, "operator");
+      return await listIngestionTargets(decodeURIComponent(sourceIngestionTargetsMatch[1]), url, env);
+    }
+
+    const sourceIngestionTargetMatch = path.match(/^\/api\/admin\/sources\/([^/]+)\/ingestion-targets\/([^/]+)$/);
+    if (sourceIngestionTargetMatch && request.method === "PUT") {
+      await requireAdmin(request, env, "admin");
+      return await upsertIngestionTarget(
+        decodeURIComponent(sourceIngestionTargetMatch[1]),
+        decodeURIComponent(sourceIngestionTargetMatch[2]),
+        request,
+        env,
+      );
+    }
+
+    if (sourceIngestionTargetMatch && request.method === "DELETE") {
+      await requireAdmin(request, env, "admin");
+      return await deleteIngestionTarget(
+        decodeURIComponent(sourceIngestionTargetMatch[1]),
+        decodeURIComponent(sourceIngestionTargetMatch[2]),
+        request,
+        env,
+      );
+    }
+
     const sourcePolicyMatch = path.match(/^\/api\/admin\/sources\/([^/]+)$/);
     if (sourcePolicyMatch && request.method === "PATCH") {
       await requireAdmin(request, env, "admin");
@@ -910,7 +1096,7 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
     }
 
     const session = getAnonymousSession(request);
-    const sessionHeaders = sessionHeadersFor(session);
+    const sessionHeaders = await sessionHeadersFor(session, env);
 
     if (request.method === "GET" && path === "/api/places") {
       return withHeaders(await listPlaces(url, env), sessionHeaders);
@@ -984,6 +1170,10 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
       return withHeaders(await listMyQuestions(session, env), sessionHeaders);
     }
 
+    if (request.method === "GET" && path === "/api/my-reports") {
+      return withHeaders(await listMyFieldReports(session, url, env), sessionHeaders);
+    }
+
     if (path === "/api/comments") {
       if (request.method === "GET") {
         return withHeaders(await listComments(url, session, env), sessionHeaders);
@@ -1013,18 +1203,28 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
     }
 
     if (path === "/api/photos/upload-url" && request.method === "POST") {
-      await enforceRateLimit("photo:upload-url", request, session.id, 10, 60 * 60_000);
-      return withHeaders(await createPhotoUploadUrl(request, session, env), sessionHeaders);
+      const idempotencyKey = photoIdempotencyKeyFromRequest(request, env);
+      await enforcePhotoWriteCostLimit("photo:upload-url", request, session, env, idempotencyKey ?? undefined);
+      return withHeaders(await createPhotoUploadUrl(request, session, env, idempotencyKey), sessionHeaders);
+    }
+
+    if (path === "/api/photos/upload" && request.method === "PUT") {
+      await enforcePhotoWriteCostLimit("photo:upload", request, session, env, photoUploadIdFromHeader(request));
+      return withHeaders(await uploadPhotoBytes(request, session, env), sessionHeaders);
     }
 
     if (path === "/api/photos/complete" && request.method === "POST") {
-      await enforceRateLimit("photo:complete", request, session.id, 10, 60 * 60_000);
+      const idempotencyKey = photoIdempotencyKeyFromRequest(request, env);
+      await enforcePhotoWriteCostLimit("photo:complete", request, session, env, idempotencyKey ?? undefined);
       const response = await completePhoto(request, session, env, ctx);
       return withHeaders(response, sessionHeaders);
     }
 
     const photoFileMatch = path.match(/^\/api\/photos\/([^/]+)\/file$/);
     if (photoFileMatch && request.method === "GET") {
+      await enforceCloudflareCostRateLimit(env.PHOTO_READ_RATE_LIMITER, env, "photo-file:global");
+      await enforceRateLimit("photo:file:minute", request, session.id, photoFileReadMinuteLimit, oneMinuteMs);
+      await enforceRateLimit("photo:file:daily", request, session.id, photoFileReadDailyLimit, oneDayMs);
       return withHeaders(await servePhotoFile(photoFileMatch[1], env), sessionHeaders);
     }
 
@@ -1109,6 +1309,17 @@ export async function handleRequest(request: Request, env: Env = {}, ctx: Execut
       return withHeaders(await moderatePhoto(photoModerationMatch[1], request, env, ctx), sessionHeaders);
     }
 
+    const fieldReportModerationMatch = path.match(/^\/api\/admin\/field-reports\/([^/]+)\/moderation$/);
+    if (fieldReportModerationMatch && request.method === "POST") {
+      await requireAdmin(request, env, "moderator");
+      return withHeaders(await moderateFieldReport(fieldReportModerationMatch[1], request, env, ctx), sessionHeaders);
+    }
+
+    if (path === "/api/admin/field-reports" && request.method === "GET") {
+      await requireAdmin(request, env, "moderator");
+      return withHeaders(await listAdminFieldReports(url, env), sessionHeaders);
+    }
+
     if (path === "/api/admin/places/coordinate-status" && request.method === "POST") {
       await requireAdmin(request, env, "operator");
       return withHeaders(await updatePlaceCoordinateStatus(request, env), sessionHeaders);
@@ -1150,6 +1361,7 @@ async function getRuntimeConfig(url: URL, env: Env): Promise<Response> {
         dataMode: "demo" as const,
         featureFlags: { ...DEFAULT_FEATURE_FLAGS },
         dimensionSettings: INITIAL_DIMENSION_SETTINGS.map((setting) => ({ ...setting })),
+        costControls: runtimeCostControls(env),
       },
       { storage: "memory" },
     );
@@ -1199,6 +1411,7 @@ async function getRuntimeConfig(url: URL, env: Env): Promise<Response> {
         defaultTtlSeconds: setting.defaultTtlSeconds,
         currentEligible: setting.currentEligible === 1,
       })),
+      costControls: runtimeCostControls(env),
     },
     { storage: "d1" },
   );
@@ -1437,6 +1650,320 @@ async function updateSourcePolicy(sourceKey: string, request: Request, env: Env)
   }, { authz: "admin-role", auditPolicy: "admin_actions", storage: "d1" });
 }
 
+async function listIngestionTargets(sourceKey: string, url: URL, env: Env): Promise<Response> {
+  const db = requireD1(env);
+  const source = await db.prepare("SELECT id, source_key AS sourceKey FROM data_sources WHERE source_key = ?").bind(sourceKey).first<{ id: string; sourceKey: string }>();
+  if (!source) throw new HttpError(404, "SOURCE_NOT_FOUND", "데이터 출처를 찾을 수 없습니다.");
+
+  const limit = Math.min(Number(url.searchParams.get("limit") ?? "100"), 200);
+  if (!Number.isInteger(limit) || limit < 1) throw new HttpError(400, "VALIDATION_ERROR", "limit 값이 올바르지 않습니다.");
+  const { results = [] } = await db.prepare(`
+    SELECT
+      t.id,
+      t.target_key AS targetKey,
+      t.place_id AS placeId,
+      p.name AS placeName,
+      p.region_id AS regionId,
+      t.query_json AS queryJson,
+      t.enabled,
+      t.next_run_at AS nextRunAt,
+      t.last_run_at AS lastRunAt,
+      t.last_status AS lastStatus,
+      t.last_error_code AS lastErrorCode,
+      t.lease_expires_at AS leaseExpiresAt,
+      t.created_by AS createdBy,
+      t.created_at AS createdAt,
+      t.updated_at AS updatedAt
+    FROM official_ingestion_targets t
+    JOIN places p ON p.id = t.place_id
+    WHERE t.source_id = ?
+    ORDER BY t.next_run_at, t.target_key
+    LIMIT ?
+  `).bind(source.id, limit).all<{
+    id: string;
+    targetKey: string;
+    placeId: string;
+    placeName: string;
+    regionId: string;
+    queryJson: string;
+    enabled: number;
+    nextRunAt: string;
+    lastRunAt: string | null;
+    lastStatus: "running" | "succeeded" | "partial" | "failed" | "skipped" | null;
+    lastErrorCode: string | null;
+    leaseExpiresAt: string | null;
+    createdBy: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>();
+
+  return json({
+    sourceKey: source.sourceKey,
+    targets: results.map((row) => ({
+      id: row.id,
+      targetKey: row.targetKey,
+      placeId: row.placeId,
+      placeName: row.placeName,
+      regionId: row.regionId,
+      query: parseStoredTargetQuery(row.queryJson),
+      enabled: row.enabled === 1,
+      nextRunAt: row.nextRunAt,
+      lastRunAt: row.lastRunAt,
+      lastStatus: row.lastStatus,
+      lastErrorCode: row.lastErrorCode,
+      leaseExpiresAt: row.leaseExpiresAt,
+      createdBy: row.createdBy,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    })),
+  }, { storage: "d1", authz: "operator-role" });
+}
+
+async function upsertIngestionTarget(sourceKey: string, targetKey: string, request: Request, env: Env): Promise<Response> {
+  const db = requireD1(env);
+  if (!isOfficialSourceKey(sourceKey)) {
+    throw new HttpError(404, "SOURCE_ADAPTER_NOT_FOUND", "등록된 수집 어댑터를 찾을 수 없습니다.");
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(targetKey)) {
+    throw new HttpError(400, "VALIDATION_ERROR", "targetKey 값이 올바르지 않습니다.");
+  }
+
+  const source = await db.prepare(`
+    SELECT
+      id,
+      source_key AS sourceKey,
+      source_name AS sourceName,
+      source_type AS sourceType,
+      commercial_use_status AS commercialUseStatus,
+      enabled,
+      enabled_regions_json AS enabledRegionsJson,
+      health_status AS healthStatus,
+      default_ttl_seconds AS defaultTtlSeconds,
+      refresh_interval_seconds AS refreshIntervalSeconds
+    FROM data_sources
+    WHERE source_key = ?
+  `).bind(sourceKey).first<D1OperationalSourceRow>();
+  if (!source) throw new HttpError(404, "SOURCE_NOT_FOUND", "데이터 출처를 찾을 수 없습니다.");
+
+  const body = await readJson(request);
+  const placeId = stringField(body, "placeId", 100);
+  await resolvePlaceRecord(placeId, env);
+  let query: IngestionTargetQuery;
+  try {
+    query = parseIngestionTargetQuery(body.query);
+    validateIngestionTargetQuery(sourceKey, query);
+  } catch {
+    throw new HttpError(400, "VALIDATION_ERROR", "수집 대상 query가 출처 어댑터 계약을 만족하지 않습니다.");
+  }
+
+  const enabled = body.enabled === undefined ? true : booleanField(body, "enabled");
+  const nextRunAtInput = optionalStringField(body, "nextRunAt", 40);
+  const nextRunAtMs = nextRunAtInput ? Date.parse(nextRunAtInput) : Date.now();
+  if (!Number.isFinite(nextRunAtMs)) {
+    throw new HttpError(400, "VALIDATION_ERROR", "nextRunAt 값이 올바르지 않습니다.");
+  }
+  const nextRunAt = new Date(nextRunAtMs).toISOString();
+  const targetId = `ingestion_target_${(await sha256Hex(`${source.id}:${targetKey}`)).slice(0, 48)}`;
+  const now = new Date().toISOString();
+  await db.prepare(`
+    INSERT INTO official_ingestion_targets (
+      id, source_id, target_key, place_id, query_json, enabled, next_run_at, created_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source_id, target_key) DO UPDATE SET
+      place_id = excluded.place_id,
+      query_json = excluded.query_json,
+      enabled = excluded.enabled,
+      next_run_at = excluded.next_run_at,
+      last_status = NULL,
+      last_error_code = NULL,
+      lease_token = NULL,
+      lease_expires_at = NULL,
+      created_by = excluded.created_by,
+      updated_at = excluded.updated_at
+  `).bind(
+    targetId,
+    source.id,
+    targetKey,
+    placeId,
+    JSON.stringify(query),
+    enabled ? 1 : 0,
+    nextRunAt,
+    adminSubject(request),
+    now,
+    now,
+  ).run();
+  await recordAdminAction(db, request, "ingestion_target_upserted", "source_ingestion_target", targetId, `source=${sourceKey};target=${targetKey}`);
+
+  return json({
+    id: targetId,
+    sourceKey,
+    targetKey,
+    placeId,
+    query,
+    enabled,
+    nextRunAt,
+  }, { storage: "d1", authz: "admin-role", auditPolicy: "admin_actions" }, 201);
+}
+
+async function deleteIngestionTarget(sourceKey: string, targetKey: string, request: Request, env: Env): Promise<Response> {
+  const db = requireD1(env);
+  const target = await db.prepare(`
+    SELECT t.id
+    FROM official_ingestion_targets t
+    JOIN data_sources ds ON ds.id = t.source_id
+    WHERE ds.source_key = ? AND t.target_key = ?
+  `).bind(sourceKey, targetKey).first<{ id: string }>();
+  if (!target) throw new HttpError(404, "INGESTION_TARGET_NOT_FOUND", "수집 대상이 없습니다.");
+
+  await db.prepare("DELETE FROM official_ingestion_targets WHERE id = ?").bind(target.id).run();
+  await recordAdminAction(db, request, "ingestion_target_deleted", "source_ingestion_target", target.id, `source=${sourceKey};target=${targetKey}`);
+  return json({ sourceKey, targetKey, deleted: true }, { storage: "d1", authz: "admin-role", auditPolicy: "admin_actions" });
+}
+
+async function runScheduledOfficialIngestion(controller: ScheduledController, env: Env): Promise<void> {
+  if (env.OFFICIAL_INGESTION_SCHEDULER_ENABLED !== "true" || !env.DB) {
+    return;
+  }
+
+  const db = env.DB;
+  const scheduledAtMs = Number.isFinite(controller.scheduledTime) ? controller.scheduledTime : Date.now();
+  const scheduledAt = new Date(scheduledAtMs).toISOString();
+  const { results = [] } = await db.prepare(`
+    SELECT
+      t.id,
+      t.target_key AS targetKey,
+      t.place_id AS placeId,
+      t.query_json AS queryJson,
+      t.enabled,
+      t.next_run_at AS nextRunAt,
+      t.lease_token AS leaseToken,
+      t.lease_expires_at AS leaseExpiresAt,
+      p.region_id AS regionId,
+      ds.id AS sourceId,
+      ds.source_key AS sourceKey,
+      ds.source_name AS sourceName,
+      ds.source_type AS sourceType,
+      ds.commercial_use_status AS commercialUseStatus,
+      ds.enabled AS sourceEnabled,
+      ds.enabled_regions_json AS enabledRegionsJson,
+      ds.health_status AS healthStatus,
+      ds.default_ttl_seconds AS defaultTtlSeconds,
+      ds.refresh_interval_seconds AS refreshIntervalSeconds
+    FROM official_ingestion_targets t
+    JOIN data_sources ds ON ds.id = t.source_id
+    JOIN places p ON p.id = t.place_id
+    WHERE t.enabled = 1
+      AND t.next_run_at <= ?
+      AND (t.lease_expires_at IS NULL OR t.lease_expires_at <= ?)
+      AND ds.source_key IN ('kma_weather', 'tour_api', 'national_parking', 'national_traffic', 'national_cctv')
+      AND ds.enabled = 1
+      AND ds.commercial_use_status IN ('allowed', 'allowed_with_attribution')
+      AND ds.health_status IN ('healthy', 'degraded')
+    ORDER BY t.next_run_at, t.target_key
+    LIMIT 10
+  `).bind(scheduledAt, scheduledAt).all<D1IngestionTargetRow>();
+
+  let processed = 0;
+  for (const target of results) {
+    const leaseToken = await claimIngestionTarget(db, target, scheduledAt);
+    if (!leaseToken) continue;
+    processed += 1;
+
+    if (!sourceAllowsRegion(target.enabledRegionsJson, target.regionId)) {
+      await finishIngestionTarget(db, target, "skipped", "SOURCE_REGION_DISABLED", new Date(scheduledAtMs), leaseToken);
+      continue;
+    }
+
+    try {
+      const query = parseStoredTargetQuery(target.queryJson);
+      const body = buildIngestionRequestBody(target.sourceKey, target.placeId, query, new Date(scheduledAtMs));
+      const response = await ingestOfficialSource(
+        target.sourceKey,
+        new Request(`https://internal.invalid/api/admin/sources/${target.sourceKey}/ingest`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+        env,
+      );
+      const result = await response.clone().json().catch(() => null) as { data?: { cacheStatus?: string } } | null;
+      const status = result?.data?.cacheStatus === "stale" ? "partial" : "succeeded";
+      await finishIngestionTarget(db, target, status, null, new Date(scheduledAtMs), leaseToken);
+    } catch (error) {
+      await finishIngestionTarget(db, target, "failed", scheduledIngestionErrorCode(error), new Date(scheduledAtMs), leaseToken);
+    }
+  }
+
+  console.log(JSON.stringify({
+    event: "official_ingestion_schedule",
+    cron: controller.cron,
+    scheduledAt,
+    selected: results.length,
+    processed,
+  }));
+}
+
+async function claimIngestionTarget(db: D1Database, target: D1IngestionTargetRow, scheduledAt: string): Promise<string | null> {
+  const leaseToken = crypto.randomUUID();
+  const leaseExpiresAt = new Date(Date.parse(scheduledAt) + 10 * 60 * 1_000).toISOString();
+  await db.prepare(`
+    UPDATE official_ingestion_targets
+    SET last_status = 'running', last_run_at = ?, lease_token = ?, lease_expires_at = ?, updated_at = ?
+    WHERE id = ?
+      AND enabled = 1
+      AND next_run_at <= ?
+      AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+  `).bind(scheduledAt, leaseToken, leaseExpiresAt, scheduledAt, target.id, scheduledAt, scheduledAt).run();
+  const claimed = await db.prepare("SELECT lease_token AS leaseToken FROM official_ingestion_targets WHERE id = ?").bind(target.id).first<{ leaseToken: string | null }>();
+  return claimed?.leaseToken === leaseToken ? leaseToken : null;
+}
+
+async function finishIngestionTarget(
+  db: D1Database,
+  target: D1IngestionTargetRow,
+  status: "succeeded" | "partial" | "failed" | "skipped",
+  errorCode: string | null,
+  now: Date,
+  leaseToken: string,
+): Promise<void> {
+  const nowIso = now.toISOString();
+  await db.prepare(`
+    UPDATE official_ingestion_targets
+    SET last_status = ?, last_error_code = ?, next_run_at = ?, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+    WHERE id = ? AND lease_token = ?
+  `).bind(
+    status,
+    errorCode,
+    nextIngestionAt(now, target.refreshIntervalSeconds, status),
+    nowIso,
+    target.id,
+    leaseToken,
+  ).run();
+}
+
+function parseStoredTargetQuery(raw: string): IngestionTargetQuery {
+  try {
+    return parseIngestionTargetQuery(JSON.parse(raw));
+  } catch {
+    throw new HttpError(500, "INGESTION_TARGET_CORRUPT", "수집 대상 설정을 읽을 수 없습니다.");
+  }
+}
+
+function sourceAllowsRegion(enabledRegionsJson: string, regionId: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(enabledRegionsJson);
+    return Array.isArray(parsed) && parsed.some((value) => value === "*" || value === regionId);
+  } catch {
+    return false;
+  }
+}
+
+function scheduledIngestionErrorCode(error: unknown): string {
+  if (error instanceof HttpError || error instanceof PublicDataGatewayError) return error.code;
+  if (error instanceof Error && /^[A-Z][A-Z0-9_]{2,79}$/.test(error.message)) return error.message;
+  return "INGESTION_FAILED";
+}
+
 async function ingestOfficialSource(sourceKey: string, request: Request, env: Env): Promise<Response> {
   if (!new Set(["kma_weather", "tour_api", "national_parking", "national_traffic", "national_cctv"]).has(sourceKey)) {
     throw new HttpError(404, "SOURCE_ADAPTER_NOT_FOUND", "등록된 수집 어댑터를 찾을 수 없습니다.");
@@ -1512,11 +2039,12 @@ async function ingestOfficialSource(sourceKey: string, request: Request, env: En
   const requestStartedAt = Date.now();
 
   try {
+    await reserveKmaProviderCall(db, runId, env, new Date(requestStartedAt));
     const result = await gateway.execute(adapter, query, {
       freshTtlSeconds: Math.min(sourceTtlSeconds, 300),
       staleTtlSeconds: sourceTtlSeconds,
       timeoutMs: 5_000,
-      maxAttempts: 2,
+      maxAttempts: 1,
     });
     if (!result.payloadHash) {
       throw new PublicDataGatewayError("SOURCE_INVALID_RESPONSE", "출처 응답 증거값을 생성하지 못했습니다.", false);
@@ -1620,24 +2148,112 @@ async function ingestOfficialSource(sourceKey: string, request: Request, env: En
     }, { storage: "d1", ingestionRunId: runId }, 201);
   } catch (error) {
     const finishedAt = new Date().toISOString();
-    const errorCode = error instanceof PublicDataGatewayError ? error.code : "INGESTION_FAILED";
+    const errorCode = error instanceof PublicDataGatewayError || error instanceof HttpError ? error.code : "INGESTION_FAILED";
+    const ingestionStatus = errorCode === "SOURCE_QUOTA_EXCEEDED" || errorCode === "KMA_DAILY_QUOTA_EXCEEDED" || errorCode === "KMA_BURST_QUOTA_EXCEEDED"
+      ? "quota_exceeded"
+      : "failed";
     await db.prepare(`
       UPDATE api_ingestion_runs
-      SET status = 'failed', error_code = ?, finished_at = ?
+      SET status = ?, error_code = ?, finished_at = ?
       WHERE id = ?
-    `).bind(errorCode, finishedAt, runId).run();
+    `).bind(ingestionStatus, errorCode, finishedAt, runId).run();
     await persistD1SourceHealth(db, {
       sourceId: source.id,
-      status: error instanceof PublicDataGatewayError && error.code === "SOURCE_QUOTA_EXCEEDED" ? "degraded" : "down",
+      status: ingestionStatus === "quota_exceeded" ? "degraded" : "down",
       message: "official source ingestion failed",
       responseTimeMs: Date.now() - requestStartedAt,
       checkedAt: finishedAt,
     });
+    if (error instanceof HttpError) {
+      throw error;
+    }
     if (error instanceof PublicDataGatewayError) {
       throw new HttpError(error.code === "SOURCE_QUOTA_EXCEEDED" ? 503 : 502, error.code, error.message);
     }
     throw error;
   }
+}
+
+async function reserveKmaProviderCall(db: D1Database, requestId: string, env: Env, now: Date): Promise<void> {
+  const dailyLimit = boundedIntegerEnv(
+    env.KMA_GLOBAL_DAILY_CALL_LIMIT,
+    defaultKmaGlobalDailyCallLimit,
+    maxKmaGlobalDailyCallLimit,
+  );
+  const burstLimit = boundedIntegerEnv(
+    env.KMA_BURST_MINUTE_CALL_LIMIT,
+    defaultKmaBurstMinuteCallLimit,
+    maxKmaBurstMinuteCallLimit,
+  );
+  if (dailyLimit === null || burstLimit === null) {
+    throw new HttpError(503, "KMA_QUOTA_GUARD_UNAVAILABLE", "기상청 API 사용량 보호 설정을 확인할 수 없어 호출을 중지했습니다.");
+  }
+
+  const scope = "provider:kma:ultra-nowcast";
+  const nowIso = now.toISOString();
+  const minuteStartedAt = new Date(now.getTime() - oneMinuteMs).toISOString();
+  const dayStartedAt = new Date(now.getTime() - oneDayMs).toISOString();
+  const expiresAt = new Date(now.getTime() + oneDayMs).toISOString();
+  const eventId = `usage_${await sha256Hex(`${scope}:${requestId}`)}`;
+  const providerFingerprint = `sha256:${await sha256Hex(`${scope}:server-owned`)}`;
+
+  try {
+    const inserted = await db.prepare(`
+      INSERT INTO metered_usage_events
+        (id, scope, actor_fingerprint, ip_fingerprint, resource_units, created_at, expires_at)
+      SELECT ?, ?, ?, ?, 1, ?, ?
+      WHERE (
+        SELECT COALESCE(SUM(resource_units), 0)
+        FROM metered_usage_events
+        WHERE scope = ? AND created_at >= ?
+      ) < ?
+      AND (
+        SELECT COALESCE(SUM(resource_units), 0)
+        FROM metered_usage_events
+        WHERE scope = ? AND created_at >= ?
+      ) < ?
+      RETURNING id
+    `).bind(
+      eventId,
+      scope,
+      providerFingerprint,
+      providerFingerprint,
+      nowIso,
+      expiresAt,
+      scope,
+      minuteStartedAt,
+      burstLimit,
+      scope,
+      dayStartedAt,
+      dailyLimit,
+    ).first<{ id: string }>();
+
+    if (inserted) return;
+
+    const dailyUsage = await db.prepare(`
+      SELECT COALESCE(SUM(resource_units), 0) AS count
+      FROM metered_usage_events
+      WHERE scope = ? AND created_at >= ?
+    `).bind(scope, dayStartedAt).first<{ count: number }>();
+    if ((dailyUsage?.count ?? dailyLimit) >= dailyLimit) {
+      throw new HttpError(429, "KMA_DAILY_QUOTA_EXCEEDED", "기상청 API의 일일 안전 한도에 도달했습니다.", {
+        retryAfterSeconds: 60 * 60,
+      });
+    }
+    throw new HttpError(429, "KMA_BURST_QUOTA_EXCEEDED", "기상청 API의 단기 호출 안전 한도에 도달했습니다.", {
+      retryAfterSeconds: 60,
+    });
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(503, "KMA_QUOTA_GUARD_UNAVAILABLE", "기상청 API 사용량 보호 상태를 확인할 수 없어 호출을 중지했습니다.");
+  }
+}
+
+function boundedIntegerEnv(raw: string | undefined, fallback: number, maximum: number): number | null {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) return null;
+  return parsed;
 }
 
 type StaticSourceMetadata = {
@@ -2257,6 +2873,7 @@ async function listPlaces(url: URL, env: Env): Promise<Response> {
   const spatialConflict = Boolean(bbox && radiusSearch && !spatialBBox);
   const d1Limit = radiusSearch ? Math.min(200, Math.max(limit * 4, limit)) : limit;
   const regionId = url.searchParams.get("region") ?? url.searchParams.get("regionId");
+  const regionIds = placeRegionIdsForScope(regionId);
   const areaId = url.searchParams.get("area") ?? url.searchParams.get("areaId");
   const categoryId = url.searchParams.get("category") ?? url.searchParams.get("categoryId");
   const query = url.searchParams.get("q")?.trim().toLocaleLowerCase("ko-KR");
@@ -2274,7 +2891,7 @@ async function listPlaces(url: URL, env: Env): Promise<Response> {
   if (env.DB) {
     const { sql, values } = d1PlacesQuery({
       bbox: spatialBBox,
-      regionId,
+      regionIds,
       areaId,
       categoryId,
       query,
@@ -2293,7 +2910,7 @@ async function listPlaces(url: URL, env: Env): Promise<Response> {
   }
 
   const filtered = filterPlacesByRadius(filterPlacesByBBox(seedPlaces, spatialBBox), radiusSearch)
-    .filter((place) => !regionId || place.regionId === regionId)
+    .filter((place) => placeRegionMatchesScope(place.regionId, regionId))
     .filter((place) => !areaId || place.areaId === areaId)
     .filter((place) => !categoryId || place.categoryId === categoryId)
     .filter((place) => !query || place.name.toLocaleLowerCase("ko-KR").includes(query))
@@ -2391,7 +3008,7 @@ async function getPlaceStatus(placeId: string, env: Env): Promise<Response> {
 async function resolvePlaceStatusData(placeId: string, env: Env): Promise<PlaceStatusData> {
   const now = new Date();
   if (env.DB) {
-    return recomputeD1PlaceStatus(env.DB, placeId, now);
+    return recomputeD1PlaceStatus(env.DB, placeId, now, false);
   }
 
   const currentSignals = liveSignals
@@ -2413,7 +3030,12 @@ async function resolvePlaceStatusData(placeId: string, env: Env): Promise<PlaceS
   };
 }
 
-async function recomputeD1PlaceStatus(db: D1Database, placeId: string, now: Date): Promise<PlaceStatusData> {
+async function recomputeD1PlaceStatus(
+  db: D1Database,
+  placeId: string,
+  now: Date,
+  persist = true,
+): Promise<PlaceStatusData> {
   const [profileAssignment, currentSignals] = await Promise.all([
     loadD1DecisionProfile(db, placeId),
     loadD1CurrentSignals(db, placeId, now),
@@ -2442,9 +3064,10 @@ async function recomputeD1PlaceStatus(db: D1Database, placeId: string, now: Date
     .map((signal) => signal.expiresAt)
     .filter((expiresAt): expiresAt is string => Boolean(expiresAt))
     .sort();
-  await db
-    .prepare(
-      `INSERT INTO aggregated_place_status (
+  if (persist) {
+    await db
+      .prepare(
+        `INSERT INTO aggregated_place_status (
         place_id,
         decision_profile_id,
         status,
@@ -2456,33 +3079,34 @@ async function recomputeD1PlaceStatus(db: D1Database, placeId: string, now: Date
         computed_at,
         expires_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(place_id) DO UPDATE SET
-        decision_profile_id = excluded.decision_profile_id,
-        status = excluded.status,
-        confidence_score = excluded.confidence_score,
-        current_signals_json = excluded.current_signals_json,
-        missing_dimensions_json = excluded.missing_dimensions_json,
-        conflicting_dimensions_json = excluded.conflicting_dimensions_json,
-        reason_codes_json = excluded.reason_codes_json,
-        computed_at = excluded.computed_at,
-        expires_at = excluded.expires_at,
-        updated_at = excluded.updated_at`,
-    )
-    .bind(
-      placeId,
-      profileAssignment.profileId,
-      aggregated.status,
-      aggregated.confidenceScore,
-      JSON.stringify(publicSignals),
-      JSON.stringify(aggregated.missingRequiredDimensions),
-      JSON.stringify(aggregated.conflictingDimensions),
-      JSON.stringify(aggregated.reasonCodes),
-      aggregated.computedAt,
-      signalExpiries[0] ?? null,
-      aggregated.computedAt,
-    )
-    .run();
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(place_id) DO UPDATE SET
+          decision_profile_id = excluded.decision_profile_id,
+          status = excluded.status,
+          confidence_score = excluded.confidence_score,
+          current_signals_json = excluded.current_signals_json,
+          missing_dimensions_json = excluded.missing_dimensions_json,
+          conflicting_dimensions_json = excluded.conflicting_dimensions_json,
+          reason_codes_json = excluded.reason_codes_json,
+          computed_at = excluded.computed_at,
+          expires_at = excluded.expires_at,
+          updated_at = excluded.updated_at`,
+      )
+      .bind(
+        placeId,
+        profileAssignment.profileId,
+        aggregated.status,
+        aggregated.confidenceScore,
+        JSON.stringify(publicSignals),
+        JSON.stringify(aggregated.missingRequiredDimensions),
+        JSON.stringify(aggregated.conflictingDimensions),
+        JSON.stringify(aggregated.reasonCodes),
+        aggregated.computedAt,
+        signalExpiries[0] ?? null,
+        aggregated.computedAt,
+      )
+      .run();
+  }
 
   return {
     contractVersion: 2,
@@ -2571,7 +3195,8 @@ async function loadD1CurrentSignals(db: D1Database, placeId: string, now: Date):
       WHERE ls.place_id = ?
         AND ls.is_publicly_visible = 1
         AND ls.observed_at <= ?
-        AND (ls.expires_at IS NULL OR ls.expires_at > ?)
+        AND ls.expires_at IS NOT NULL
+        AND ls.expires_at > ?
         AND ls.source_type != 'official_static'
         AND ds.enabled = 1
         AND ds.commercial_use_status IN ('allowed', 'allowed_with_attribution')
@@ -2863,6 +3488,7 @@ function isRankingRecord(value: unknown): value is RankingRecord {
 async function listRankings(url: URL, path: string, env: Env): Promise<Response> {
   const route = parseRankingRoute(path);
   const regionId = route.regionId ?? url.searchParams.get("region") ?? url.searchParams.get("regionId");
+  const regionIds = placeRegionIdsForScope(regionId);
   const areaId = route.areaId ?? url.searchParams.get("area") ?? url.searchParams.get("areaId");
   const categoryId = route.categoryId ?? url.searchParams.get("category") ?? url.searchParams.get("categoryId");
   const bbox = parseBBox(url.searchParams.get("bbox"));
@@ -2881,7 +3507,7 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
     const db = env.DB;
     const { sql, values, limit: d1Limit } = d1PlacesQuery({
       bbox,
-      regionId,
+      regionIds,
       areaId,
       categoryId,
       query: null,
@@ -2907,9 +3533,10 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
   }
 
   const scopedPlaces = filterPlacesByBBox(seedPlaces, bbox)
+    .filter((place) => placeRegionMatchesScope(place.regionId, regionId))
     .filter((place) => !areaId || place.areaId === areaId)
     .filter((place) => !categoryId || place.categoryId === categoryId);
-  const ranked = rankRegionPlaces(scopedPlaces, regionId, limit);
+  const ranked = rankRegionPlaces(scopedPlaces, null, limit);
   const rankings: RankingRecord[] = ranked.map((place, index) => rankingRecordForPlace(place, index + 1, memoryRankingCounts(place.id)));
   const meta = {
     limit: rankings.length,
@@ -2927,6 +3554,7 @@ async function listRankings(url: URL, path: string, env: Env): Promise<Response>
 async function listPosts(url: URL, session: AnonymousSession, env: Env): Promise<Response> {
   const placeId = url.searchParams.get("placeId");
   const regionId = url.searchParams.get("region") ?? url.searchParams.get("regionId");
+  const regionIds = placeRegionIdsForScope(regionId);
   const hashtagName = normalizeHashtagName(url.searchParams.get("hashtagName") ?? "");
   const limit = clampLimit(url.searchParams.get("limit"), 200, 100);
 
@@ -2948,10 +3576,7 @@ async function listPosts(url: URL, session: AnonymousSession, env: Env): Promise
       where.push("po.place_id = ?");
       values.push(placeId);
     }
-    if (regionId) {
-      where.push("pl.region_id = ?");
-      values.push(regionId);
-    }
+    appendRegionScopeWhere(where, values, "pl.region_id", regionIds);
     values.push(limit);
 
     const { results = [] } = await env.DB
@@ -2993,9 +3618,9 @@ async function listPosts(url: URL, session: AnonymousSession, env: Env): Promise
   const filtered = posts
     .filter((post) => !post.hiddenAt)
     .filter((post) => !placeId || post.placeId === placeId)
-    .filter((post) => !regionId || findPlaceRecord(post.placeId).regionId === regionId)
+    .filter((post) => placeRegionMatchesScope(findPlaceRecord(post.placeId).regionId, regionId))
     .filter((post) => !hashtagName || post.hashtagNames.includes(hashtagName));
-  const data = filtered.map((post) => publicPost(post, findPlaceRecord(post.placeId)));
+  const data = filtered.map((post) => publicPost(post, findPlaceRecord(post.placeId), env));
 
   return json(rankPostsForFeed(data).slice(0, limit), { limit, regionId: regionId ?? "all", storage: "memory-fallback" });
 }
@@ -3019,12 +3644,14 @@ async function createPost(request: Request, session: AnonymousSession, env: Env,
   }
 
   const place = await resolvePlaceRecord(placeId, env);
+  const rewardsEnabled = await isFeatureEnabled(env, "REWARDS_ENABLED", place.regionId);
   const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
   if (env.DB) {
     await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
   }
   const verifiedRadiusM = verifiedRadiusForFieldReport(place, clientLocation);
   const createdAt = new Date().toISOString();
+  const expiresAt = postExpiryForCreatedAt(createdAt);
   const recommendedHashtags = recommendPostHashtags({ place, crowdLevel, parkingStatus, lineStatus, weatherFeel });
   const hashtagNames = uniqueHashtagNames([...requestedHashtags, ...recommendedHashtags]).slice(0, 5);
   const post: PostRecord = {
@@ -3047,6 +3674,7 @@ async function createPost(request: Request, session: AnonymousSession, env: Env,
     hashtagNames,
     hiddenAt: null,
     createdAt,
+    expiresAt,
   };
 
   if (env.DB) {
@@ -3094,7 +3722,7 @@ async function createPost(request: Request, session: AnonymousSession, env: Env,
       }),
     );
 
-    return json(postSubmitResponse(post, place, recommendedHashtags), { anonymousUserPolicy: "hashed-session-id", storage: "d1" }, 201);
+    return json(postSubmitResponse(post, place, recommendedHashtags, rewardsEnabled, env), { anonymousUserPolicy: "hashed-session-id", storage: "d1" }, 201);
   }
 
   posts.unshift(post);
@@ -3107,7 +3735,7 @@ async function createPost(request: Request, session: AnonymousSession, env: Env,
     }),
   );
 
-  return json(postSubmitResponse(post, place, recommendedHashtags), { anonymousUserPolicy: "header-or-cookie-session", storage: "memory-fallback" }, 201);
+  return json(postSubmitResponse(post, place, recommendedHashtags, rewardsEnabled, env), { anonymousUserPolicy: "header-or-cookie-session", storage: "memory-fallback" }, 201);
 }
 
 async function listHashtags(env: Env): Promise<Response> {
@@ -3122,7 +3750,10 @@ async function listHashtags(env: Env): Promise<Response> {
 async function listQuestions(url: URL, env: Env): Promise<Response> {
   const placeId = url.searchParams.get("placeId");
   const regionId = url.searchParams.get("region") ?? url.searchParams.get("regionId");
+  const regionIds = placeRegionIdsForScope(regionId);
   const limit = clampLimit(url.searchParams.get("limit"), 200, 100);
+  const placeRegionId = placeId ? (await resolvePlaceRecord(placeId, env)).regionId : undefined;
+  await requireFeatureEnabled(env, "QNA_ENABLED", placeRegionId ?? regionId ?? undefined);
 
   if (env.DB) {
     const where = ["pl.is_active = 1", "pl.coordinate_status = 'verified'"];
@@ -3131,10 +3762,7 @@ async function listQuestions(url: URL, env: Env): Promise<Response> {
       where.push("q.place_id = ?");
       values.push(placeId);
     }
-    if (regionId) {
-      where.push("pl.region_id = ?");
-      values.push(regionId);
-    }
+    appendRegionScopeWhere(where, values, "pl.region_id", regionIds);
     values.push(limit);
 
     const { results = [] } = await env.DB
@@ -3163,7 +3791,7 @@ async function listQuestions(url: URL, env: Env): Promise<Response> {
 
   const data = questions
     .filter((question) => !placeId || question.placeId === placeId)
-    .filter((question) => !regionId || findPlaceRecord(question.placeId).regionId === regionId)
+    .filter((question) => placeRegionMatchesScope(findPlaceRecord(question.placeId).regionId, regionId))
     .slice(0, limit)
     .map(publicQuestion);
 
@@ -3185,6 +3813,7 @@ async function createQuestion(request: Request, session: AnonymousSession, env: 
   }
 
   const place = await resolvePlaceRecord(placeId, env);
+  await requireFeatureEnabled(env, "QNA_ENABLED", place.regionId);
   const creditCost = questionCreditCost(questionType);
   if (availableCredits < creditCost) {
     throw new HttpError(402, "INSUFFICIENT_CREDITS", "질문권이 부족합니다.", {
@@ -3228,6 +3857,7 @@ async function createQuestion(request: Request, session: AnonymousSession, env: 
 }
 
 async function listMyQuestions(session: AnonymousSession, env: Env): Promise<Response> {
+  await requireAnyFeatureEnabled(env, "QNA_ENABLED");
   if (env.DB) {
     const anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
     const { results = [] } = await env.DB
@@ -3256,6 +3886,56 @@ async function listMyQuestions(session: AnonymousSession, env: Env): Promise<Res
   const data = questions.filter((question) => question.anonymousUserId === session.id).map(publicMyQuestion);
 
   return json(data, { limit: data.length, storage: "memory-fallback" });
+}
+
+async function isFeatureEnabled(env: Env, key: FeatureFlagKey, regionCode?: string): Promise<boolean> {
+  if (!env.DB) {
+    return DEFAULT_FEATURE_FLAGS[key];
+  }
+
+  const { results = [] } = await env.DB
+    .prepare(
+      `SELECT
+        flag_key AS flagKey,
+        enabled,
+        scope_type AS scopeType,
+        scope_key AS scopeKey
+      FROM feature_flags
+      WHERE flag_key = ?
+        AND (scope_type = 'global' OR (scope_type = 'region' AND scope_key = ?))`,
+    )
+    .bind(key, regionCode ?? "")
+    .all<D1FeatureFlagRow>();
+  const values = results.map<FeatureFlagValue>((row) => ({
+    key: row.flagKey,
+    enabled: row.enabled === 1,
+    scopeType: row.scopeType,
+    scopeKey: row.scopeKey,
+  }));
+  return resolveFeatureFlag(key, values, regionCode);
+}
+
+async function requireFeatureEnabled(env: Env, key: FeatureFlagKey, regionCode?: string): Promise<void> {
+  if (!(await isFeatureEnabled(env, key, regionCode))) {
+    throw new HttpError(404, "FEATURE_DISABLED", "현재 사용할 수 없는 기능입니다.");
+  }
+}
+
+async function requireAnyFeatureEnabled(env: Env, key: FeatureFlagKey): Promise<void> {
+  if (!env.DB) {
+    if (DEFAULT_FEATURE_FLAGS[key]) {
+      return;
+    }
+    throw new HttpError(404, "FEATURE_DISABLED", "현재 사용할 수 없는 기능입니다.");
+  }
+
+  const enabled = await env.DB
+    .prepare("SELECT 1 AS enabled FROM feature_flags WHERE flag_key = ? AND enabled = 1 LIMIT 1")
+    .bind(key)
+    .first<{ enabled: number }>();
+  if (!enabled) {
+    throw new HttpError(404, "FEATURE_DISABLED", "현재 사용할 수 없는 기능입니다.");
+  }
 }
 
 async function listComments(url: URL, session: AnonymousSession, env: Env): Promise<Response> {
@@ -3495,46 +4175,419 @@ function photoToPublicPhoto(photo: PhotoRecord, requestUrl: URL, env: Env, curre
   };
 }
 
-async function createPhotoUploadUrl(request: Request, session: AnonymousSession, env: Env): Promise<Response> {
-  const body = await readJson(request);
-  const placeId = stringField(body, "placeId", 80);
-  const mimeType = stringField(body, "mimeType", 40);
-  const place = await resolvePlaceRecord(placeId, env);
-  if (env.DB) {
-    const anonymousUserId = await ensureD1AnonymousUser(env.DB, session);
-    await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
+function photoUploadTicketKey(uploadId: string): string {
+  return `photos/_tickets/${uploadId}`;
+}
+
+function photoUploadStagingKey(uploadId: string): string {
+  return `photos/_uploads/${uploadId}`;
+}
+
+function photoUploadIdFromHeader(request: Request): string {
+  const uploadId = request.headers.get("x-silsigan-upload-id")?.trim() ?? "";
+  if (!/^upload_[a-zA-Z0-9-]{8,100}$/.test(uploadId)) {
+    throw new HttpError(400, "PHOTO_UPLOAD_INVALID", "사진 업로드 티켓이 올바르지 않습니다.");
   }
+
+  return uploadId;
+}
+
+function photoIdempotencyKeyFromRequest(request: Request, env: Env): string | null {
+  if (!photoUploadsExplicitlyEnabled(env)) {
+    return null;
+  }
+  const value = request.headers.get("idempotency-key")?.trim() ?? "";
+  if (!value) {
+    return null;
+  }
+
+  if (value.length < 16 || value.length > 128 || !/^[a-zA-Z0-9._:-]+$/.test(value)) {
+    throw new HttpError(400, "PHOTO_IDEMPOTENCY_KEY_INVALID", "사진 업로드 재시도 키가 올바르지 않습니다.");
+  }
+
+  return value;
+}
+
+async function photoIdempotencyKeyHash(
+  anonymousUserId: string,
+  idempotencyKey: string,
+  env: Env,
+): Promise<string> {
+  const configuredSecret = env.COST_GUARD_HASH_SECRET?.trim() ?? "";
+  if (requiresPersistentStore(env) && configuredSecret.length < 32) {
+    throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "비용 보호 설정을 확인할 수 없어 요청을 중지했습니다.");
+  }
+  const hashSecret = configuredSecret || "local-development-cost-guard-only";
+  return `sha256:${await sha256Hex(`${hashSecret}:photo-idempotency:${anonymousUserId}:${idempotencyKey}`)}`;
+}
+
+async function getD1PhotoUploadSessionByIdempotency(
+  db: D1Database,
+  anonymousUserId: string,
+  idempotencyKeyHash: string,
+): Promise<D1PhotoUploadSessionRow | null> {
+  return db
+    .prepare(
+      `SELECT
+        s.upload_id AS uploadId,
+        s.place_id AS placeId,
+        s.anonymous_user_id AS anonymousUserId,
+        s.mime_type AS mimeType,
+        s.storage_key AS storageKey,
+        s.staging_key AS stagingKey,
+        s.status,
+        s.expires_at AS expiresAt
+      FROM photo_upload_idempotency_keys i
+      JOIN photo_upload_sessions s ON s.upload_id = i.upload_id
+      WHERE i.anonymous_user_id = ? AND i.idempotency_key_hash = ?
+      LIMIT 1`,
+    )
+    .bind(anonymousUserId, idempotencyKeyHash)
+    .first<D1PhotoUploadSessionRow>();
+}
+
+function existingPhotoUploadTicket(
+  uploadSession: D1PhotoUploadSessionRow,
+  place: PlaceRecord,
+  mimeType: PhotoRecord["mimeType"],
+  session: AnonymousSession,
+): Response {
+  if (uploadSession.placeId !== place.id || uploadSession.mimeType !== mimeType) {
+    throw new HttpError(409, "PHOTO_IDEMPOTENCY_CONFLICT", "같은 재시도 키를 다른 사진 요청에 사용할 수 없습니다.");
+  }
+  if (Date.parse(uploadSession.expiresAt) <= Date.now()) {
+    throw new HttpError(410, "PHOTO_UPLOAD_EXPIRED", "사진 업로드 재시도 키가 만료되었습니다.");
+  }
+  if (uploadSession.status !== "ticketed") {
+    throw new HttpError(409, "PHOTO_UPLOAD_REPLAYED", "이미 사용된 사진 업로드 재시도 키입니다.");
+  }
+
+  return photoUploadTicketResponse(
+    uploadSession.uploadId,
+    uploadSession.storageKey,
+    uploadSession.expiresAt,
+    mimeType,
+    session,
+    true,
+  );
+}
+
+function photoHeaderValue(request: Request, name: string, maxLength: number): string {
+  const value = request.headers.get(name)?.trim() ?? "";
+  if (!value || value.length > maxLength) {
+    throw new HttpError(400, "PHOTO_UPLOAD_INVALID", "사진 업로드 헤더가 올바르지 않습니다.");
+  }
+
+  return value;
+}
+
+function photoStorageKey(place: PlaceRecord, uploadId: string, mimeType: PhotoRecord["mimeType"]): string {
+  const extension = mimeType === "image/jpeg" ? "jpg" : "webp";
+  const now = new Date();
+  return `photos/${place.regionId}/${place.id}/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${uploadId}.${extension}`;
+}
+
+async function uploadPhotoBytes(request: Request, session: AnonymousSession, env: Env): Promise<Response> {
+  if (!env.PHOTOS) {
+    throw new HttpError(503, "PHOTO_STORAGE_UNAVAILABLE", "사진 저장소가 아직 연결되지 않았습니다.");
+  }
+
+  const uploadId = photoUploadIdFromHeader(request);
+  const placeId = photoHeaderValue(request, "x-silsigan-place-id", 80);
+  const mimeType = photoHeaderValue(request, "content-type", 40).split(";", 1)[0] as PhotoRecord["mimeType"];
   if (mimeType !== "image/webp" && mimeType !== "image/jpeg") {
     throw new HttpError(400, "PHOTO_MIME_TYPE", "WebP 또는 JPEG 사진만 업로드할 수 있습니다.");
   }
 
+  const place = await resolvePlaceRecord(placeId, env);
+  const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
+  if (env.DB) {
+    await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
+  }
+
+  const uploadSession = env.DB
+    ? await env.DB
+        .prepare(
+          `SELECT
+            upload_id AS uploadId,
+            place_id AS placeId,
+            anonymous_user_id AS anonymousUserId,
+            mime_type AS mimeType,
+            storage_key AS storageKey,
+            staging_key AS stagingKey,
+            status,
+            expires_at AS expiresAt
+          FROM photo_upload_sessions
+          WHERE upload_id = ?
+          LIMIT 1`,
+        )
+        .bind(uploadId)
+        .first<D1PhotoUploadSessionRow>()
+    : null;
+  const ticket = env.DB ? null : await env.PHOTOS.get(photoUploadTicketKey(uploadId));
+  const ticketMetadata = uploadSession ?? ticket?.customMetadata ?? {};
+  if ((!uploadSession && !ticket) || ticketMetadata.anonymousUserId !== anonymousUserId || ticketMetadata.placeId !== place.id) {
+    throw new HttpError(403, "PHOTO_UPLOAD_FORBIDDEN", "유효한 사진 업로드 티켓이 아닙니다.");
+  }
+
+  const expiresAt = Date.parse(ticketMetadata.expiresAt ?? "");
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    if (!env.DB) {
+      await env.PHOTOS.delete(photoUploadTicketKey(uploadId));
+    }
+    throw new HttpError(410, "PHOTO_UPLOAD_EXPIRED", "사진 업로드 티켓이 만료되었습니다.");
+  }
+
+  if (ticketMetadata.mimeType !== mimeType) {
+    throw new HttpError(400, "PHOTO_MIME_TYPE", "업로드 티켓의 사진 형식과 파일 형식이 다릅니다.");
+  }
+
+  if (env.DB) {
+    const claimed = await env.DB
+      .prepare(
+        "UPDATE photo_upload_sessions SET status = 'uploaded', updated_at = ? WHERE upload_id = ? AND status = 'ticketed' RETURNING upload_id AS uploadId",
+      )
+      .bind(new Date().toISOString(), uploadId)
+      .first<{ uploadId: string }>();
+    if (!claimed) {
+      throw new HttpError(409, "PHOTO_UPLOAD_REPLAYED", "이미 사용된 사진 업로드 티켓입니다.");
+    }
+  } else {
+    await env.PHOTOS.delete(photoUploadTicketKey(uploadId));
+  }
+
+  const declaredLength = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declaredLength) && declaredLength > PHOTO_MAX_BYTES) {
+    throw new HttpError(413, "PHOTO_SIZE_LIMIT", "사진 크기 제한을 초과했습니다.");
+  }
+
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength < 4 || bytes.byteLength > PHOTO_MAX_BYTES) {
+    throw new HttpError(413, "PHOTO_SIZE_LIMIT", "사진 크기 제한을 초과했습니다.");
+  }
+  if (mimeType === "image/jpeg") {
+    assertJpegBytes(bytes);
+  } else {
+    assertWebpBytes(bytes);
+  }
+
+  const stagingKey = uploadSession?.stagingKey ?? photoUploadStagingKey(uploadId);
+  await env.PHOTOS.put(stagingKey, bytes.buffer, {
+    httpMetadata: { contentType: mimeType },
+    customMetadata: {
+      uploadId,
+      placeId: place.id,
+      anonymousUserId,
+      mimeType,
+      byteSize: String(bytes.byteLength),
+      storageKey: ticketMetadata.storageKey ?? photoStorageKey(place, uploadId, mimeType),
+      expiresAt: ticketMetadata.expiresAt,
+    },
+  });
+
+  return json({ uploadId, uploaded: true, expiresAt: ticketMetadata.expiresAt }, { storage: "r2-private-staging" }, 201);
+}
+
+async function createPhotoUploadUrl(
+  request: Request,
+  session: AnonymousSession,
+  env: Env,
+  idempotencyKey: string | null,
+): Promise<Response> {
+  const body = await readJson(request);
+  const placeId = stringField(body, "placeId", 80);
+  const mimeType = stringField(body, "mimeType", 40);
+  const place = await resolvePlaceRecord(placeId, env);
+  if (mimeType !== "image/webp" && mimeType !== "image/jpeg") {
+    throw new HttpError(400, "PHOTO_MIME_TYPE", "WebP 또는 JPEG 사진만 업로드할 수 있습니다.");
+  }
+
+  const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
+  if (env.DB) {
+    await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
+  }
+  const idempotencyKeyHash = idempotencyKey ? await photoIdempotencyKeyHash(anonymousUserId, idempotencyKey, env) : null;
+  if (env.DB && idempotencyKeyHash) {
+    const existing = await getD1PhotoUploadSessionByIdempotency(env.DB, anonymousUserId, idempotencyKeyHash);
+    if (existing) {
+      return existingPhotoUploadTicket(existing, place, mimeType, session);
+    }
+  }
+
   const now = new Date();
   const uploadId = `upload_${crypto.randomUUID()}`;
-  const extension = mimeType === "image/jpeg" ? "jpg" : "webp";
-  const storageKey = `photos/${place.regionId}/${place.id}/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}.${extension}`;
+  const storageKey = photoStorageKey(place, uploadId, mimeType);
+  const expiresAt = new Date(now.getTime() + photoUploadTtlSeconds * 1000).toISOString();
 
+  if (env.DB) {
+    const globalStoredLimit = resolvePhotoGlobalStoredLimit(env);
+    if (globalStoredLimit === null && requiresPersistentStore(env)) {
+      throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "사진 저장 용량 보호 설정을 확인할 수 없어 요청을 중지했습니다.");
+    }
+    let inserted: { uploadId: string } | null;
+    try {
+      inserted = await env.DB
+        .prepare(
+          `INSERT INTO photo_upload_sessions
+            (upload_id, anonymous_user_id, place_id, mime_type, storage_key, staging_key, status, expires_at)
+          SELECT ?, ?, ?, ?, ?, ?, 'ticketed', ?
+          WHERE (
+            SELECT COUNT(*) FROM photos WHERE deleted_at IS NULL
+          ) + (
+            SELECT COUNT(*) FROM photo_upload_sessions WHERE expires_at > ?
+          ) < ?
+          AND (
+            SELECT COUNT(*)
+            FROM photo_upload_sessions
+            WHERE anonymous_user_id = ? AND expires_at > ?
+          ) < ?
+          RETURNING upload_id AS uploadId`,
+        )
+        .bind(
+          uploadId,
+          anonymousUserId,
+          place.id,
+          mimeType,
+          storageKey,
+          photoUploadStagingKey(uploadId),
+          expiresAt,
+          now.toISOString(),
+          globalStoredLimit ?? defaultPhotoGlobalStoredLimit,
+          anonymousUserId,
+          now.toISOString(),
+          photoOutstandingSessionLimit,
+        )
+        .first<{ uploadId: string }>();
+    } catch (error) {
+      if (idempotencyKeyHash) {
+        const existing = await getD1PhotoUploadSessionByIdempotency(env.DB, anonymousUserId, idempotencyKeyHash);
+        if (existing) {
+          return existingPhotoUploadTicket(existing, place, mimeType, session);
+        }
+      }
+      throw error;
+    }
+    if (!inserted) {
+      const outstanding = await env.DB
+        .prepare("SELECT COUNT(*) AS count FROM photo_upload_sessions WHERE anonymous_user_id = ? AND expires_at > ?")
+        .bind(anonymousUserId, now.toISOString())
+        .first<D1CountRow>();
+      if ((outstanding?.count ?? 0) >= photoOutstandingSessionLimit) {
+        throw new HttpError(429, "PHOTO_UPLOAD_QUEUE_FULL", "완료되지 않은 사진 업로드가 있어 새 요청을 잠시 중지했습니다.");
+      }
+      throw new HttpError(429, "PHOTO_STORAGE_BUDGET_EXHAUSTED", "무료 사진 저장 한도에 도달해 새 업로드를 잠시 중지했습니다.");
+    }
+    if (idempotencyKeyHash) {
+      try {
+        await env.DB
+          .prepare(
+            "INSERT INTO photo_upload_idempotency_keys (anonymous_user_id, idempotency_key_hash, upload_id) VALUES (?, ?, ?)",
+          )
+          .bind(anonymousUserId, idempotencyKeyHash, uploadId)
+          .run();
+      } catch (error) {
+        await env.DB.prepare("DELETE FROM photo_upload_sessions WHERE upload_id = ?").bind(uploadId).run();
+        const existing = await getD1PhotoUploadSessionByIdempotency(env.DB, anonymousUserId, idempotencyKeyHash);
+        if (existing) {
+          return existingPhotoUploadTicket(existing, place, mimeType, session);
+        }
+        throw error;
+      }
+    }
+  } else if (env.PHOTOS) {
+    await env.PHOTOS.put(photoUploadTicketKey(uploadId), "", {
+      customMetadata: {
+        uploadId,
+        placeId: place.id,
+        anonymousUserId,
+        mimeType,
+        storageKey,
+        expiresAt,
+      },
+    });
+  }
+
+  return photoUploadTicketResponse(uploadId, storageKey, expiresAt, mimeType, session, false);
+}
+
+function photoUploadTicketResponse(
+  uploadId: string,
+  storageKey: string,
+  expiresAt: string,
+  mimeType: PhotoRecord["mimeType"],
+  session: AnonymousSession,
+  idempotentReplay: boolean,
+): Response {
   return json(
     {
       uploadId,
       method: "PUT",
-      uploadUrl: "/api/photos/complete",
+      uploadUrl: "/api/photos/upload",
       storageKey,
+      expiresAt,
       headers: {
         "content-type": mimeType,
         "x-silsigan-anon-id": session.id,
       },
     },
     {
+      idempotentReplay,
       r2Policy: {
-        maxBytes: 3 * 1024 * 1024,
-        maxDimension: 1280,
+        maxBytes: PHOTO_MAX_BYTES,
+        maxDimension: PHOTO_MAX_DIMENSION,
         originalFilenameStored: false,
         gpsExifStripped: true,
         processing: "worker-strips-metadata-before-r2-put",
       },
     },
-    201,
+    idempotentReplay ? 200 : 201,
   );
+}
+
+type StagedPhotoUpload = {
+  bytes: Uint8Array;
+  storageKey: string;
+};
+
+async function consumeStagedPhotoUpload(
+  uploadId: string,
+  placeId: string,
+  mimeType: PhotoRecord["mimeType"],
+  anonymousUserId: string,
+  env: Env,
+): Promise<StagedPhotoUpload | null> {
+  if (!env.PHOTOS) {
+    return null;
+  }
+
+  const stagingKey = photoUploadStagingKey(uploadId);
+  const object = await env.PHOTOS.get(stagingKey);
+  const metadata = object?.customMetadata ?? {};
+  if (!object) {
+    throw new HttpError(404, "PHOTO_UPLOAD_NOT_FOUND", "사진 업로드 파일을 찾을 수 없습니다.");
+  }
+  if (metadata.anonymousUserId !== anonymousUserId || metadata.placeId !== placeId) {
+    throw new HttpError(403, "PHOTO_UPLOAD_FORBIDDEN", "내 사진 업로드만 완료할 수 있습니다.");
+  }
+
+  const expiresAt = Date.parse(metadata.expiresAt ?? "");
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    await env.PHOTOS.delete(stagingKey);
+    throw new HttpError(410, "PHOTO_UPLOAD_EXPIRED", "사진 업로드가 만료되었습니다.");
+  }
+  if (metadata.mimeType !== mimeType || metadata.uploadId !== uploadId || !metadata.storageKey) {
+    await env.PHOTOS.delete(stagingKey);
+    throw new HttpError(400, "PHOTO_UPLOAD_INVALID", "사진 업로드 정보가 올바르지 않습니다.");
+  }
+
+  const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
+  if (metadata.byteSize !== String(bytes.byteLength)) {
+    await env.PHOTOS.delete(stagingKey);
+    throw new HttpError(400, "PHOTO_SIZE_MISMATCH", "업로드된 사진 크기를 확인할 수 없습니다.");
+  }
+
+  await env.PHOTOS.delete(stagingKey);
+  return { bytes, storageKey: metadata.storageKey };
 }
 
 async function completePhoto(request: Request, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -3562,10 +4615,42 @@ async function completePhoto(request: Request, session: AnonymousSession, env: E
     clientReencoded: booleanField(body, "clientReencoded"),
     originalFilename: optionalStringField(body, "originalFilename", 255),
   });
+  const imageBase64 = optionalStringField(body, "imageBase64", Math.ceil(PHOTO_MAX_BYTES * 1.4)) ?? null;
+  // A persisted upload-session is mandatory for the real binary R2 path. The
+  // DB-only local fixture path has no R2 object to consume and remains useful
+  // for moderation/domain tests; named staging/production environments always
+  // bind PHOTOS and therefore cannot bypass this check.
+  if (env.DB && env.PHOTOS && !imageBase64) {
+    const uploadSession = await env.DB
+      .prepare(
+        `SELECT upload_id AS uploadId
+         FROM photo_upload_sessions
+         WHERE upload_id = ?
+           AND anonymous_user_id = ?
+           AND place_id = ?
+           AND mime_type = ?
+           AND status = 'uploaded'
+           AND expires_at > ?
+         LIMIT 1`,
+      )
+      .bind(uploadId, anonymousUserId, place.id, requestedMimeType, new Date().toISOString())
+      .first<{ uploadId: string }>();
+    if (!uploadSession) {
+      throw new HttpError(404, "PHOTO_UPLOAD_NOT_FOUND", "완료할 수 있는 사진 업로드를 찾을 수 없습니다.");
+    }
+  }
+  await enforcePhotoTransformMonthlyLimit(request, anonymousUserId, uploadId, env);
+  const stagedUpload = imageBase64
+    ? null
+    : await consumeStagedPhotoUpload(uploadId, placeId, requestedMimeType, anonymousUserId, env);
+  if (stagedUpload && stagedUpload.bytes.byteLength !== requestedByteSize) {
+    throw new HttpError(400, "PHOTO_SIZE_MISMATCH", "업로드된 사진 크기와 설명된 크기가 다릅니다.");
+  }
+  const storageKey = stagedUpload?.storageKey ?? result.storageKey;
   const sanitizedPhoto = env.PHOTOS
     ? await processPhotoForR2(
-        optionalStringField(body, "imageBase64", Math.ceil(PHOTO_MAX_BYTES * 1.4)) ?? null,
-        result.storageKey,
+        stagedUpload?.bytes ?? imageBase64,
+        storageKey,
         requestedMimeType,
         requestedWidth,
         requestedHeight,
@@ -3581,7 +4666,7 @@ async function completePhoto(request: Request, session: AnonymousSession, env: E
     id: `photo_${crypto.randomUUID()}`,
     placeId,
     anonymousUserId,
-    storageKey: result.storageKey,
+    storageKey,
     mimeType,
     byteSize,
     width: requestedWidth,
@@ -3604,7 +4689,7 @@ async function completePhoto(request: Request, session: AnonymousSession, env: E
       }
     }
 
-    await env.PHOTOS.put(result.storageKey, arrayBufferForBytes(sanitizedPhoto.bytes), {
+    await env.PHOTOS.put(storageKey, arrayBufferForBytes(sanitizedPhoto.bytes), {
       httpMetadata: { contentType: photo.mimeType },
       customMetadata: {
         placeId,
@@ -3621,50 +4706,66 @@ async function completePhoto(request: Request, session: AnonymousSession, env: E
   }
 
   if (env.DB) {
-    await env.DB
-      .prepare(
-        `INSERT INTO photos
-          (id, place_id, anonymous_user_id, r2_key, mime_type, byte_size, width, height, image_hash, duplicate_status, status, deleted_at, hidden_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
-      )
-      .bind(
+    try {
+      await env.DB
+        .prepare(
+          `INSERT INTO photos
+            (id, place_id, anonymous_user_id, r2_key, mime_type, byte_size, width, height, image_hash, duplicate_status, status, deleted_at, hidden_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
+        )
+        .bind(
+          photo.id,
+          photo.placeId,
+          photo.anonymousUserId,
+          photo.storageKey,
+          photo.mimeType,
+          photo.byteSize,
+          photo.width,
+          photo.height,
+          imageHash,
+          imageHash ? "unique" : "unchecked",
+          photo.status,
+          photo.createdAt,
+        )
+        .run();
+      await env.DB.prepare(`
+        INSERT INTO photo_moderation_states (
+          photo_id,
+          status,
+          automated_checks_json,
+          risk_flags_json,
+          created_at,
+          updated_at
+        ) VALUES (?, 'pending_moderation', ?, ?, ?, ?)
+      `).bind(
         photo.id,
-        photo.placeId,
-        photo.anonymousUserId,
-        photo.storageKey,
-        photo.mimeType,
-        photo.byteSize,
-        photo.width,
-        photo.height,
-        imageHash,
-        imageHash ? "unique" : "unchecked",
-        photo.status,
+        JSON.stringify({
+          mimeAndMagicBytes: "passed",
+          sizeAndDimensions: "passed",
+          metadataRemoved: sanitizedPhoto?.metadataRemoved ?? false,
+          pixelsReencoded: sanitizedPhoto?.pixelsReencoded ?? false,
+          duplicateCheck: imageHash ? "passed" : "not_available",
+          malwareScan: "manual_required",
+        }),
+        JSON.stringify(["face_review_required", "plate_review_required", "content_safety_review_required"]),
         photo.createdAt,
-      )
-      .run();
-    await env.DB.prepare(`
-      INSERT INTO photo_moderation_states (
-        photo_id,
-        status,
-        automated_checks_json,
-        risk_flags_json,
-        created_at,
-        updated_at
-      ) VALUES (?, 'pending_moderation', ?, ?, ?, ?)
-    `).bind(
-      photo.id,
-      JSON.stringify({
-        mimeAndMagicBytes: "passed",
-        sizeAndDimensions: "passed",
-        metadataRemoved: sanitizedPhoto?.metadataRemoved ?? false,
-        pixelsReencoded: sanitizedPhoto?.pixelsReencoded ?? false,
-        duplicateCheck: imageHash ? "passed" : "not_available",
-        malwareScan: "manual_required",
-      }),
-      JSON.stringify(["face_review_required", "plate_review_required", "content_safety_review_required"]),
-      photo.createdAt,
-      photo.createdAt,
-    ).run();
+        photo.createdAt,
+      ).run();
+    } catch (error) {
+      try {
+        await env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(photo.id).run();
+      } catch {
+        // A later orphan cleanup can recover if D1 itself is unavailable.
+      }
+      if (env.PHOTOS) {
+        try {
+          await env.PHOTOS.delete(storageKey);
+        } catch {
+          // Keep the original failure; release gates still require orphan cleanup evidence.
+        }
+      }
+      throw error;
+    }
   } else {
     photos.unshift(photo);
     if (imageHash) {
@@ -3685,7 +4786,7 @@ async function completePhoto(request: Request, session: AnonymousSession, env: E
   return json(
     {
       photo,
-      storageKey: result.storageKey,
+      storageKey,
     },
     {
       r2Policy: result.policy,
@@ -3711,15 +4812,15 @@ async function completePhoto(request: Request, session: AnonymousSession, env: E
 }
 
 async function processPhotoForR2(
-  imageBase64: string | null,
+  imageInput: string | Uint8Array | null,
   storageKey: string,
   mimeType: PhotoRecord["mimeType"],
   width: number,
   height: number,
   env: Env,
 ): Promise<SanitizedPhoto> {
-  const metadataStripped = sanitizePhotoForR2(imageBase64, storageKey, mimeType);
-  if (!env.IMAGES) {
+  const metadataStripped = sanitizePhotoForR2(imageInput, storageKey, mimeType);
+  if (!env.IMAGES || env.IMAGE_TRANSFORMS_ENABLED?.trim().toLowerCase() !== "true") {
     return metadataStripped;
   }
 
@@ -3767,12 +4868,12 @@ function duplicatePhotoError(duplicate: DuplicatePhotoRecord): HttpError {
   });
 }
 
-function sanitizePhotoForR2(imageBase64: string | null, storageKey: string, mimeType: PhotoRecord["mimeType"]): SanitizedPhoto {
-  if (!imageBase64) {
+function sanitizePhotoForR2(imageInput: string | Uint8Array | null, storageKey: string, mimeType: PhotoRecord["mimeType"]): SanitizedPhoto {
+  if (!imageInput) {
     throw new HttpError(400, "PHOTO_IMAGE_REQUIRED", "R2 저장에는 정화할 이미지 파일이 필요합니다.");
   }
 
-  const original = decodeImageBase64(imageBase64);
+  const original = typeof imageInput === "string" ? decodeImageBase64(imageInput) : imageInput;
   if (original.byteLength < 4 || original.byteLength > PHOTO_MAX_BYTES) {
     throw new HttpError(400, "PHOTO_SIZE_LIMIT", "사진 크기 제한을 초과했습니다.");
   }
@@ -3817,13 +4918,13 @@ async function reencodePhotoWithImagesBinding(
   const output = await images
     .input(arrayBufferForBytes(photo.bytes))
     .transform({
-      width: Math.min(width, 1280),
-      height: Math.min(height, 1280),
+      width: Math.min(width, PHOTO_MAX_DIMENSION),
+      height: Math.min(height, PHOTO_MAX_DIMENSION),
       fit: "scale-down",
     })
     .output({
       format: photo.mimeType === "image/jpeg" ? "image/jpeg" : "image/webp",
-      quality: 82,
+      quality: 78,
       anim: false,
     });
   const response = await output.response();
@@ -4142,7 +5243,7 @@ async function createPublicReport(request: Request, session: AnonymousSession, e
     return createModerationReportFromBody(body, session, env, ctx);
   }
 
-  return createFieldReportFromBody(body, session, env, ctx);
+  return createFieldReportFromBody(body, session, env);
 }
 
 async function voteOnFieldReport(
@@ -4166,7 +5267,11 @@ async function voteOnFieldReport(
         place_id AS placeId,
         anonymous_user_id AS anonymousUserId,
         verified_radius_m AS verifiedRadiusM,
-        expires_at AS expiresAt
+        expires_at AS expiresAt,
+        COALESCE(
+          (SELECT status FROM field_report_moderation WHERE report_id = place_events.id LIMIT 1),
+          'pending'
+        ) AS moderationStatus
       FROM place_events
       WHERE id = ? AND event_type = 'report' AND source = 'field_report'
       LIMIT 1`,
@@ -4175,6 +5280,9 @@ async function voteOnFieldReport(
     .first<D1FieldReportEventRow>();
   if (!report) {
     throw new HttpError(404, "FIELD_REPORT_NOT_FOUND", "현장 제보를 찾을 수 없습니다.");
+  }
+  if (report.moderationStatus !== "approved") {
+    throw new HttpError(409, "FIELD_REPORT_NOT_PUBLIC", "검수 승인된 제보에만 상태 확인 투표를 할 수 있습니다.");
   }
   if (report.anonymousUserId === anonymousUserId) {
     throw new HttpError(403, "SELF_REPORT_VOTE_FORBIDDEN", "내 제보에는 상태 확인 투표를 할 수 없습니다.");
@@ -4676,7 +5784,7 @@ async function createModerationReportFromBody(body: JsonObject, session: Anonymo
   return json(report, { moderationPolicy: "open-reports-require-admin-token", alertChannel }, 201);
 }
 
-async function createFieldReportFromBody(body: JsonObject, session: AnonymousSession, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function createFieldReportFromBody(body: JsonObject, session: AnonymousSession, env: Env): Promise<Response> {
   const placeId = stringField(body, "placeId", 80);
   const category = enumField(body, "category", fieldReportCategories);
   const crowdLevel = optionalEnumField(body, "crowdLevel", fieldReportCrowdLevels);
@@ -4704,7 +5812,11 @@ async function createFieldReportFromBody(body: JsonObject, session: AnonymousSes
     throw new HttpError(400, "REPORT_OBSERVATION_REQUIRED", "실제로 확인한 현장 상태를 하나 이상 선택해 주세요.");
   }
   const comment = optionalStringField(body, "comment", 120);
-  const photoUrl = optionalHttpUrlField(body, "photoUrl", 2_048);
+  const legacyPhotoUrl = optionalHttpUrlField(body, "photoUrl", 2_048);
+  if (legacyPhotoUrl) {
+    throw new HttpError(400, "PHOTO_ATTACHMENT_REQUIRED", "외부 사진 URL은 사용할 수 없습니다. 업로드가 완료된 사진으로만 제보해 주세요.");
+  }
+  const photoId = optionalPhotoIdField(body);
   const clientLocation = optionalClientLocationField(body);
   if (comment) {
     const rejectionReason = commentBodyRejectionReason(comment);
@@ -4717,10 +5829,14 @@ async function createFieldReportFromBody(body: JsonObject, session: AnonymousSes
   if (category !== place.categoryId) {
     throw new HttpError(400, "CATEGORY_MISMATCH", "제보 카테고리가 장소 카테고리와 일치하지 않습니다.");
   }
+  const rewardsEnabled = await isFeatureEnabled(env, "REWARDS_ENABLED", place.regionId);
 
   const anonymousUserId = env.DB ? await ensureD1AnonymousUser(env.DB, session) : session.id;
   if (env.DB) {
     await assertD1AnonymousUserCanWrite(env.DB, anonymousUserId);
+  }
+  if (photoId) {
+    await assertFieldReportPhotoOwnership(photoId, place, anonymousUserId, env);
   }
 
   const verifiedRadiusM = verifiedRadiusForFieldReport(place, clientLocation);
@@ -4756,7 +5872,9 @@ async function createFieldReportFromBody(body: JsonObject, session: AnonymousSes
     verifiedRadiusM,
     createdAt,
     expiresAt,
-    hasPhoto: Boolean(photoUrl),
+    hasPhoto: Boolean(photoId),
+    photoId: photoId ?? null,
+    moderationStatus: "pending",
   };
 
   if (env.DB) {
@@ -4770,18 +5888,46 @@ async function createFieldReportFromBody(body: JsonObject, session: AnonymousSes
       createdAt,
       expiresAt,
     });
+    await env.DB
+      .prepare(
+        `INSERT INTO field_report_moderation (
+          report_id,
+          status,
+          reviewer_subject,
+          decision_reason,
+          decided_at,
+          created_at,
+          updated_at
+        ) VALUES (?, 'pending', NULL, NULL, NULL, ?, ?)
+        ON CONFLICT(report_id) DO UPDATE SET
+          status = 'pending',
+          reviewer_subject = NULL,
+          decision_reason = NULL,
+          decided_at = NULL,
+          updated_at = excluded.updated_at`,
+      )
+      .bind(report.id, createdAt, createdAt)
+      .run();
+    if (photoId) {
+      await env.DB
+        .prepare(
+          `INSERT INTO field_report_photos (report_id, photo_id, created_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(report_id, photo_id) DO NOTHING`,
+        )
+        .bind(report.id, photoId, createdAt)
+        .run();
+    }
     await insertD1LiveSignals(env.DB, liveSignalsForFieldReport(report), report.anonymousUserId);
     await recomputeD1PlaceStatus(env.DB, place.id, new Date(createdAt));
-    ctx.waitUntil(broadcastFieldReportCreated(env, place, report));
 
-    return json(fieldReportResponse(report), fieldReportMeta("d1", report), 201);
+    return json(fieldReportResponse(report, rewardsEnabled), fieldReportMeta("d1", report), 201);
   }
 
   fieldReports.unshift(report);
   liveSignals.unshift(...liveSignalsForFieldReport(report));
-  ctx.waitUntil(broadcastFieldReportCreated(env, place, report));
 
-  return json(fieldReportResponse(report), fieldReportMeta("memory-fallback", report), 201);
+  return json(fieldReportResponse(report, rewardsEnabled), fieldReportMeta("memory-fallback", report), 201);
 }
 
 function isModerationReportBody(body: JsonObject): boolean {
@@ -4806,6 +5952,57 @@ function optionalHttpUrlField(body: JsonObject, field: string, maxLength: number
   }
 
   return url.toString();
+}
+
+function optionalPhotoIdField(body: JsonObject): string | undefined {
+  const value = optionalStringField(body, "photoId", 120);
+  if (!value) {
+    return undefined;
+  }
+
+  if (!/^photo_[a-zA-Z0-9-]{8,100}$/.test(value)) {
+    throw new HttpError(400, "PHOTO_ID_INVALID", "업로드된 사진 식별자가 올바르지 않습니다.");
+  }
+
+  return value;
+}
+
+async function assertFieldReportPhotoOwnership(
+  photoId: string,
+  place: PlaceRecord,
+  anonymousUserId: string,
+  env: Env,
+): Promise<void> {
+  if (env.DB) {
+    const photo = await env.DB
+      .prepare(
+        `SELECT id, place_id AS placeId, anonymous_user_id AS anonymousUserId, status, deleted_at AS deletedAt
+         FROM photos
+         WHERE id = ?
+         LIMIT 1`,
+      )
+      .bind(photoId)
+      .first<{ id: string; placeId: string; anonymousUserId: string; status: PhotoRecord["status"]; deletedAt: string | null }>();
+
+    if (!photo || photo.placeId !== place.id || photo.anonymousUserId !== anonymousUserId || photo.deletedAt) {
+      throw new HttpError(403, "PHOTO_ATTACHMENT_FORBIDDEN", "내가 올린 같은 장소의 사진만 제보에 첨부할 수 있습니다.");
+    }
+
+    if (photo.status === "rejected") {
+      throw new HttpError(409, "PHOTO_ATTACHMENT_REJECTED", "검수에서 제외된 사진은 첨부할 수 없습니다.");
+    }
+
+    return;
+  }
+
+  const photo = photos.find((candidate) => candidate.id === photoId);
+  if (!photo || photo.placeId !== place.id || photo.anonymousUserId !== anonymousUserId || photo.deletedAt) {
+    throw new HttpError(403, "PHOTO_ATTACHMENT_FORBIDDEN", "내가 올린 같은 장소의 사진만 제보에 첨부할 수 있습니다.");
+  }
+
+  if (photo.status === "rejected") {
+    throw new HttpError(409, "PHOTO_ATTACHMENT_REJECTED", "검수에서 제외된 사진은 첨부할 수 없습니다.");
+  }
 }
 
 function optionalClientLocationField(body: JsonObject): ClientLocation | null {
@@ -4848,7 +6045,7 @@ function verifiedRadiusForFieldReport(place: PlaceRecord, clientLocation: Client
   throw new HttpError(400, "LOCATION_NOT_VERIFIED", "장소 300m 밖에서는 현장 인증 제보를 만들 수 없습니다.");
 }
 
-function fieldReportResponse(report: FieldReportRecord): {
+function fieldReportResponse(report: FieldReportRecord, rewardsEnabled: boolean): {
   report: ReturnType<typeof publicFieldReport>;
   credits: FieldReportCredit[];
   safetyWarning: string | null;
@@ -4856,13 +6053,15 @@ function fieldReportResponse(report: FieldReportRecord): {
 } {
   return {
     report: publicFieldReport(report),
-    credits: fieldReportCredits(report),
+    credits: rewardsEnabled ? fieldReportCredits(report) : [],
     safetyWarning: fieldReportSafetyWarning(report.category),
     privacyNotice: "클라이언트 좌표는 반경 검증에만 사용되며 D1과 응답 본문에 저장하지 않습니다.",
   };
 }
 
 function publicFieldReport(report: FieldReportRecord) {
+  const publicPhotoId = report.moderationStatus === "approved" ? report.photoId : null;
+
   return {
     id: report.id,
     placeId: report.placeId,
@@ -4876,10 +6075,14 @@ function publicFieldReport(report: FieldReportRecord) {
     verifiedRadiusM: report.verifiedRadiusM,
     createdAt: report.createdAt,
     expiresAt: report.expiresAt,
+    moderationStatus: report.moderationStatus,
+    ...(publicPhotoId ? { photoId: publicPhotoId } : {}),
   };
 }
 
 function publicD1FieldReport(report: D1FieldReportRow): PublicFieldReportRecord {
+  const publicPhotoId = report.moderationStatus === "approved" ? report.photoId : null;
+
   return {
     id: report.id,
     placeId: report.placeId,
@@ -4892,6 +6095,34 @@ function publicD1FieldReport(report: D1FieldReportRow): PublicFieldReportRecord 
     verifiedRadiusM: report.verifiedRadiusM,
     createdAt: report.createdAt,
     expiresAt: report.expiresAt,
+    moderationStatus: report.moderationStatus,
+    ...(publicPhotoId ? { photoId: publicPhotoId } : {}),
+  };
+}
+
+function fieldReportLifecycleStatus(
+  moderationStatus: FieldReportModerationStatus,
+  expiresAt: string | null,
+  nowMs = Date.now(),
+): FieldReportLifecycleStatus {
+  if (moderationStatus === "pending" || moderationStatus === "rejected") {
+    return moderationStatus;
+  }
+
+  return expiresAt && Date.parse(expiresAt) > nowMs ? "published" : "expired";
+}
+
+function publicMyD1FieldReport(report: D1MyFieldReportRow): PublicMyFieldReportRecord {
+  return {
+    ...publicD1FieldReport(report),
+    status: report.status,
+  };
+}
+
+function publicMyFieldReport(report: FieldReportRecord, nowMs = Date.now()): PublicMyFieldReportRecord {
+  return {
+    ...publicFieldReport(report),
+    status: fieldReportLifecycleStatus(report.moderationStatus, report.expiresAt, nowMs),
   };
 }
 
@@ -4936,7 +6167,7 @@ function liveSignalsForFieldReport(report: FieldReportRecord): LiveSignal[] {
     expiresAt: observation.expiresAt,
     confidenceScore: verified ? 0.8 : 0.55,
     isEstimated: false,
-    isPubliclyVisible: true,
+    isPubliclyVisible: report.moderationStatus === "approved",
     evidenceType: "user_report",
     evidenceId: report.id,
     metadata: {
@@ -5020,10 +6251,10 @@ function publicMyQuestion(question: QuestionRecord | D1QuestionRow) {
 }
 
 async function publicPostWithResolvedPlace(post: PostRecord, env: Env) {
-  return publicPost(post, await resolvePlaceRecord(post.placeId, env));
+  return publicPost(post, await resolvePlaceRecord(post.placeId, env), env);
 }
 
-function publicPost(post: PostRecord, place: PlaceRecord) {
+function publicPost(post: PostRecord, place: PlaceRecord, env: Env = {}) {
   return {
     id: post.id,
     userId: publicPostUserId(post.id),
@@ -5043,11 +6274,13 @@ function publicPost(post: PostRecord, place: PlaceRecord) {
     commentCount: post.commentCount,
     hashtagNames: post.hashtagNames,
     hashtags: post.hashtagNames.map((name) => publicHashtag(name, 1, post.createdAt)),
-    shareCard: buildPostShareCard(post, place),
+    shareCard: buildPostShareCard(post, place, env),
     judgement: judgementFromPostStatus(post.crowdLevel, post.parkingStatus),
     safetyWarning: placeSafetyWarning(place.categoryId),
     hiddenAt: post.hiddenAt,
     createdAt: post.createdAt,
+    expiresAt: post.expiresAt,
+    isExpired: isPostExpired(post.expiresAt),
   };
 }
 
@@ -5063,10 +6296,10 @@ function publicComment(comment: CommentRecord | D1CommentRow, currentAnonymousUs
   };
 }
 
-function postSubmitResponse(post: PostRecord, place: PlaceRecord, recommendedHashtags: string[]) {
+function postSubmitResponse(post: PostRecord, place: PlaceRecord, recommendedHashtags: string[], rewardsEnabled: boolean, env: Env) {
   return {
-    post: publicPost(post, place),
-    credits: postCredits(post),
+    post: publicPost(post, place, env),
+    credits: rewardsEnabled ? postCredits(post) : [],
     recommendedHashtags,
     safetyWarning: placeSafetyWarning(place.categoryId),
     privacyNotice: "정확한 좌표는 저장하지 않고 장소 반경 검증 결과만 남깁니다.",
@@ -5106,6 +6339,7 @@ function d1PostRowToRecord(row: D1PostRow): PostRecord {
     hashtagNames: parseHashtagNames(row.hashtagNames),
     hiddenAt: row.hiddenAt,
     createdAt: row.createdAt,
+    expiresAt: postExpiryForCreatedAt(row.createdAt),
   };
 }
 
@@ -5172,10 +6406,13 @@ function publicHashtag(name: string, postCount: number, createdAt: string): Hash
   };
 }
 
-function rankPostsForFeed<TPost extends Pick<PostRecord, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount" | "hiddenAt">>(sourcePosts: TPost[]): TPost[] {
+function rankPostsForFeed<TPost extends Pick<PostRecord, "createdAt" | "expiresAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount" | "hiddenAt">>(sourcePosts: TPost[]): TPost[] {
   return [...sourcePosts]
     .filter((post) => !post.hiddenAt)
-    .sort((left, right) => postScore(right) - postScore(left));
+    .sort((left, right) => {
+      const currentDelta = Number(isPostExpired(left.expiresAt)) - Number(isPostExpired(right.expiresAt));
+      return currentDelta || postScore(right) - postScore(left);
+    });
 }
 
 function postScore(post: Pick<PostRecord, "createdAt" | "locationVerified" | "photoCount" | "helpfulCount" | "commentCount">): number {
@@ -5185,17 +6422,59 @@ function postScore(post: Pick<PostRecord, "createdAt" | "locationVerified" | "ph
   return recentScore + Number(post.locationVerified) * 80 + Math.min(post.photoCount, 3) * 24 + post.helpfulCount * 3 + post.commentCount * 2;
 }
 
-function buildPostShareCard(post: PostRecord, place: PlaceRecord): ShareCardRecord {
+function postExpiryForCreatedAt(createdAt: string): string {
+  const createdAtMs = Date.parse(createdAt);
+  return new Date((Number.isFinite(createdAtMs) ? createdAtMs : 0) + REPORT_TTL_MS).toISOString();
+}
+
+function isPostExpired(expiresAt: string, nowMs = Date.now()): boolean {
+  const expiresAtMs = Date.parse(expiresAt);
+  return !Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs;
+}
+
+function buildPostShareCard(post: PostRecord, place: PlaceRecord, env: Env): ShareCardRecord {
   const judgement = judgementFromPostStatus(post.crowdLevel, post.parkingStatus);
   const statusText = [crowdStatusLabel(post.crowdLevel), `주차 ${parkingStatusLabel(post.parkingStatus)}`, `줄 ${lineStatusLabel(post.lineStatus)}`].join(" · ");
+  const siteUrl = publicSiteUrlFor(env);
 
   return {
     headline: `${place.name} ${judgement}`,
-    body: `${statusText}\n${minutesAgoLabel(post.createdAt)} 현장 인증 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
-    url: `${publicSiteUrl}/place/${place.id}`,
+    body: `${statusText}\n${minutesAgoLabel(post.createdAt)} ${post.locationVerified ? "현장 인증" : "상태"} 제보\n${post.caption ?? "지금 현장 상태를 확인해 보세요."}`,
+    url: `${siteUrl}/place/${place.id}`,
     hashtags: post.hashtagNames.slice(0, 5),
     variant: shareCardVariant(post, judgement),
   };
+}
+
+function publicSiteUrlFor(env: Env): string {
+  const configured = env.PUBLIC_SITE_URL?.trim();
+  if (!configured) {
+    if (env.ENVIRONMENT === "staging" || env.ENVIRONMENT === "production") {
+      throw new HttpError(503, "PUBLIC_SITE_URL_REQUIRED", "공유 링크를 만들려면 배포된 Pages URL이 필요합니다.");
+    }
+
+    return defaultPublicSiteUrl;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw new HttpError(500, "PUBLIC_SITE_URL_INVALID", "공유 링크용 사이트 URL 설정이 올바르지 않습니다.");
+  }
+
+  const exactOrigin =
+    url.username === "" &&
+    url.password === "" &&
+    url.pathname === "/" &&
+    url.search === "" &&
+    url.hash === "" &&
+    (url.protocol === "https:" || (env.ENVIRONMENT === "development" && url.protocol === "http:"));
+  if (!exactOrigin) {
+    throw new HttpError(500, "PUBLIC_SITE_URL_INVALID", "공유 링크용 사이트 URL은 정확한 HTTPS origin이어야 합니다.");
+  }
+
+  return url.origin;
 }
 
 function shareCardVariant(
@@ -5419,6 +6698,8 @@ function seedPost(input: {
   hashtagNames: string[];
   minutesAgo: number;
 }): PostRecord {
+  const createdAt = new Date(Date.now() - input.minutesAgo * 60_000).toISOString();
+
   return {
     id: input.id,
     placeId: input.placeId,
@@ -5438,7 +6719,8 @@ function seedPost(input: {
     commentCount: input.commentCount,
     hashtagNames: uniqueHashtagNames(input.hashtagNames),
     hiddenAt: null,
-    createdAt: new Date(Date.now() - input.minutesAgo * 60_000).toISOString(),
+    createdAt,
+    expiresAt: postExpiryForCreatedAt(createdAt),
   };
 }
 
@@ -5514,9 +6796,25 @@ function broadcastFieldReportCreated(env: Env, place: PlaceRecord, report: Field
   });
 }
 
+function broadcastApprovedFieldReport(env: Env, place: PlaceRecord, report: D1ModerationFieldReportRow): Promise<void> {
+  return broadcastPlaceActivity(env, "report.created", place, {
+    id: report.id,
+    placeId: place.id,
+    regionId: place.regionId,
+    areaId: place.areaId,
+    category: report.category,
+    crowdLevel: report.crowdLevel,
+    lineStatus: report.lineStatus,
+    parkingStatus: report.parkingStatus,
+    verifiedRadiusM: report.verifiedRadiusM,
+    expiresAt: report.expiresAt,
+  });
+}
+
 async function listFieldReports(url: URL, env: Env): Promise<Response> {
   const placeId = url.searchParams.get("placeId");
   const regionId = url.searchParams.get("regionId") ?? url.searchParams.get("region");
+  const regionIds = placeRegionIdsForScope(regionId);
   const limit = clampLimit(url.searchParams.get("limit"), 200, 100);
 
   if (env.DB) {
@@ -5527,26 +6825,44 @@ async function listFieldReports(url: URL, env: Env): Promise<Response> {
       values.push(placeId);
     }
 
-    if (regionId) {
-      where.push("region_code = ?");
-      values.push(regionId);
-    }
+    appendRegionScopeWhere(where, values, "region_code", regionIds);
 
     where.push(`expires_at > ${D1_NOW_SQL}`);
+    where.push(
+      `COALESCE(
+        (SELECT status FROM field_report_moderation WHERE report_id = place_events.id LIMIT 1),
+        'pending'
+      ) = 'approved'`,
+    );
 
     values.push(limit);
     const { results = [] } = await env.DB
       .prepare(
         `SELECT
-          id,
-          place_id AS placeId,
-          category,
-          crowd_level AS crowdLevel,
-          line_status AS lineStatus,
-          parking_status AS parkingStatus,
-          verified_radius_m AS verifiedRadiusM,
-          created_at AS createdAt,
-          expires_at AS expiresAt
+          place_events.id,
+          place_events.place_id AS placeId,
+          place_events.category,
+          place_events.crowd_level AS crowdLevel,
+          place_events.line_status AS lineStatus,
+          place_events.parking_status AS parkingStatus,
+          (
+            SELECT field_report_photos.photo_id
+            FROM field_report_photos
+            JOIN photos ON photos.id = field_report_photos.photo_id
+            WHERE field_report_photos.report_id = place_events.id
+              AND photos.status = 'ready'
+              AND photos.deleted_at IS NULL
+              AND photos.hidden_at IS NULL
+            ORDER BY field_report_photos.created_at DESC
+            LIMIT 1
+          ) AS photoId,
+          place_events.verified_radius_m AS verifiedRadiusM,
+          place_events.created_at AS createdAt,
+          place_events.expires_at AS expiresAt,
+          COALESCE(
+            (SELECT status FROM field_report_moderation WHERE report_id = place_events.id LIMIT 1),
+            'pending'
+          ) AS moderationStatus
         FROM place_events
         WHERE ${where.join(" AND ")}
         ORDER BY created_at DESC
@@ -5566,7 +6882,8 @@ async function listFieldReports(url: URL, env: Env): Promise<Response> {
   const now = new Date();
   const data = fieldReports
     .filter((report) => !placeId || report.placeId === placeId)
-    .filter((report) => !regionId || findPlaceRecord(report.placeId).regionId === regionId)
+    .filter((report) => placeRegionMatchesScope(findPlaceRecord(report.placeId).regionId, regionId))
+    .filter((report) => report.moderationStatus === "approved")
     .filter((report) => new Date(report.expiresAt).getTime() > now.getTime())
     .slice(0, limit)
     .map(publicFieldReport);
@@ -5576,6 +6893,211 @@ async function listFieldReports(url: URL, env: Env): Promise<Response> {
     includeExpired: false,
     storage: "memory-fallback",
     privacy: "clientLocation and photoUrl are not persisted in field report responses",
+  });
+}
+
+async function listAdminFieldReports(url: URL, env: Env): Promise<Response> {
+  const status = adminFieldReportStatusParam(url.searchParams.get("status"));
+  const limit = clampLimit(url.searchParams.get("limit"), 50, 50);
+
+  if (env.DB) {
+    const where = ["place_events.event_type = 'report'", "place_events.source = 'field_report'"];
+    const values: D1Value[] = [];
+    if (status !== "all") {
+      where.push("COALESCE(moderation.status, 'pending') = ?");
+      values.push(status);
+    }
+
+    values.push(limit);
+    const { results = [] } = await env.DB
+      .prepare(
+        `SELECT
+          place_events.id,
+          place_events.place_id AS placeId,
+          places.name AS placeName,
+          place_events.category,
+          place_events.crowd_level AS crowdLevel,
+          place_events.line_status AS lineStatus,
+          place_events.parking_status AS parkingStatus,
+          (
+            SELECT field_report_photos.photo_id
+            FROM field_report_photos
+            JOIN photos ON photos.id = field_report_photos.photo_id
+            WHERE field_report_photos.report_id = place_events.id
+              AND photos.status = 'ready'
+              AND photos.deleted_at IS NULL
+              AND photos.hidden_at IS NULL
+            ORDER BY field_report_photos.created_at DESC
+            LIMIT 1
+          ) AS photoId,
+          place_events.verified_radius_m AS verifiedRadiusM,
+          place_events.created_at AS createdAt,
+          place_events.expires_at AS expiresAt,
+          COALESCE(moderation.status, 'pending') AS moderationStatus,
+          (
+            SELECT GROUP_CONCAT(DISTINCT dimension)
+            FROM live_signals
+            WHERE evidence_id = place_events.id
+          ) AS observedDimensions
+        FROM place_events
+        JOIN places ON places.id = place_events.place_id
+        LEFT JOIN field_report_moderation AS moderation ON moderation.report_id = place_events.id
+        WHERE ${where.join(" AND ")}
+        ORDER BY
+          CASE COALESCE(moderation.status, 'pending') WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+          place_events.created_at DESC
+        LIMIT ?`,
+      )
+      .bind(...values)
+      .all<D1AdminFieldReportRow>();
+
+    return json(results.map((row) => adminFieldReportSummary(row)), {
+      status,
+      limit,
+      storage: "d1",
+      privacy: "anonymousUserId, clientLocation, photoUrl, and raw coordinates are not returned",
+    });
+  }
+
+  const data = fieldReports
+    .filter((report) => status === "all" || report.moderationStatus === status)
+    .sort((left, right) => {
+      const leftPending = left.moderationStatus === "pending" ? 0 : 1;
+      const rightPending = right.moderationStatus === "pending" ? 0 : 1;
+      return leftPending - rightPending || Date.parse(right.createdAt) - Date.parse(left.createdAt);
+    })
+    .slice(0, limit)
+    .map((report) => adminMemoryFieldReportSummary(report));
+
+  return json(data, {
+    status,
+    limit,
+    storage: "memory-fallback",
+    privacy: "anonymousUserId, clientLocation, photoUrl, and raw coordinates are not returned",
+  });
+}
+
+function adminFieldReportStatusParam(value: string | null): AdminFieldReportStatus {
+  if (value === "all" || value === "pending" || value === "approved" || value === "rejected") {
+    return value;
+  }
+
+  return "pending";
+}
+
+function adminFieldReportSummary(row: D1AdminFieldReportRow, nowMs = Date.now()): AdminFieldReportSummary {
+  return {
+    id: row.id,
+    placeId: row.placeId,
+    placeName: row.placeName,
+    category: row.category,
+    crowdLevel: row.crowdLevel,
+    lineStatus: row.lineStatus,
+    parkingStatus: row.parkingStatus,
+    verifiedRadiusM: row.verifiedRadiusM,
+    observedDimensions: parseObservedDimensions(row.observedDimensions),
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    moderationStatus: row.moderationStatus,
+    isExpired: Date.parse(row.expiresAt) <= nowMs,
+  };
+}
+
+function adminMemoryFieldReportSummary(report: FieldReportRecord, nowMs = Date.now()): AdminFieldReportSummary {
+  return {
+    id: report.id,
+    placeId: report.placeId,
+    placeName: findPlaceRecord(report.placeId).name,
+    category: report.category,
+    crowdLevel: report.crowdLevel ?? null,
+    lineStatus: report.lineStatus ?? null,
+    parkingStatus: report.parkingStatus ?? null,
+    verifiedRadiusM: report.verifiedRadiusM,
+    observedDimensions: report.observations.map((observation) => observation.dimension),
+    createdAt: report.createdAt,
+    expiresAt: report.expiresAt,
+    moderationStatus: report.moderationStatus,
+    isExpired: Date.parse(report.expiresAt) <= nowMs,
+  };
+}
+
+function parseObservedDimensions(value: string | null): AdminFieldReportSummary["observedDimensions"] {
+  const dimensions = new Set<AdminFieldReportSummary["observedDimensions"][number]>(["crowd", "queue", "parking", "local_condition"]);
+  return (value ?? "")
+    .split(",")
+    .filter((dimension): dimension is AdminFieldReportSummary["observedDimensions"][number] => dimensions.has(dimension as AdminFieldReportSummary["observedDimensions"][number]));
+}
+
+async function listMyFieldReports(session: AnonymousSession, url: URL, env: Env): Promise<Response> {
+  const limit = clampLimit(url.searchParams.get("limit"), 100, 50);
+
+  if (env.DB) {
+    const anonymousUserId = await anonymousUserIdForSession(session);
+    const { results = [] } = await env.DB
+      .prepare(
+        `SELECT
+          place_events.id,
+          place_events.place_id AS placeId,
+          place_events.category,
+          place_events.crowd_level AS crowdLevel,
+          place_events.line_status AS lineStatus,
+          place_events.parking_status AS parkingStatus,
+          (
+            SELECT field_report_photos.photo_id
+            FROM field_report_photos
+            JOIN photos ON photos.id = field_report_photos.photo_id
+            WHERE field_report_photos.report_id = place_events.id
+              AND photos.status = 'ready'
+              AND photos.deleted_at IS NULL
+              AND photos.hidden_at IS NULL
+            ORDER BY field_report_photos.created_at DESC
+            LIMIT 1
+          ) AS photoId,
+          place_events.verified_radius_m AS verifiedRadiusM,
+          place_events.created_at AS createdAt,
+          place_events.expires_at AS expiresAt,
+          COALESCE(moderation.status, 'pending') AS moderationStatus,
+          CASE
+            WHEN COALESCE(moderation.status, 'pending') = 'pending' THEN 'pending'
+            WHEN COALESCE(moderation.status, 'pending') = 'rejected' THEN 'rejected'
+            WHEN place_events.expires_at > ${D1_NOW_SQL} THEN 'published'
+            ELSE 'expired'
+          END AS status
+        FROM place_events
+        LEFT JOIN field_report_moderation AS moderation ON moderation.report_id = place_events.id
+        WHERE place_events.anonymous_user_id = ?
+          AND place_events.event_type = 'report'
+          AND place_events.source = 'field_report'
+        ORDER BY place_events.created_at DESC
+        LIMIT ?`,
+      )
+      .bind(anonymousUserId, limit)
+      .all<D1MyFieldReportRow>();
+
+    return json(results.map(publicMyD1FieldReport), {
+      limit,
+      includeExpired: true,
+      ownerScope: "current-anonymous-session-only",
+      lifecycle: "pending-published-rejected-or-expired",
+      storage: "d1",
+      privacy: "anonymousUserId is server-only; clientLocation and photoUrl are not returned",
+    });
+  }
+
+  const nowMs = Date.now();
+  const data = fieldReports
+    .filter((report) => report.anonymousUserId === session.id)
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, limit)
+    .map((report) => publicMyFieldReport(report, nowMs));
+
+  return json(data, {
+    limit,
+    includeExpired: true,
+    ownerScope: "current-anonymous-session-only",
+    lifecycle: "pending-published-rejected-or-expired",
+    storage: "memory-fallback",
+    privacy: "anonymousUserId is server-only; clientLocation and photoUrl are not returned",
   });
 }
 
@@ -5762,6 +7284,140 @@ async function moderatePhoto(
     auditPolicy: "admin_actions",
     storage: "d1",
   });
+}
+
+async function moderateFieldReport(
+  reportId: string,
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  if (!/^field_report_[a-zA-Z0-9-]{8,100}$/.test(reportId)) {
+    throw new HttpError(400, "VALIDATION_ERROR", "reportId 값이 올바르지 않습니다.");
+  }
+
+  const body = await readJson(request);
+  const decision = enumField(body, "decision", ["approved", "rejected"] as const);
+  const reason = optionalStringField(body, "reason", 500) ?? null;
+  const now = new Date().toISOString();
+
+  if (env.DB) {
+    const report = await env.DB
+      .prepare(
+        `SELECT
+          id,
+          place_id AS placeId,
+          anonymous_user_id AS anonymousUserId,
+          category,
+          crowd_level AS crowdLevel,
+          line_status AS lineStatus,
+          parking_status AS parkingStatus,
+          verified_radius_m AS verifiedRadiusM,
+          created_at AS createdAt,
+          expires_at AS expiresAt,
+          COALESCE(
+            (SELECT status FROM field_report_moderation WHERE report_id = place_events.id LIMIT 1),
+            'pending'
+          ) AS moderationStatus
+        FROM place_events
+        WHERE id = ? AND event_type = 'report' AND source = 'field_report'
+        LIMIT 1`,
+      )
+      .bind(reportId)
+      .first<D1ModerationFieldReportRow>();
+    if (!report) {
+      throw new HttpError(404, "FIELD_REPORT_NOT_FOUND", "현장 제보를 찾을 수 없습니다.");
+    }
+
+    await env.DB
+      .prepare(
+        `INSERT INTO field_report_moderation (
+          report_id,
+          status,
+          reviewer_subject,
+          decision_reason,
+          decided_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(report_id) DO UPDATE SET
+          status = excluded.status,
+          reviewer_subject = excluded.reviewer_subject,
+          decision_reason = excluded.decision_reason,
+          decided_at = excluded.decided_at,
+          updated_at = excluded.updated_at`,
+      )
+      .bind(report.id, decision, adminSubject(request), reason, now, now, now)
+      .run();
+
+    const publicNow = decision === "approved" && Boolean(report.expiresAt) && Date.parse(report.expiresAt) > Date.parse(now);
+    await env.DB
+      .prepare("UPDATE live_signals SET is_publicly_visible = ? WHERE evidence_id = ?")
+      .bind(publicNow ? 1 : 0, report.id)
+      .run();
+    await recomputeD1PlaceStatus(env.DB, report.placeId, new Date(now));
+    await recordAdminAction(
+      env.DB,
+      request,
+      decision === "approved" ? "field_report_approved" : "field_report_rejected",
+      "field_report",
+      report.id,
+      reason,
+    );
+
+    if (publicNow) {
+      const place = await resolvePlaceRecord(report.placeId, env);
+      ctx.waitUntil(broadcastApprovedFieldReport(env, place, report));
+    }
+
+    return json(
+      {
+        reportId: report.id,
+        decision,
+        public: publicNow,
+        previousStatus: report.moderationStatus,
+      },
+      {
+        authz: "moderator-role",
+        auditPolicy: "admin_actions",
+        lifecycle: "pending-to-approved-or-rejected",
+        storage: "d1",
+      },
+    );
+  }
+
+  const report = fieldReports.find((candidate) => candidate.id === reportId);
+  if (!report) {
+    throw new HttpError(404, "FIELD_REPORT_NOT_FOUND", "현장 제보를 찾을 수 없습니다.");
+  }
+
+  const previousStatus = report.moderationStatus;
+  report.moderationStatus = decision;
+  const publicNow = decision === "approved" && Date.parse(report.expiresAt) > Date.parse(now);
+  for (const signal of liveSignals) {
+    if (signal.evidenceId === report.id) {
+      signal.isPubliclyVisible = publicNow;
+    }
+  }
+  if (publicNow) {
+    const place = findPlaceRecord(report.placeId);
+    ctx.waitUntil(broadcastFieldReportCreated(env, place, report));
+  }
+
+  return json(
+    {
+      reportId: report.id,
+      decision,
+      public: publicNow,
+      previousStatus,
+    },
+    {
+      authz: "moderator-role",
+      auditPolicy: "memory-fallback-no-persistent-audit",
+      lifecycle: "pending-to-approved-or-rejected",
+      storage: "memory-fallback",
+    },
+  );
 }
 
 async function moderateContent(request: Request, env: Env, action: AdminModerationAction): Promise<Response> {
@@ -6116,15 +7772,396 @@ async function broadcastToRooms(
 }
 
 async function enforceRateLimit(scope: string, request: Request, anonymousUserId: string, limit: number, windowMs: number): Promise<void> {
-  const key = `${scope}:${anonymousUserId}:${clientIpHint(request)}`;
-  const current = rateBuckets.get(key);
-  const { state, result } = applySlidingWindowRateLimit(current, Date.now(), limit, windowMs);
-  rateBuckets.set(key, state);
+  const now = Date.now();
+  const ipFingerprint = await clientIpFingerprint(request);
+  const sessionKey = `${scope}:${anonymousUserId}:${ipFingerprint}`;
+  const sessionState = applySlidingWindowRateLimit(rateBuckets.get(sessionKey), now, limit, windowMs);
+  const ipLimit = Math.max(limit * ipRateLimitMultiplier, 20);
+  const ipKey = ipFingerprint === "local" ? null : `${scope}:${ipFingerprint}`;
+  const ipState = ipKey ? applySlidingWindowRateLimit(rateBucketsByIp.get(ipKey), now, ipLimit, windowMs) : null;
 
-  if (!result.allowed) {
+  if (!sessionState.result.allowed || ipState?.result.allowed === false) {
+    const result = !sessionState.result.allowed ? sessionState.result : ipState?.result;
+    if (!result || result.allowed) {
+      throw new HttpError(429, "RATE_LIMITED", "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.");
+    }
+
     throw new HttpError(429, "RATE_LIMITED", "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.", {
       retryAfterSeconds: result.retryAfterSeconds,
     });
+  }
+
+  rateBuckets.set(sessionKey, sessionState.state);
+  if (ipKey && ipState) {
+    rateBucketsByIp.set(ipKey, ipState.state);
+  }
+}
+
+function runtimeCostControls(env: Env) {
+  const configuredGlobalDailyLimit = resolvePhotoGlobalDailyLimit(env);
+  const configuredGlobalMonthlyLimit = resolvePhotoGlobalMonthlyLimit(env);
+  const configuredGlobalStoredLimit = resolvePhotoGlobalStoredLimit(env);
+  const serverPhotoProcessingReady = isServerPhotoProcessingReady(env);
+  return {
+    photoUploadsEnabled:
+      Boolean(env.PHOTOS) &&
+      photoUploadsExplicitlyEnabled(env) &&
+      persistentPhotoWriteInfrastructureReady(env) &&
+      (!requiresPersistentStore(env) || serverPhotoProcessingReady),
+    imageTransformsEnabled: serverPhotoProcessingReady,
+    serverPhotoProcessingReady,
+    photoMaxBytes: PHOTO_MAX_BYTES,
+    photoMaxDimension: PHOTO_MAX_DIMENSION,
+    photoDailyLimit: photoWriteDailyLimit,
+    photoGlobalDailyLimit: configuredGlobalDailyLimit ?? 0,
+    photoGlobalMonthlyLimit: configuredGlobalMonthlyLimit ?? 0,
+    photoGlobalStoredLimit: configuredGlobalStoredLimit ?? 0,
+    photoReadMinuteLimit: photoFileReadMinuteLimit,
+    cloudflarePhotoWriteRateLimitBound: Boolean(env.PHOTO_WRITE_RATE_LIMITER),
+    cloudflarePhotoReadRateLimitBound: Boolean(env.PHOTO_READ_RATE_LIMITER),
+    enforcement: env.DB ? "d1-persistent-plus-worker-ip" : "worker-session-plus-ip",
+  } as const;
+}
+
+function photoUploadsExplicitlyEnabled(env: Env): boolean {
+  return env.PHOTO_UPLOADS_ENABLED === "true";
+}
+
+async function enforcePhotoWriteCostLimit(
+  scope: string,
+  request: Request,
+  session: AnonymousSession,
+  env: Env,
+  idempotencyKey?: string,
+): Promise<void> {
+  if (!photoUploadsExplicitlyEnabled(env)) {
+    throw new HttpError(503, "PHOTO_UPLOADS_PAUSED", "사진 업로드가 비용 보호 설정으로 잠시 중지되었습니다.");
+  }
+
+  if (!persistentPhotoWriteInfrastructureReady(env)) {
+    throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "사진 저장·비용 보호 바인딩을 확인할 수 없어 요청을 중지했습니다.");
+  }
+  if (requiresPersistentStore(env) && !idempotencyKey) {
+    throw new HttpError(400, "PHOTO_IDEMPOTENCY_KEY_REQUIRED", "사진 업로드 재시도 키가 필요합니다.");
+  }
+  await assertPersistentPhotoSessionProof(session, env);
+  await assertPersistentPhotoSchemaReady(env);
+  await enforceCloudflareCostRateLimit(env.PHOTO_WRITE_RATE_LIMITER, env, "photo-write:global");
+  if (requiresPersistentStore(env) && !isServerPhotoProcessingReady(env)) {
+    throw new HttpError(503, "PHOTO_PROCESSING_UNAVAILABLE", "안전한 서버 사진 처리를 확인할 수 없어 업로드를 중지했습니다.");
+  }
+  await enforceRateLimit(`${scope}:minute`, request, session.id, photoWriteBurstLimit, oneMinuteMs);
+  await enforceRateLimit(`${scope}:daily`, request, session.id, photoWriteDailyLimit, oneDayMs);
+  const globalDailyLimit = resolvePhotoGlobalDailyLimit(env);
+  if (globalDailyLimit === null && requiresPersistentStore(env)) {
+    throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "비용 보호 설정을 확인할 수 없어 요청을 중지했습니다.");
+  }
+  await enforcePersistentMeteredQuota(
+    `${scope}:daily`,
+    request,
+    session.id,
+    env,
+    photoWriteDailyLimit,
+    globalDailyLimit ?? defaultPhotoGlobalDailyLimit,
+    oneDayMs,
+    idempotencyKey,
+  );
+}
+
+function persistentPhotoWriteInfrastructureReady(env: Env): boolean {
+  if (!requiresPersistentStore(env)) {
+    return true;
+  }
+
+  return Boolean(
+    env.DB &&
+      env.PHOTOS &&
+      env.CACHE &&
+      env.PLACE_ROOM &&
+      env.REGION_ROOM &&
+      env.GLOBAL_ROOM &&
+      env.PHOTO_WRITE_RATE_LIMITER &&
+      (env.COST_GUARD_HASH_SECRET?.trim().length ?? 0) >= 32 &&
+      resolvePhotoGlobalDailyLimit(env) !== null &&
+      resolvePhotoGlobalMonthlyLimit(env) !== null &&
+      resolvePhotoGlobalStoredLimit(env) !== null,
+  );
+}
+
+async function assertPersistentPhotoSessionProof(session: AnonymousSession, env: Env): Promise<void> {
+  if (!requiresPersistentStore(env)) {
+    return;
+  }
+
+  const secret = env.COST_GUARD_HASH_SECRET?.trim() ?? "";
+  const expected = `v1.${await hmacSha256Hex(secret, `photo-session:v1:${session.id}`)}`;
+  if (!session.signature || !(await timingSafeEqualString(session.signature, expected))) {
+    throw new HttpError(403, "PHOTO_SESSION_SIGNATURE_INVALID", "사진 업로드 세션 인증에 실패했습니다.");
+  }
+}
+
+async function assertPersistentPhotoSchemaReady(env: Env): Promise<void> {
+  if (!requiresPersistentStore(env) || !env.DB) {
+    return;
+  }
+
+  try {
+    await env.DB
+      .prepare(
+        `SELECT 1 AS ready
+         FROM (SELECT 1) required
+         LEFT JOIN photo_upload_sessions sessions ON 1 = 0
+         LEFT JOIN photo_upload_idempotency_keys idempotency_keys ON 1 = 0
+         LEFT JOIN metered_usage_events usage_events ON 1 = 0
+         LIMIT 1`,
+      )
+      .first<{ ready: number }>();
+  } catch {
+    throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "사진 비용 보호 스키마를 확인할 수 없어 요청을 중지했습니다.");
+  }
+}
+
+function isServerPhotoProcessingReady(env: Env): boolean {
+  return Boolean(env.IMAGES) && env.IMAGE_TRANSFORMS_ENABLED?.trim().toLowerCase() === "true";
+}
+
+async function enforceCloudflareCostRateLimit(rateLimiter: RateLimitBinding | undefined, env: Env, key: string): Promise<void> {
+  if (!rateLimiter) {
+    if (requiresPersistentStore(env)) {
+      throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "비용 보호 설정을 확인할 수 없어 요청을 중지했습니다.");
+    }
+    return;
+  }
+
+  try {
+    const outcome = await rateLimiter.limit({ key });
+    if (!outcome.success) {
+      throw new HttpError(429, "RATE_LIMITED", "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.", {
+        retryAfterSeconds: 60,
+      });
+    }
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "비용 보호 설정을 확인할 수 없어 요청을 중지했습니다.");
+  }
+}
+
+function resolvePhotoGlobalDailyLimit(env: Env): number | null {
+  const raw = env.PHOTO_GLOBAL_DAILY_LIMIT?.trim();
+  if (!raw) {
+    return defaultPhotoGlobalDailyLimit;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maxPhotoGlobalDailyLimit) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function resolvePhotoGlobalMonthlyLimit(env: Env): number | null {
+  const raw = env.PHOTO_GLOBAL_MONTHLY_LIMIT?.trim();
+  if (!raw) {
+    return defaultPhotoGlobalMonthlyLimit;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maxPhotoGlobalMonthlyLimit) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function resolvePhotoGlobalStoredLimit(env: Env): number | null {
+  const raw = env.PHOTO_GLOBAL_STORED_LIMIT?.trim();
+  if (!raw) {
+    return defaultPhotoGlobalStoredLimit;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maxPhotoGlobalStoredLimit) {
+    return null;
+  }
+
+  return parsed;
+}
+
+async function enforcePhotoTransformMonthlyLimit(
+  request: Request,
+  anonymousUserId: string,
+  uploadId: string,
+  env: Env,
+): Promise<void> {
+  const globalMonthlyLimit = resolvePhotoGlobalMonthlyLimit(env);
+  if (globalMonthlyLimit === null && requiresPersistentStore(env)) {
+    throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "월간 사진 처리 비용 보호 설정을 확인할 수 없어 요청을 중지했습니다.");
+  }
+
+  await enforcePersistentMeteredQuota(
+    "photo:transform:rolling-31d",
+    request,
+    anonymousUserId,
+    env,
+    photoWriteDailyLimit * 31,
+    globalMonthlyLimit ?? defaultPhotoGlobalMonthlyLimit,
+    rollingMonthMs,
+    uploadId,
+  );
+}
+
+async function enforcePersistentMeteredQuota(
+  scope: string,
+  request: Request,
+  anonymousUserId: string,
+  env: Env,
+  limit: number,
+  globalLimit: number,
+  windowMs: number,
+  idempotencyKey?: string,
+): Promise<void> {
+  if (!env.DB) {
+    return;
+  }
+
+  const configuredSecret = env.COST_GUARD_HASH_SECRET?.trim() ?? "";
+  if (requiresPersistentStore(env) && configuredSecret.length < 32) {
+    throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "비용 보호 설정을 확인할 수 없어 요청을 중지했습니다.");
+  }
+
+  const hashSecret = configuredSecret || "local-development-cost-guard-only";
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const windowStartedAt = new Date(nowMs - windowMs).toISOString();
+  const expiresAt = new Date(nowMs + windowMs).toISOString();
+  const actorFingerprint = `sha256:${await sha256Hex(`${hashSecret}:actor:${anonymousUserId}`)}`;
+  const requestIpFingerprint = await clientIpFingerprint(request);
+  const ipFingerprint = `sha256:${await sha256Hex(`${hashSecret}:ip:${requestIpFingerprint}`)}`;
+  const ipLimit = Math.max(limit * ipRateLimitMultiplier, 20);
+  const eventId = idempotencyKey
+    ? `usage_${await sha256Hex(`${hashSecret}:event:${scope}:${actorFingerprint}:${idempotencyKey}`)}`
+    : `usage_${crypto.randomUUID()}`;
+
+  try {
+    if (idempotencyKey) {
+      const existing = await env.DB.prepare("SELECT id FROM metered_usage_events WHERE id = ? LIMIT 1").bind(eventId).first<{ id: string }>();
+      if (existing) {
+        return;
+      }
+    }
+
+    const inserted = await env.DB
+      .prepare(
+        `INSERT INTO metered_usage_events
+          (id, scope, actor_fingerprint, ip_fingerprint, resource_units, created_at, expires_at)
+        SELECT ?, ?, ?, ?, 1, ?, ?
+        WHERE (
+          SELECT COALESCE(SUM(resource_units), 0)
+          FROM metered_usage_events
+          WHERE scope = ? AND actor_fingerprint = ? AND created_at >= ?
+        ) < ?
+        AND (
+          SELECT COALESCE(SUM(resource_units), 0)
+          FROM metered_usage_events
+          WHERE scope = ? AND ip_fingerprint = ? AND created_at >= ?
+        ) < ?
+        AND (
+          SELECT COALESCE(SUM(resource_units), 0)
+          FROM metered_usage_events
+          WHERE scope = ? AND created_at >= ?
+        ) < ?
+        RETURNING id`,
+      )
+      .bind(
+        eventId,
+        scope,
+        actorFingerprint,
+        ipFingerprint,
+        now,
+        expiresAt,
+        scope,
+        actorFingerprint,
+        windowStartedAt,
+        limit,
+        scope,
+        ipFingerprint,
+        windowStartedAt,
+        ipLimit,
+        scope,
+        windowStartedAt,
+        globalLimit,
+      )
+      .first<{ id: string }>();
+
+    if (!inserted && idempotencyKey) {
+      const existing = await env.DB.prepare("SELECT id FROM metered_usage_events WHERE id = ? LIMIT 1").bind(eventId).first<{ id: string }>();
+      if (existing) {
+        return;
+      }
+    }
+
+    if (!inserted) {
+      throw new HttpError(429, "RATE_LIMITED", "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.", {
+        retryAfterSeconds: Math.ceil(windowMs / 1_000),
+      });
+    }
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
+
+    throw new HttpError(503, "COST_GUARD_UNAVAILABLE", "비용 보호 저장소를 확인할 수 없어 요청을 중지했습니다.");
+  }
+}
+
+async function cleanupExpiredMeteredUsageEvents(env: Env): Promise<void> {
+  if (!env.DB) {
+    return;
+  }
+
+  try {
+    await env.DB.prepare("DELETE FROM metered_usage_events WHERE expires_at <= ?").bind(new Date().toISOString()).run();
+  } catch {
+    return;
+  }
+}
+
+async function cleanupExpiredPhotoUploadSessions(env: Env): Promise<void> {
+  if (!env.DB || !env.PHOTOS) {
+    return;
+  }
+
+  try {
+    const { results = [] } = await env.DB
+      .prepare(
+        `SELECT
+          upload_id AS uploadId,
+          staging_key AS stagingKey
+        FROM photo_upload_sessions
+        WHERE expires_at <= ?
+        ORDER BY expires_at
+        LIMIT 100`,
+      )
+      .bind(new Date().toISOString())
+      .all<Pick<D1PhotoUploadSessionRow, "uploadId" | "stagingKey">>();
+    if (results.length === 0) {
+      return;
+    }
+
+    await env.PHOTOS.delete(results.map((session) => session.stagingKey));
+    await env.DB
+      .prepare(`DELETE FROM photo_upload_idempotency_keys WHERE upload_id IN (${results.map(() => "?").join(", ")})`)
+      .bind(...results.map((session) => session.uploadId))
+      .run();
+    await env.DB
+      .prepare(`DELETE FROM photo_upload_sessions WHERE upload_id IN (${results.map(() => "?").join(", ")})`)
+      .bind(...results.map((session) => session.uploadId))
+      .run();
+  } catch {
+    return;
   }
 }
 
@@ -6137,17 +8174,22 @@ function getAnonymousSession(request: Request): AnonymousSession {
     .find((part) => part.startsWith("silsigan_anon_id="))
     ?.split("=")[1];
   const candidate = headerId || cookieId;
+  const signature = request.headers.get("x-silsigan-anon-signature")?.trim() ?? null;
 
   if (candidate && /^[a-zA-Z0-9_-]{12,80}$/.test(candidate)) {
-    return { id: candidate, isNew: false };
+    return { id: candidate, isNew: false, signature };
   }
 
-  return { id: `anon_${crypto.randomUUID()}`, isNew: true };
+  return { id: `anon_${crypto.randomUUID()}`, isNew: true, signature: null };
 }
 
-function sessionHeadersFor(session: AnonymousSession): Headers {
+async function sessionHeadersFor(session: AnonymousSession, env: Env): Promise<Headers> {
   const headers = new Headers();
   headers.set("x-silsigan-anon-id", session.id);
+  const secret = env.COST_GUARD_HASH_SECRET?.trim() ?? "";
+  if (secret.length >= 32) {
+    headers.set("x-silsigan-anon-signature", `v1.${await hmacSha256Hex(secret, `photo-session:v1:${session.id}`)}`);
+  }
   if (session.isNew) {
     headers.append("set-cookie", `silsigan_anon_id=${session.id}; Path=/; Max-Age=31536000; SameSite=Lax; Secure; HttpOnly`);
   }
@@ -6656,7 +8698,7 @@ async function recordAdminAction(
   db: D1Database,
   request: Request,
   action: AdminActionType,
-  targetType: ReportRecord["targetType"] | "anonymous_user" | "data_source",
+  targetType: ReportRecord["targetType"] | "field_report" | "anonymous_user" | "data_source" | "source_ingestion_target",
   targetId: string,
   reason: string | null,
 ): Promise<void> {
@@ -6776,7 +8818,14 @@ async function countD1Events(db: D1Database, placeId: string, eventType: "click"
        FROM place_events
        WHERE place_id = ?
          AND event_type = ?
-         AND expires_at > ${D1_NOW_SQL}`,
+         AND expires_at > ${D1_NOW_SQL}
+         AND (
+           source != 'field_report'
+           OR COALESCE(
+             (SELECT status FROM field_report_moderation WHERE report_id = place_events.id LIMIT 1),
+             'pending'
+           ) = 'approved'
+         )`,
     )
     .bind(placeId, eventType)
     .first<D1CountRow>();
@@ -6790,7 +8839,14 @@ async function countD1UniqueEventUsers(db: D1Database, placeId: string): Promise
       `SELECT COUNT(DISTINCT anonymous_user_id) AS count
        FROM place_events
        WHERE place_id = ?
-         AND expires_at > ${D1_NOW_SQL}`,
+         AND expires_at > ${D1_NOW_SQL}
+         AND (
+           source != 'field_report'
+           OR COALESCE(
+             (SELECT status FROM field_report_moderation WHERE report_id = place_events.id LIMIT 1),
+             'pending'
+           ) = 'approved'
+         )`,
     )
     .bind(placeId)
     .first<D1CountRow>();
@@ -7325,7 +9381,14 @@ function errorResponse(status: number, code: string, message: string, details?: 
 
 function errorToResponse(error: unknown): Response {
   if (error instanceof HttpError) {
-    return errorResponse(error.status, error.code, error.message, error.details);
+    const response = errorResponse(error.status, error.code, error.message, error.details);
+    if (error.status === 429 && isRecord(error.details)) {
+      const retryAfterSeconds = error.details.retryAfterSeconds;
+      if (typeof retryAfterSeconds === "number" && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+        response.headers.set("retry-after", String(Math.ceil(retryAfterSeconds)));
+      }
+    }
+    return response;
   }
 
   if (error instanceof Error) {
@@ -7350,22 +9413,85 @@ function withHeaders(response: Response, extraHeaders: Headers): Response {
   });
 }
 
-function corsHeaders(): Record<string, string> {
-  return {
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-    "access-control-allow-headers": "content-type,x-silsigan-anon-id,x-silsigan-admin-token,x-silsigan-admin-subject",
-    "access-control-expose-headers": "x-silsigan-anon-id",
+function withCors(response: Response, request: Request, env: Env): Response {
+  const headers = new Headers(response.headers);
+  const origin = request.headers.get("origin")?.trim() ?? "";
+  const allowedOrigin = origin && isAllowedCorsOrigin(origin, env) ? origin : null;
+
+  headers.delete("access-control-allow-origin");
+  headers.delete("access-control-allow-credentials");
+  if (allowedOrigin) {
+    headers.set("access-control-allow-origin", allowedOrigin);
+    headers.set("access-control-allow-credentials", "true");
+  }
+  headers.set("vary", "Origin");
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function corsHeaders(request?: Request, env?: Env): Record<string, string> {
+  const headers: Record<string, string> = {
+    "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "access-control-allow-headers": "content-type,idempotency-key,x-silsigan-anon-id,x-silsigan-anon-signature,x-silsigan-admin-token,x-silsigan-admin-subject,x-silsigan-upload-id,x-silsigan-place-id",
+    "access-control-expose-headers": "x-silsigan-anon-id,x-silsigan-anon-signature",
+    vary: "Origin",
   };
+
+  const origin = request?.headers.get("origin")?.trim() ?? "";
+  if (origin && env && isAllowedCorsOrigin(origin, env)) {
+    headers["access-control-allow-origin"] = origin;
+    headers["access-control-allow-credentials"] = "true";
+  }
+
+  return headers;
+}
+
+function isAllowedCorsOrigin(origin: string, env: Env): boolean {
+  return corsAllowedOrigins(env).has(origin);
+}
+
+function corsAllowedOrigins(env: Env): Set<string> {
+  const configured = env.CORS_ALLOWED_ORIGINS?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
+  return new Set(configured.filter(isExactOrigin));
+}
+
+function isExactOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || (url.protocol === "http:" && isLoopbackOrigin(url.hostname))) &&
+      !url.username &&
+      !url.password &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackOrigin(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]";
 }
 
 function normalizePath(pathname: string): string {
   return pathname.replace(/\/+$/, "") || "/";
 }
 
-function clientIpHint(request: Request): string {
-  const raw = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return raw ? `ip-hint:${raw.length}:${raw.charCodeAt(0)}` : "local";
+async function clientIpFingerprint(request: Request): Promise<string> {
+  const raw = request.headers.get("cf-connecting-ip")?.trim();
+  if (!raw) {
+    return "local";
+  }
+
+  const digest = await sha256Hex(`silsigan-rate-limit:${raw}`);
+  return `ip:${digest.slice(0, 32)}`;
 }
 
 function roomKey(scope: RoomBroadcast["scope"], roomId: string): string {
@@ -7475,7 +9601,7 @@ function d1PlacesQuery({
   categoryId,
   limit,
   query,
-  regionId,
+  regionIds,
   requireRankingSignal = false,
 }: {
   areaId: string | null;
@@ -7483,7 +9609,7 @@ function d1PlacesQuery({
   categoryId: string | null;
   limit: number;
   query: string | null | undefined;
-  regionId: string | null;
+  regionIds: readonly string[];
   requireRankingSignal?: boolean;
 }): { sql: string; values: D1Value[]; limit: number } {
   const where = ["p.is_active = 1", "p.coordinate_status = 'verified'", "p.latitude IS NOT NULL", "p.longitude IS NOT NULL"];
@@ -7496,10 +9622,7 @@ function d1PlacesQuery({
     values.push(bbox.minLng, bbox.maxLng);
   }
 
-  if (regionId) {
-    where.push("p.region_id = ?");
-    values.push(regionId);
-  }
+  appendRegionScopeWhere(where, values, "p.region_id", regionIds);
 
   if (areaId) {
     where.push("p.area_id = ?");
@@ -7530,6 +9653,21 @@ function d1PlacesQuery({
     values,
     limit,
   };
+}
+
+function appendRegionScopeWhere(where: string[], values: D1Value[], column: string, regionIds: readonly string[]): void {
+  if (regionIds.length === 0) {
+    return;
+  }
+
+  if (regionIds.length === 1) {
+    where.push(`${column} = ?`);
+    values.push(regionIds[0]);
+    return;
+  }
+
+  where.push(`${column} IN (${regionIds.map(() => "?").join(", ")})`);
+  values.push(...regionIds);
 }
 
 function d1PlaceRowToRecord(row: D1PlaceRow): PlaceRecord {

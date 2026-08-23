@@ -1,4 +1,5 @@
 import type { Place, PlaceLaunchStage, RegionId, ReportCategory } from "./domain";
+import { KOREA_SIDO_REGIONS, isKoreaPlaceRegionId } from "../../packages/contracts/src/index.ts";
 
 export type WorkerPlace = {
   id: string;
@@ -60,20 +61,7 @@ function categoryFromWorker(categoryId: string): ReportCategory {
 }
 
 function regionFromWorker(regionId: string): RegionId {
-  if (regionId === "busan") return "busan";
-  if (regionId === "ulsan") return "ulsan";
-  if (regionId === "gyeongju") return "gyeongju";
-  if (regionId === "daegu") return "daegu";
-  if (regionId === "changwon") return "changwon";
-  if (regionId === "gimhae") return "gimhae";
-  if (regionId === "yangsan") return "yangsan";
-  if (regionId === "pohang") return "pohang";
-  if (regionId === "seoul") return "seoul";
-  if (regionId === "jeju") return "jeju";
-  if (regionId === "gangneung") return "gangneung";
-  if (regionId === "jeonju") return "jeonju";
-  if (regionId === "yeosu") return "yeosu";
-  if (regionId === "sokcho") return "sokcho";
+  if (isKoreaPlaceRegionId(regionId)) return regionId;
 
   throw new Error(`지원하지 않는 Worker 지역 ID입니다: ${regionId}`);
 }
@@ -91,18 +79,20 @@ function addressFromWorker(place: WorkerPlace): string {
 }
 
 function regionLabel(region: RegionId): string {
-  if (region === "busan") return "부산";
-  if (region === "ulsan") return "울산";
-  if (region === "gyeongju") return "경주";
-  if (region === "daegu") return "대구";
-  if (region === "changwon") return "창원";
-  if (region === "gimhae") return "김해";
-  if (region === "yangsan") return "양산";
-  if (region === "pohang") return "포항";
-  if (region === "seoul") return "서울";
-  if (region === "jeju") return "제주";
-  if (region === "gangneung") return "강릉";
-  if (region === "jeonju") return "전주";
-  if (region === "yeosu") return "여수";
-  return "속초";
+  const sido = KOREA_SIDO_REGIONS.find((item) => item.id === region);
+  if (sido) return sido.name;
+
+  const childLabels: Partial<Record<RegionId, string>> = {
+    changwon: "창원",
+    gangneung: "강릉",
+    gimhae: "김해",
+    gyeongju: "경주",
+    pohang: "포항",
+    sokcho: "속초",
+    yangsan: "양산",
+    yeosu: "여수",
+    jeonju: "전주",
+  };
+
+  return childLabels[region] ?? region;
 }

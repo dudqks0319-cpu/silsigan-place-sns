@@ -15,7 +15,18 @@
   },
   "env": {
     "staging": {
-      "name": "silsigan-web-staging"
+      "name": "silsigan-web-staging",
+      "services": [
+        {
+          "binding": "SILSIGAN_API",
+          "service": "silsigan-api-staging"
+        }
+      ],
+      "vars": {
+        "SILSIGAN_STAGING_API_BASE_URL": "https://silsigan-api-staging.dudqks0319.workers.dev",
+        "NEXT_PUBLIC_CLOUDFLARE_API_BASE_URL": "https://silsigan-api-staging.dudqks0319.workers.dev",
+        "NEXT_PUBLIC_SITE_URL": "https://silsigan-web-staging.dudqks0319.workers.dev"
+      }
     },
     "production": {
       "name": "silsigan-web-production"

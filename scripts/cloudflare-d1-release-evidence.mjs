@@ -22,6 +22,17 @@ const D1_RELEASE_EVIDENCE_QUERY = [
   "SELECT 'v2_settings=' || COUNT(*) FROM dimension_settings",
   "SELECT 'source_registry=' || COUNT(*) FROM data_sources",
   "SELECT 'trust_safety_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('photo_moderation_states', 'report_votes', 'user_blocks', 'consents', 'terms_acceptances', 'account_deletion_requests', 'identity_link_events')",
+  "SELECT 'field_report_moderation_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'field_report_moderation'",
+  "SELECT 'field_report_photos_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'field_report_photos'",
+  "SELECT 'field_report_photos_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_field_report_photos_photo', 'idx_field_report_photos_report')",
+  "SELECT 'photo_idempotency_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'photo_upload_idempotency_keys'",
+  "SELECT 'photo_idempotency_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name = 'idx_photo_upload_idempotency_upload'",
+  "SELECT 'ingestion_target_table=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'official_ingestion_targets'",
+  "SELECT 'ingestion_target_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_official_ingestion_targets_due', 'idx_official_ingestion_targets_source_place')",
+  "SELECT 'cost_guard_tables=' || COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('metered_usage_events', 'photo_upload_sessions')",
+  "SELECT 'cost_guard_indexes=' || COUNT(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('idx_metered_usage_actor', 'idx_metered_usage_ip', 'idx_metered_usage_expiry', 'idx_photo_upload_sessions_expiry')",
+  "SELECT 'photo_size_triggers=' || COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND name IN ('trg_photos_max_byte_size_insert', 'trg_photos_max_byte_size_update')",
+  "SELECT 'korea_sido_regions=' || COUNT(*) FROM regions WHERE parent_region_id IS NULL AND id IN ('seoul', 'busan', 'daegu', 'incheon', 'gwangju', 'daejeon', 'ulsan', 'sejong', 'gyeonggi', 'gangwon', 'chungbuk', 'chungnam', 'jeonbuk', 'jeonnam', 'gyeongbuk', 'gyeongnam', 'jeju')",
   "SELECT 'posts=' || COUNT(*) FROM posts",
   "SELECT 'questions=' || COUNT(*) FROM questions",
 ].join("; ");
@@ -65,7 +76,12 @@ export async function resolveD1ReleaseEvidencePlan({ flags = new Set(), options 
   const seedPath = options.get("seed") ?? DEFAULT_SEED_PATH;
   const apply = flags.has("apply") || env.SILSIGAN_D1_RELEASE_APPLY === "1";
   const check = flags.has("check") || env.SILSIGAN_D1_RELEASE_CHECK === "1";
+  const confirmStaging = flags.has("confirm-staging") || env.SILSIGAN_D1_CONFIRM_STAGING === "1";
   const confirmProduction = flags.has("confirm-production") || env.SILSIGAN_D1_CONFIRM_PRODUCTION === "1";
+  const acceptTimeTravelOnly = flags.has("accept-time-travel-only") || env.SILSIGAN_D1_ACCEPT_TIME_TRAVEL_ONLY === "1";
+  const fullBackupSha256 = options.get("full-backup-sha256") ?? env.SILSIGAN_D1_FULL_BACKUP_SHA256;
+  const hasFullBackup = typeof fullBackupSha256 === "string" && fullBackupSha256.length > 0;
+  const rollbackStrategy = acceptTimeTravelOnly ? "time-travel-only" : hasFullBackup ? "full-data-backup" : null;
   const timeoutMs = numberOption(options.get("timeout-ms") ?? env.SILSIGAN_D1_RELEASE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
   const requestedEnvs = parseEnvOption(options.get("env") ?? env.SILSIGAN_D1_RELEASE_ENV);
   const errors = [];
@@ -100,6 +116,32 @@ export async function resolveD1ReleaseEvidencePlan({ flags = new Set(), options 
     });
   }
 
+  if (apply && requestedEnvs.includes("staging") && !confirmStaging) {
+    errors.push({
+      code: "STAGING_CONFIRMATION_REQUIRED",
+      message: "staging D1 적용에는 --confirm-staging 이 필요합니다.",
+    });
+  }
+
+  if (apply && acceptTimeTravelOnly && hasFullBackup) {
+    errors.push({
+      code: "ROLLBACK_STRATEGY_CONFLICT",
+      message: "--accept-time-travel-only 와 --full-backup-sha256 는 동시에 사용할 수 없습니다.",
+    });
+  } else if (apply && !rollbackStrategy) {
+    errors.push({
+      code: "ROLLBACK_STRATEGY_REQUIRED",
+      message: "D1 적용에는 --accept-time-travel-only 또는 --full-backup-sha256=<sha256> 롤백 기록이 필요합니다.",
+    });
+  }
+
+  if (apply && hasFullBackup && !/^[a-f0-9]{64}$/i.test(fullBackupSha256)) {
+    errors.push({
+      code: "FULL_BACKUP_SHA256_INVALID",
+      message: "--full-backup-sha256 는 64자리 SHA-256 이어야 합니다.",
+    });
+  }
+
   const uniqueEnvs = [...new Set(requestedEnvs.filter((envName) => ALLOWED_ENVS.includes(envName)))];
   const databases = uniqueEnvs.length > 0 ? await readExpectedD1Databases(configPath, uniqueEnvs) : [];
   const targets = databases.map((database) => ({
@@ -113,7 +155,10 @@ export async function resolveD1ReleaseEvidencePlan({ flags = new Set(), options 
     mode: apply ? "apply" : check ? "check" : "plan-only",
     apply,
     check,
+    confirmStaging,
     confirmProduction,
+    rollbackStrategy,
+    ...(rollbackStrategy === "full-data-backup" ? { fullBackupSha256 } : {}),
     configPath,
     seedPath,
     timeoutMs,
@@ -287,7 +332,7 @@ function printSummary(summary) {
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/cloudflare-d1-release-evidence.mjs --env=staging [--check|--apply] [--confirm-production]
+  console.log(`Usage: node scripts/cloudflare-d1-release-evidence.mjs --env=staging [--check|--apply] [confirmation and rollback options]
 
 Plans, checks, or explicitly applies the Cloudflare D1 release migration evidence path:
   wrangler d1 migrations list <database> --remote --env <env>
@@ -299,7 +344,10 @@ Options:
   --env=staging|production     Required target environment. --apply allows exactly one env.
   --check                      Run read-only list and evidence checks.
   --apply                      Apply pending migrations, apply idempotent seed, then verify evidence.
+  --confirm-staging            Required with --apply --env=staging.
   --confirm-production         Required with --apply --env=production.
+  --accept-time-travel-only    Explicitly accept D1 Time Travel as the only data rollback path.
+  --full-backup-sha256 SHA256  Record the approved full-data backup digest instead of Time Travel-only rollback.
   --config PATH                Wrangler API config. Default: workers/api/wrangler.jsonc
   --seed PATH                  Seed SQL file. Default: workers/api/seeds/001_core_seed.sql
   --timeout-ms N               Per-command timeout.

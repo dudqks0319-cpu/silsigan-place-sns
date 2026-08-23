@@ -7,7 +7,7 @@ import { flagPostSchema } from "@/lib/validators";
 export async function POST(request: Request) {
   try {
     assertLocalDemoApiAvailable();
-    assertRateLimit({ key: rateLimitKey(request, "flag-post"), limit: 20, windowMs: 60_000 });
+    assertRateLimit({ key: await rateLimitKey(request, "flag-post"), limit: 20, windowMs: 60_000 });
     const input = flagPostSchema.parse(await request.json());
 
     return ok(await store.flagPost(input), {

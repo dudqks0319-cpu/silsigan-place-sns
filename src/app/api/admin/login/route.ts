@@ -5,7 +5,7 @@ import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   try {
-    assertRateLimit({ key: rateLimitKey(request, "admin-login"), limit: 5, windowMs: 60_000 });
+    assertRateLimit({ key: await rateLimitKey(request, "admin-login"), limit: 5, windowMs: 60_000 });
     const contentType = request.headers.get("content-type") ?? "";
     const payload = contentType.includes("application/json")
       ? ((await request.json()) as { token?: string })
@@ -17,7 +17,10 @@ export async function POST(request: Request) {
 
     const response = contentType.includes("application/json")
       ? NextResponse.json({ success: true, data: { ok: true } })
-      : NextResponse.redirect(new URL("/admin/moderation/posts", request.url));
+      : new NextResponse(null, {
+          status: 303,
+          headers: { Location: "/admin/moderation/posts" },
+        });
     response.cookies.set(adminCookieName, payload.token ?? "dev-admin", {
       httpOnly: true,
       sameSite: "lax",

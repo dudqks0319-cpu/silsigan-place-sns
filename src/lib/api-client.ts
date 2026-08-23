@@ -10,18 +10,27 @@ type ApiResponse<T> = {
 };
 
 const anonymousIdKey = "silsigan.anonymousId.v1";
+const anonymousSignatureKey = "silsigan.anonymousSignature.v1";
 
 export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   const credentials = credentialsFor(input);
+  const method = (init?.method ?? "GET").toUpperCase();
+  const attachAnonymousIdentity = requestNeedsAnonymousIdentity(input, method);
 
-  if (!(init?.body instanceof FormData) && !headers.has("content-type")) {
+  if (init?.body && !(init.body instanceof FormData) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 
-  const anonymousId = getAnonymousId();
-  if (anonymousId && !headers.has("x-silsigan-anon-id")) {
-    headers.set("x-silsigan-anon-id", anonymousId);
+  if (attachAnonymousIdentity) {
+    const anonymousId = getAnonymousId();
+    if (anonymousId && !headers.has("x-silsigan-anon-id")) {
+      headers.set("x-silsigan-anon-id", anonymousId);
+    }
+    const anonymousSignature = getAnonymousSignature();
+    if (anonymousSignature && !headers.has("x-silsigan-anon-signature")) {
+      headers.set("x-silsigan-anon-signature", anonymousSignature);
+    }
   }
 
   const response = await fetch(input, {
@@ -29,7 +38,10 @@ export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit)
     headers,
     credentials,
   });
-  persistAnonymousId(response.headers.get("x-silsigan-anon-id"));
+  if (attachAnonymousIdentity) {
+    persistAnonymousId(response.headers.get("x-silsigan-anon-id"));
+    persistAnonymousSignature(response.headers.get("x-silsigan-anon-signature"));
+  }
 
   const payload = (await response.json()) as ApiResponse<T>;
 
@@ -38,6 +50,22 @@ export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit)
   }
 
   return payload.data as T;
+}
+
+function requestNeedsAnonymousIdentity(input: RequestInfo | URL, method: string): boolean {
+  if (method !== "GET" && method !== "HEAD") {
+    return true;
+  }
+
+  const pathname = requestUrl(input)?.pathname ?? "";
+  return (
+    pathname === "/api/posts" ||
+    pathname === "/api/comments" ||
+    pathname === "/api/photos" ||
+    pathname === "/api/blocks" ||
+    pathname.startsWith("/api/my-") ||
+    /^\/api\/photos\/[^/]+\/file$/.test(pathname)
+  );
 }
 
 export function cloudflareApiUrl(path: string): string {
@@ -110,5 +138,24 @@ function persistAnonymousId(value: string | null) {
 
   if (/^[a-zA-Z0-9_-]{12,80}$/.test(value)) {
     window.localStorage.setItem(anonymousIdKey, value);
+  }
+}
+
+function getAnonymousSignature() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const existing = window.localStorage.getItem(anonymousSignatureKey);
+  return existing && /^v1\.[a-f0-9]{64}$/.test(existing) ? existing : null;
+}
+
+function persistAnonymousSignature(value: string | null) {
+  if (!value || typeof window === "undefined") {
+    return;
+  }
+
+  if (/^v1\.[a-f0-9]{64}$/.test(value)) {
+    window.localStorage.setItem(anonymousSignatureKey, value);
   }
 }

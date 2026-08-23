@@ -111,13 +111,20 @@
   font-weight: 800;
 }
 
+.hero .staleNotice {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .statusGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.statusGrid span {
+.statusGrid > * {
   min-height: 46px;
   border-radius: 16px;
   display: grid;

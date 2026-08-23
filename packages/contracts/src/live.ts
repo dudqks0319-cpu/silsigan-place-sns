@@ -102,7 +102,10 @@ export function isLiveSignalCurrent(signal: unknown, now: Date = new Date()): si
   if (new Date(current.observedAt).getTime() > now.getTime()) {
     return false;
   }
-  return current.expiresAt ? new Date(current.expiresAt).getTime() > now.getTime() : true;
+  if (!current.expiresAt) {
+    return false;
+  }
+  return new Date(current.expiresAt).getTime() > now.getTime();
 }
 
 export function resolveSignalExpiry(input: {

@@ -10,6 +10,7 @@ const DEFAULT_RELEASE_LEDGER_PATH = "release-ledger.yaml";
 const DEFAULT_RELEASE_STATUS_PATH = "RELEASE_STATUS.md";
 const DEFAULT_UGC_MODERATION_RUNBOOK_PATH = "docs/ugc-moderation-runbook.md";
 const DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH = "docs/cloudflare-cost-usage-runbook.md";
+const DEFAULT_CLOUDFLARE_STAGING_OPERATOR_PACKET_PATH = "docs/cloudflare-staging-operator-packet.md";
 const DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH = "docs/testflight-review-notes.md";
 const DEFAULT_REAL_DEVICE_QA_LEDGER_PATH = "docs/real-device-qa.md";
 const DEFAULT_V2_DECISION_REGISTER_PATH = "docs/v2-decision-register.md";
@@ -17,6 +18,13 @@ const DEFAULT_V2_LEGAL_OPERATIONS_GATE_PATH = "docs/v2-legal-operations-gate.md"
 const DEFAULT_PRIVACY_PAGE_PATH = "src/app/privacy/page.tsx";
 const DEFAULT_SUPPORT_PAGE_PATH = "src/app/support/page.tsx";
 const MINIMUM_OPEN_NEXT_COMPATIBILITY_DATE = "2024-09-23";
+const MAX_PHOTO_GLOBAL_DAILY_LIMIT = 150;
+const MAX_PHOTO_GLOBAL_MONTHLY_LIMIT = 4_500;
+const MAX_PHOTO_GLOBAL_STORED_LIMIT = 9_000;
+const REQUIRED_PHOTO_RATE_LIMITS = {
+  PHOTO_WRITE_RATE_LIMITER: { limit: 60, period: 60 },
+  PHOTO_READ_RATE_LIMITER: { limit: 200, period: 60 },
+};
 const REQUIRED_LEDGER_SECTIONS = [
   "## Objective",
   "## Local Code State",
@@ -87,6 +95,45 @@ const REQUIRED_CLOUDFLARE_COST_USAGE_RUNBOOK_TOKENS = [
   "storage",
   "budget",
   "TestFlight",
+  "PHOTO_WRITE_RATE_LIMITER",
+  "PHOTO_READ_RATE_LIMITER",
+  "PHOTO_GLOBAL_DAILY_LIMIT",
+  "PHOTO_GLOBAL_MONTHLY_LIMIT",
+  "PHOTO_GLOBAL_STORED_LIMIT",
+];
+const REQUIRED_CLOUDFLARE_STAGING_OPERATOR_PACKET_SECTIONS = [
+  "# Cloudflare staging operator packet",
+  "## Current External Block",
+  "## Authentication And URL Preflight",
+  "## D1 Migration Gate",
+  "## Official Ingestion Scheduler",
+  "## Current R2 Block",
+  "## Staging Smoke",
+  "## Stop Conditions",
+];
+const REQUIRED_CLOUDFLARE_STAGING_OPERATOR_PACKET_TOKENS = [
+  "CLOUDFLARE_AUTH_REQUIRED",
+  "D1_0012_NOT_APPLIED",
+  "OFFICIAL_INGESTION_SCHEDULER_ENABLED",
+  "/api/admin/sources/<source>/ingestion-targets",
+  "official_ingestion_targets",
+  "PHOTO_UPLOADS_ENABLED=false",
+  "SILSIGAN_STAGING_PAGES_URL",
+  "SILSIGAN_STAGING_API_BASE_URL",
+  "pnpm cf:external-state",
+  "pnpm cf:preflight",
+  "pnpm cf:d1:evidence",
+  "--confirm-staging",
+  "--accept-time-travel-only",
+  "--full-backup-sha256",
+  "pnpm cf:r2:evidence",
+  "lifecycle add",
+  "photos/_uploads/",
+  "--expire-days 1",
+  "pnpm smoke:staging",
+  "pnpm smoke:pages",
+  "pnpm smoke:tail-redaction",
+  "Do not commit",
 ];
 const REQUIRED_TESTFLIGHT_REVIEW_NOTES_SECTIONS = [
   "# #실시간 TestFlight review notes",
@@ -126,7 +173,7 @@ const REQUIRED_REAL_DEVICE_QA_LEDGER_SECTIONS = [
 const REQUIRED_REAL_DEVICE_QA_LEDGER_TOKENS = [
   "Staging Pages URL",
   "Staging Worker API URL",
-  "R2_NOT_ENABLED",
+  "PHOTO_UPLOADS_ENABLED=false",
   "TestFlight build",
   "Android internal/debug build",
   "Naver map display",
@@ -156,7 +203,7 @@ const REQUIRED_V2_DECISION_REGISTER_TOKENS = [
   "SOCIAL_FEED_ENABLED=false",
   "ADS_ENABLED=false",
   "LIVE_STREAMS_ENABLED",
-  "D1_0006_NOT_APPLIED",
+  "D1_0012_NOT_APPLIED",
   "영상 URL 저장·노출·중계 금지",
   "원본 사진은 보관하지 않는다",
   "익명 우선 + 선택적 회원 전환",
@@ -245,6 +292,7 @@ const releaseLedgerPath = options.get("release-ledger") ?? DEFAULT_RELEASE_LEDGE
 const releaseStatusPath = options.get("release-status") ?? DEFAULT_RELEASE_STATUS_PATH;
 const ugcModerationRunbookPath = options.get("ugc-moderation-runbook") ?? options.get("ugc-runbook") ?? DEFAULT_UGC_MODERATION_RUNBOOK_PATH;
 const cloudflareCostUsageRunbookPath = options.get("cloudflare-cost-usage-runbook") ?? options.get("cost-usage-runbook") ?? DEFAULT_CLOUDFLARE_COST_USAGE_RUNBOOK_PATH;
+const cloudflareStagingOperatorPacketPath = options.get("cloudflare-staging-operator-packet") ?? DEFAULT_CLOUDFLARE_STAGING_OPERATOR_PACKET_PATH;
 const testFlightReviewNotesPath = options.get("testflight-review-notes") ?? options.get("review-notes") ?? DEFAULT_TESTFLIGHT_REVIEW_NOTES_PATH;
 const realDeviceQaLedgerPath = options.get("real-device-qa") ?? options.get("real-device-qa-ledger") ?? DEFAULT_REAL_DEVICE_QA_LEDGER_PATH;
 const v2DecisionRegisterPath = options.get("v2-decision-register") ?? DEFAULT_V2_DECISION_REGISTER_PATH;
@@ -259,6 +307,7 @@ await checkLedger(ledgerPath);
 await checkReleaseHarnessFiles(releaseLedgerPath, releaseStatusPath, ledgerPath);
 await checkUgcModerationRunbook(ugcModerationRunbookPath);
 await checkCloudflareCostUsageRunbook(cloudflareCostUsageRunbookPath);
+await checkCloudflareStagingOperatorPacket(cloudflareStagingOperatorPacketPath);
 await checkTestFlightReviewNotes(testFlightReviewNotesPath);
 await checkRealDeviceQaLedger(realDeviceQaLedgerPath);
 await checkV2DecisionRegister(v2DecisionRegisterPath);
@@ -269,8 +318,8 @@ await checkLegacyArtifacts();
 await checkLegacyRuntimeUrls();
 await checkOpenNextAdapter();
 await checkFrontendWranglerConfig(frontendConfigPath);
-await checkWranglerConfig(configPath);
-checkDeploymentUrls();
+const wranglerReleaseSettings = await checkWranglerConfig(configPath);
+checkDeploymentUrls(wranglerReleaseSettings);
 await checkCloudflareExternalStateReport(cloudflareExternalStateReportPath);
 
 const blockers = checks.filter((check) => check.status === "fail");
@@ -285,6 +334,7 @@ const summary = {
   releaseStatusPath,
   ugcModerationRunbookPath,
   cloudflareCostUsageRunbookPath,
+  cloudflareStagingOperatorPacketPath,
   testFlightReviewNotesPath,
   realDeviceQaLedgerPath,
   v2DecisionRegisterPath,
@@ -514,6 +564,36 @@ async function checkCloudflareCostUsageRunbook(path) {
     { missingTokens },
   );
   recordNoSecretLikePatterns("cloudflare_cost_usage.runbook.redaction", runbook, path);
+}
+
+async function checkCloudflareStagingOperatorPacket(path) {
+  let packet = "";
+  try {
+    packet = await readFile(path, "utf8");
+    record("cloudflare_operator_packet.doc", "pass", "Cloudflare staging operator packet is present.");
+  } catch (error) {
+    record("cloudflare_operator_packet.doc", "fail", publicErrorMessage(error));
+    return;
+  }
+
+  for (const section of REQUIRED_CLOUDFLARE_STAGING_OPERATOR_PACKET_SECTIONS) {
+    record(
+      `cloudflare_operator_packet.doc.${section.replace(/^#+\s+/, "").toLowerCase().replaceAll(" ", "_")}`,
+      packet.includes(section) ? "pass" : "fail",
+      `Cloudflare staging operator packet must include ${section}.`,
+    );
+  }
+
+  const missingTokens = REQUIRED_CLOUDFLARE_STAGING_OPERATOR_PACKET_TOKENS.filter((token) => !packet.includes(token));
+  record(
+    "cloudflare_operator_packet.doc.required_tokens",
+    missingTokens.length === 0 ? "pass" : "fail",
+    missingTokens.length === 0
+      ? "Cloudflare staging operator packet covers authenticated preflight, D1/R2 gates, staging smoke, and stop conditions."
+      : "Cloudflare staging operator packet is missing required operating tokens.",
+    { missingTokens },
+  );
+  recordNoSecretLikePatterns("cloudflare_operator_packet.doc.redaction", packet, path);
 }
 
 async function checkTestFlightReviewNotes(path) {
@@ -840,9 +920,9 @@ async function checkOpenNextAdapter() {
     );
 
     const requiredScripts = {
-      "cf:build": "opennextjs-cloudflare build",
-      "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-      "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+      "cf:build": "node scripts/cloudflare-web-build.mjs --env=staging",
+      "cf:preview": "pnpm cf:build && opennextjs-cloudflare preview",
+      "cf:deploy": "node scripts/cloudflare-web-deploy.mjs",
       "cf:typegen": "wrangler types cloudflare-env.d.ts --env-interface CloudflareEnv --env-file .env.example --include-runtime false",
       "cf:web:dry-run": "wrangler deploy --dry-run --env=\"\" --config wrangler.jsonc",
       "cf:web:dry-run:staging": "wrangler deploy --dry-run --env staging --config wrangler.jsonc",
@@ -920,9 +1000,11 @@ async function checkWranglerConfig(path) {
     config = JSON.parse(stripJsonComments(await readFile(path, "utf8")));
   } catch (error) {
     record("wrangler.config", "fail", publicErrorMessage(error));
-    return;
+    return { corsOriginsByEnv: new Map(), publicSiteUrlsByEnv: new Map() };
   }
 
+  const corsOriginsByEnv = new Map();
+  const publicSiteUrlsByEnv = new Map();
   for (const envName of ["staging", "production"]) {
     const envConfig = config.env?.[envName];
     if (!isRecord(envConfig)) {
@@ -930,16 +1012,28 @@ async function checkWranglerConfig(path) {
       continue;
     }
 
+    corsOriginsByEnv.set(
+      envName,
+      parseCorsOrigins(envConfig.vars?.CORS_ALLOWED_ORIGINS, `wrangler.${envName}.vars.CORS_ALLOWED_ORIGINS`),
+    );
+    const publicSiteOrigin = recordConfiguredSiteUrl(
+      `wrangler.${envName}.vars.PUBLIC_SITE_URL`,
+      envConfig.vars?.PUBLIC_SITE_URL,
+      envName,
+    );
+    if (publicSiteOrigin) {
+      publicSiteUrlsByEnv.set(envName, publicSiteOrigin);
+    }
+
     const d1 = bindingBy(envConfig.d1_databases, "DB");
     const kv = bindingBy(envConfig.kv_namespaces, "CACHE");
     const r2 = bindingBy(envConfig.r2_buckets, "PHOTOS");
-    const images = envConfig.images;
     const durableBindings = Array.isArray(envConfig.durable_objects?.bindings) ? envConfig.durable_objects.bindings : [];
 
     recordReadyIdentifier(`${envName}.d1.DB.database_id`, d1?.database_id);
     recordReadyIdentifier(`${envName}.kv.CACHE.id`, kv?.id);
     recordReadyString(`${envName}.r2.PHOTOS.bucket_name`, r2?.bucket_name);
-    record(`${envName}.images.IMAGES`, images?.binding === "IMAGES" ? "pass" : "fail", "Cloudflare Images binding must be named IMAGES.");
+    recordPhotoCostControls(envConfig, envName);
 
     for (const bindingName of ["PLACE_ROOM", "REGION_ROOM", "GLOBAL_ROOM"]) {
       record(
@@ -949,20 +1043,170 @@ async function checkWranglerConfig(path) {
       );
     }
   }
+
+  return { corsOriginsByEnv, publicSiteUrlsByEnv };
 }
 
-function checkDeploymentUrls() {
+function recordPhotoCostControls(envConfig, envName) {
+  const photoUploadsEnabled = envConfig.vars?.PHOTO_UPLOADS_ENABLED;
+  record(
+    `${envName}.vars.PHOTO_UPLOADS_ENABLED`,
+    photoUploadsEnabled === "true" || photoUploadsEnabled === "false" ? "pass" : "fail",
+    "PHOTO_UPLOADS_ENABLED must be explicitly true or false.",
+  );
+
+  const rawGlobalDailyLimit = envConfig.vars?.PHOTO_GLOBAL_DAILY_LIMIT;
+  const globalDailyLimit = Number(rawGlobalDailyLimit);
+  record(
+    `${envName}.vars.PHOTO_GLOBAL_DAILY_LIMIT`,
+    typeof rawGlobalDailyLimit === "string" && Number.isInteger(globalDailyLimit) && globalDailyLimit >= 1 && globalDailyLimit <= MAX_PHOTO_GLOBAL_DAILY_LIMIT
+      ? "pass"
+      : "fail",
+    `PHOTO_GLOBAL_DAILY_LIMIT must be an integer string between 1 and ${MAX_PHOTO_GLOBAL_DAILY_LIMIT}.`,
+  );
+
+  const rawGlobalMonthlyLimit = envConfig.vars?.PHOTO_GLOBAL_MONTHLY_LIMIT;
+  const globalMonthlyLimit = Number(rawGlobalMonthlyLimit);
+  record(
+    `${envName}.vars.PHOTO_GLOBAL_MONTHLY_LIMIT`,
+    typeof rawGlobalMonthlyLimit === "string" &&
+      Number.isInteger(globalMonthlyLimit) &&
+      globalMonthlyLimit >= 1 &&
+      globalMonthlyLimit <= MAX_PHOTO_GLOBAL_MONTHLY_LIMIT
+      ? "pass"
+      : "fail",
+    `PHOTO_GLOBAL_MONTHLY_LIMIT must be an integer string between 1 and ${MAX_PHOTO_GLOBAL_MONTHLY_LIMIT}.`,
+  );
+
+  const rawGlobalStoredLimit = envConfig.vars?.PHOTO_GLOBAL_STORED_LIMIT;
+  const globalStoredLimit = Number(rawGlobalStoredLimit);
+  record(
+    `${envName}.vars.PHOTO_GLOBAL_STORED_LIMIT`,
+    typeof rawGlobalStoredLimit === "string" &&
+      Number.isInteger(globalStoredLimit) &&
+      globalStoredLimit >= 1 &&
+      globalStoredLimit <= MAX_PHOTO_GLOBAL_STORED_LIMIT
+      ? "pass"
+      : "fail",
+    `PHOTO_GLOBAL_STORED_LIMIT must be an integer string between 1 and ${MAX_PHOTO_GLOBAL_STORED_LIMIT}.`,
+  );
+
+  for (const [bindingName, expected] of Object.entries(REQUIRED_PHOTO_RATE_LIMITS)) {
+    const binding = rateLimitBy(envConfig.ratelimits, bindingName);
+    record(
+      `${envName}.ratelimits.${bindingName}.namespace_id`,
+      typeof binding?.namespace_id === "string" && /^[1-9]\d*$/.test(binding.namespace_id) ? "pass" : "fail",
+      `${bindingName} namespace_id must be a positive integer string.`,
+    );
+    record(
+      `${envName}.ratelimits.${bindingName}.simple`,
+      binding?.simple?.limit === expected.limit && binding?.simple?.period === expected.period ? "pass" : "fail",
+      `${bindingName} must enforce ${expected.limit} requests per ${expected.period} seconds.`,
+    );
+  }
+
+  const imageTransformsEnabled = envConfig.vars?.IMAGE_TRANSFORMS_ENABLED;
+  const explicitPolicy = imageTransformsEnabled === "true" || imageTransformsEnabled === "false";
+  record(
+    `${envName}.vars.IMAGE_TRANSFORMS_ENABLED`,
+    explicitPolicy ? "pass" : "fail",
+    "IMAGE_TRANSFORMS_ENABLED must be explicitly true or false.",
+  );
+  record(
+    `${envName}.images.cost_policy`,
+    imageTransformsEnabled === "true" ? envConfig.images?.binding === "IMAGES" ? "pass" : "fail" : imageTransformsEnabled === "false" && envConfig.images === undefined ? "pass" : "fail",
+    imageTransformsEnabled === "true"
+      ? "Enabled Cloudflare Images transforms require an IMAGES binding."
+      : "Disabled Cloudflare Images transforms must not retain a metered binding.",
+  );
+  record(
+    `${envName}.photos.processing_gate`,
+    photoUploadsEnabled !== "true" || (imageTransformsEnabled === "true" && envConfig.images?.binding === "IMAGES") ? "pass" : "fail",
+    "Enabled photo uploads require the approved server pixel-reencode path.",
+  );
+}
+
+function checkDeploymentUrls({ corsOriginsByEnv = new Map(), publicSiteUrlsByEnv = new Map() } = {}) {
   const parsedUrls = new Map();
 
   for (const [envVarName, checkName] of Object.entries(REQUIRED_ENV_URLS)) {
     const parsed = parseDeploymentUrl(process.env[envVarName], envVarName, checkName);
     if (parsed) {
       parsedUrls.set(checkName, parsed.href);
+      if (checkName.endsWith(".pages")) {
+        const envName = checkName.split(".")[0];
+        const allowedOrigins = corsOriginsByEnv.get(envName);
+        record(
+          `deployment_url.${checkName}.cors_origin`,
+          allowedOrigins?.has(parsed.origin) === true ? "pass" : "fail",
+          allowedOrigins?.has(parsed.origin) === true
+            ? `${envName} Pages origin is included in Worker CORS_ALLOWED_ORIGINS.`
+            : `${envName} Pages origin must be included in Worker CORS_ALLOWED_ORIGINS.`,
+        );
+        const configuredSiteOrigin = publicSiteUrlsByEnv.get(envName);
+        record(
+          `deployment_url.${checkName}.public_site_url_origin`,
+          configuredSiteOrigin === parsed.origin ? "pass" : "fail",
+          configuredSiteOrigin === parsed.origin
+            ? `${envName} PUBLIC_SITE_URL matches the selected Pages origin.`
+            : `${envName} PUBLIC_SITE_URL must match the selected Pages origin.`,
+        );
+      }
     }
   }
 
   recordSeparatedUrls(parsedUrls, "staging.pages", "production.pages", "staging and production Pages URLs must be different.");
   recordSeparatedUrls(parsedUrls, "staging.worker_api", "production.worker_api", "staging and production Worker API URLs must be different.");
+}
+
+function parseCorsOrigins(rawValue, name) {
+  if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
+    record(name, "fail", "CORS_ALLOWED_ORIGINS must contain one or more exact HTTPS origins.");
+    return new Set();
+  }
+
+  const values = rawValue.split(",").map((value) => value.trim()).filter(Boolean);
+  const origins = [];
+  let valid = values.length > 0;
+
+  for (const value of values) {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      record(name, "fail", "CORS_ALLOWED_ORIGINS contains an invalid URL.");
+      valid = false;
+      continue;
+    }
+
+    const exact =
+      url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      !isLocalhost(url.hostname) &&
+      !hasPlaceholder(value);
+    if (!exact) {
+      record(name, "fail", "CORS_ALLOWED_ORIGINS must contain exact non-local HTTPS origins without placeholders.");
+      valid = false;
+      continue;
+    }
+
+    origins.push(url.origin);
+  }
+
+  const uniqueOrigins = new Set(origins);
+  if (uniqueOrigins.size !== origins.length) {
+    record(name, "fail", "CORS_ALLOWED_ORIGINS entries must be unique.");
+    valid = false;
+  }
+  if (valid) {
+    record(name, "pass", "CORS_ALLOWED_ORIGINS contains exact credential-safe HTTPS origins.");
+  }
+
+  return valid ? uniqueOrigins : new Set();
 }
 
 function parseDeploymentUrl(value, envVarName, checkName) {
@@ -1026,6 +1270,34 @@ function recordReadyString(name, value) {
   record(name, hasPlaceholder(value) ? "fail" : "pass", `${name} must not contain placeholders.`);
 }
 
+function recordConfiguredSiteUrl(name, value, environment) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    record(name, "fail", `${name} is required.`);
+    return null;
+  }
+
+  if (hasPlaceholder(value)) {
+    record(name, "fail", `${name} must not contain placeholders.`);
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    const exactOrigin =
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      (url.protocol === "https:" || (environment === "development" && url.protocol === "http:"));
+    record(name, exactOrigin ? "pass" : "fail", exactOrigin ? `${name} is an exact site origin.` : `${name} must be an exact HTTPS site origin.`);
+    return exactOrigin ? url.origin : null;
+  } catch {
+    record(name, "fail", `${name} must be a valid site origin.`);
+    return null;
+  }
+}
+
 function assertNoSecretVars(vars, scopeName) {
   if (!isRecord(vars)) {
     record(`${scopeName}.vars`, "fail", "vars must be an object when present.");
@@ -1067,6 +1339,14 @@ function bindingBy(items, bindingName) {
   }
 
   return items.find((item) => item?.binding === bindingName) ?? null;
+}
+
+function rateLimitBy(items, bindingName) {
+  if (!Array.isArray(items)) {
+    return null;
+  }
+
+  return items.find((item) => item?.name === bindingName) ?? null;
 }
 
 function stripJsonComments(source) {

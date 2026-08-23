@@ -2,14 +2,26 @@ import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { adminCookieName, isAdminTokenValid } from "@/lib/admin-auth";
 import { store } from "@/lib/store";
-import { listWorkerModerationReports, workerAdminApiConfigured, type WorkerModerationReportSummary } from "@/lib/worker-admin-api";
+import {
+  listWorkerFieldReports,
+  listWorkerDataSources,
+  listWorkerModerationReports,
+  listWorkerSourceHealth,
+  workerAdminApiConfigured,
+  type WorkerDataSourceSummary,
+  type WorkerFieldReportSummary,
+  type WorkerModerationReportSummary,
+  type WorkerSourceHealthSummary,
+} from "@/lib/worker-admin-api";
 import { ModerationQueueClient } from "./ModerationQueueClient";
+import { SourceHealthPanel } from "./SourceHealthPanel";
 import styles from "./page.module.css";
 
 export const dynamic = "force-dynamic";
 
 export default async function PostModerationPage() {
-  if (process.env.NODE_ENV === "production" && !process.env.SILSIGAN_ADMIN_TOKEN) {
+  const isProduction = process.env.NODE_ENV === "production";
+  if (isProduction && !process.env.SILSIGAN_ADMIN_TOKEN) {
     notFound();
   }
 
@@ -18,9 +30,10 @@ export default async function PostModerationPage() {
     redirect("/admin/login" as never);
   }
 
-  const queue = await store.listPostModerationQueue();
-  const activationRows = await store.listRegionActivationDashboard();
+  const { queue, activationRows } = await loadLocalModerationData(isProduction);
   const { state: workerQueueState, reports: workerReports } = await loadWorkerReports();
+  const { state: fieldReportQueueState, reports: fieldReports } = await loadWorkerFieldReports();
+  const { state: sourceHealthState, items: sourceHealth, sources } = await loadWorkerSourceHealth();
   const hiddenCount = queue.filter((item) => item.hidden).length;
   const sensitiveCount = queue.filter((item) =>
     item.flagReasons.some((reason) => ["privacy_face", "privacy_plate", "sensitive_info"].includes(reason)),
@@ -43,7 +56,7 @@ export default async function PostModerationPage() {
         </div>
         <div>
           <strong>{queue.length}</strong>
-          <span>데모 게시물 신고</span>
+          <span>{isProduction ? "레거시 큐 비활성" : "데모 게시물 신고"}</span>
         </div>
         <div>
           <strong>{hiddenCount}</strong>
@@ -98,9 +111,30 @@ export default async function PostModerationPage() {
         </div>
       </section>
 
-      <ModerationQueueClient initialItems={queue} initialWorkerReports={workerReports} workerQueueState={workerQueueState} />
+      <SourceHealthPanel state={sourceHealthState} items={sourceHealth} sources={sources} />
+
+      <ModerationQueueClient
+        initialItems={queue}
+        initialWorkerReports={workerReports}
+        workerQueueState={workerQueueState}
+        initialFieldReports={fieldReports}
+        fieldReportQueueState={fieldReportQueueState}
+        showLocalDemoQueue={!isProduction}
+      />
     </main>
   );
+}
+
+async function loadLocalModerationData(isProduction: boolean) {
+  if (isProduction) {
+    return { queue: [], activationRows: [] };
+  }
+
+  const [queue, activationRows] = await Promise.all([
+    store.listPostModerationQueue(),
+    store.listRegionActivationDashboard(),
+  ]);
+  return { queue, activationRows };
 }
 
 async function loadWorkerReports(): Promise<{ state: "connected" | "not_configured" | "unavailable"; reports: WorkerModerationReportSummary[] }> {
@@ -115,6 +149,45 @@ async function loadWorkerReports(): Promise<{ state: "connected" | "not_configur
     };
   } catch {
     return { state: "unavailable", reports: [] };
+  }
+}
+
+async function loadWorkerFieldReports(): Promise<{ state: "connected" | "not_configured" | "unavailable"; reports: WorkerFieldReportSummary[] }> {
+  if (!workerAdminApiConfigured()) {
+    return { state: "not_configured", reports: [] };
+  }
+
+  try {
+    return {
+      state: "connected",
+      reports: await listWorkerFieldReports({ status: "pending", limit: 50 }),
+    };
+  } catch {
+    return { state: "unavailable", reports: [] };
+  }
+}
+
+async function loadWorkerSourceHealth(): Promise<{
+  state: "connected" | "not_configured" | "unavailable";
+  items: WorkerSourceHealthSummary[];
+  sources: WorkerDataSourceSummary[];
+}> {
+  if (!workerAdminApiConfigured()) {
+    return { state: "not_configured", items: [], sources: [] };
+  }
+
+  try {
+    const [items, sources] = await Promise.all([
+      listWorkerSourceHealth({ limit: 50 }),
+      listWorkerDataSources(),
+    ]);
+    return {
+      state: "connected",
+      items,
+      sources,
+    };
+  } catch {
+    return { state: "unavailable", items: [], sources: [] };
   }
 }
 
