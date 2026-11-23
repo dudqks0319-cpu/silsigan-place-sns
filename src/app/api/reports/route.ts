@@ -1,10 +1,12 @@
 import { fail, ok } from "@/lib/api";
+import { assertLegacyWriteAllowed, isLegacyDemoEnabled, legacyDemoMeta, legacyUnavailableMeta } from "@/lib/legacy-access";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { createReport, listReports } from "@/lib/mock-store";
 import { createReportSchema, listReportsSchema } from "@/lib/validators";
 
 export async function GET(request: Request) {
   try {
+    if (!isLegacyDemoEnabled()) return ok([], legacyUnavailableMeta);
     const url = new URL(request.url);
     const filters = listReportsSchema.parse({
       placeId: url.searchParams.get("placeId") ?? undefined,
@@ -12,6 +14,7 @@ export async function GET(request: Request) {
     });
 
     return ok(listReports(filters), {
+      ...legacyDemoMeta,
       privacy: "사용자 정확 좌표는 응답하지 않습니다. 제보에는 verifiedRadiusM만 포함됩니다.",
     });
   } catch (error) {
@@ -21,6 +24,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    assertLegacyWriteAllowed();
     assertRateLimit({ key: rateLimitKey(request, "create-report"), limit: 12, windowMs: 60_000 });
     const input = createReportSchema.parse(await request.json());
 

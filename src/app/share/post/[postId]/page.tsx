@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getSiteUrl } from "@/lib/site-url";
+import { isCommunityReadEnabled, isRecentPublicPost } from "@/lib/legacy-access";
 import { store } from "@/lib/store";
 import styles from "./page.module.css";
+
+export const dynamic = "force-dynamic";
 
 type SharePostPageProps = {
   params: Promise<{
@@ -11,7 +14,9 @@ type SharePostPageProps = {
 };
 
 async function findSharedPost(postId: string) {
-  return (await store.listPosts({ includeHidden: true })).find((candidate) => candidate.id === postId);
+  if (!isCommunityReadEnabled()) return undefined;
+  const now = new Date();
+  return (await store.listPosts({ includeHidden: false })).find((candidate) => candidate.id === postId && isRecentPublicPost(candidate, now));
 }
 
 export async function generateMetadata({ params }: SharePostPageProps): Promise<Metadata> {
@@ -60,7 +65,7 @@ export default async function SharePostPage({ params }: SharePostPageProps) {
       <section className={styles.card} aria-label="#실시간 공유 카드">
         <div className={styles.topRow}>
           <span>#실시간</span>
-          <strong>{post.locationVerified ? "현장 인증" : "상태 제보"}</strong>
+          <strong>사용자 제보 · 현장 상황 미확인</strong>
         </div>
         <div className={`${styles.hero} ${styles[post.shareCard.variant]}`}>
           <span>{post.photoLabel}</span>
@@ -79,7 +84,7 @@ export default async function SharePostPage({ params }: SharePostPageProps) {
         </div>
         <footer>
           <span>{shareUrl}</span>
-          <strong>지금 여기 어떤지 확인하기</strong>
+          <time dateTime={post.createdAt}>제보 작성: {new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(post.createdAt))}</time>
         </footer>
       </section>
     </main>

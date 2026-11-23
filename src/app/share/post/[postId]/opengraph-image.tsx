@@ -1,5 +1,6 @@
 import { ImageResponse } from "next/og";
 import { notFound } from "next/navigation";
+import { isCommunityReadEnabled, isRecentPublicPost } from "@/lib/legacy-access";
 import { store } from "@/lib/store";
 
 export const size = {
@@ -8,6 +9,7 @@ export const size = {
 };
 
 export const contentType = "image/png";
+export const dynamic = "force-dynamic";
 
 type OpenGraphImageProps = {
   params: Promise<{
@@ -24,8 +26,10 @@ const variantGradients: Record<string, string> = {
 };
 
 export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
+  if (!isCommunityReadEnabled()) notFound();
   const { postId } = await params;
-  const post = (await store.listPosts({ includeHidden: true })).find((candidate) => candidate.id === postId);
+  const now = new Date();
+  const post = (await store.listPosts({ includeHidden: false })).find((candidate) => candidate.id === postId && isRecentPublicPost(candidate, now));
 
   if (!post || post.hiddenAt) {
     notFound();
@@ -49,7 +53,7 @@ export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", color: "#16a34a", fontSize: 34, fontWeight: 900 }}>#실시간</div>
           <div style={{ display: "flex", padding: "14px 22px", borderRadius: 999, background: "#dcfce7", color: "#15803d", fontSize: 28, fontWeight: 800 }}>
-            {post.locationVerified ? "현장 인증" : "상태 제보"}
+            사용자 제보 · 현장 상황 미확인
           </div>
         </div>
         <div
@@ -76,6 +80,6 @@ export default async function OpenGraphImage({ params }: OpenGraphImageProps) {
         </div>
       </div>
     ),
-    size,
+    { ...size, headers: { "Cache-Control": "private, no-store, max-age=0" } },
   );
 }

@@ -1,11 +1,11 @@
 {
-  "name": "#실시간 - 현장 상황 지도",
-  "short_name": "#실시간",
-  "description": "출발 전 10초, 지금 거기 상황을 사진과 위치 인증으로 확인하세요.",
+  "name": "실시간 — 우리 동네의 지금",
+  "short_name": "실시간",
+  "description": "지역 날씨와 주변 장소, 최근 현장 소식을 출처와 기준 시각까지 함께 확인하세요.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f7faf9",
-  "theme_color": "#0f766e",
+  "background_color": "#f6f5f0",
+  "theme_color": "#123c36",
   "lang": "ko",
-  "icons": []
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
 }
