@@ -1,10 +1,12 @@
 import { fail, ok } from "@/lib/api";
+import { assertLegacyWriteAllowed } from "@/lib/legacy-access";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { store } from "@/lib/store";
 import { flagPostSchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
   try {
+    assertLegacyWriteAllowed();
     assertRateLimit({ key: rateLimitKey(request, "flag-post"), limit: 20, windowMs: 60_000 });
     const input = flagPostSchema.parse(await request.json());
 

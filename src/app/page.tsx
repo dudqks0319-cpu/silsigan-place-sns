@@ -1,5 +1,5 @@
-import SilsiganKoreanUX from "@/components/silsigan/SilsiganKoreanUX";
+import LocalLiveApp from "@/features/local-live/components/LocalLiveApp";
 
 export default function HomePage() {
-  return <SilsiganKoreanUX />;
+  return <LocalLiveApp />;
 }

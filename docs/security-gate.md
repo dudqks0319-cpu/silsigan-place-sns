@@ -1,11 +1,13 @@
 # #실시간 보안 게이트 체크리스트
 
+> **2026-11-24 현재: 보안 배포 게이트 미통과.** 이번 의존성 audit는 critical 5 / high 32 / moderate 19 / low 2이며, 업그레이드는 설치 중단 후 복원되어 미적용 상태다. [의존성 점검 결과와 미검증 후보](dependency-upgrade.md)를 먼저 확인한다. 아래 기존 체크와 2026년 5월 일정은 과거 기록이며 이번 버전의 재검증 완료를 뜻하지 않는다. 최신 기능 검증은 [리팩토링 검증 기록](local-live-verification.md)에 있다.
+
 출시 전 이 문서의 P0 항목은 모두 통과해야 한다.
 
 ## P0 출시 차단 항목
 
 - [x] `pnpm-lock.yaml`이 생성되어 있고 `pnpm install --frozen-lockfile`이 통과한다.
-- [x] `pnpm audit --audit-level low` 결과 known vulnerability가 0건이다.
+- [ ] `pnpm audit --audit-level low` 결과 known vulnerability가 0건이다. **2026-11-24 재점검에서 미통과.**
 - [x] `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`가 통과한다.
 - [x] 하드코딩된 API key, service role key, password, token이 없다.
 - [x] `SUPABASE_SERVICE_ROLE_KEY`가 브라우저 번들 검색에서 검출되지 않는다.

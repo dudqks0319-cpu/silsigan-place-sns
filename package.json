@@ -2,6 +2,10 @@
   "name": "silsigan",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "next dev --webpack",
